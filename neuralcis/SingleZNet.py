@@ -39,9 +39,6 @@ class SingleZNet(DataSaver):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.validation_set_fn = validation_set_fn
         self.param_sampling_fn = param_sampling_fn
-        self.num_param = tf.constant(
-            tf.shape(param_sampling_fn(tf.constant(1)))[1]
-        )
 
         y, params = self.validation_set_fn()
         self.validation_optimum_losses = tf.Variable(y * 0.)
