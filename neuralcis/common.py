@@ -26,6 +26,7 @@ ParamsAndKS = typing.NewType("ParamsAndKS", axes.Axis)
 # Again for typing, represents a blob of output from a network that can be
 #   passed into a loss function.
 NetOutputBlob = typing.TypeVar("NetOutputBlob")
+NetTargetBlob = typing.TypeVar("NetTargetBlob")
 
 
 def combine_input_args_into_tensor(*argv):

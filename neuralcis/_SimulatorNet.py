@@ -7,7 +7,7 @@ import numpy as np
 
 from typing import Optional, Tuple, Callable
 from neuralcis.common import Samples, NetInputs, NetOutputs, NodesInLayer
-from neuralcis.common import NetOutputBlob
+from neuralcis.common import NetOutputBlob, NetTargetBlob
 from neuralcis.common import TrainingBatches
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 import tensor_annotations.tensorflow as ttf
@@ -43,6 +43,8 @@ class _SimulatorNet(_DataSaver):
     the inputs to the network.  This only need be passed in if it is necessary
     to pull other numbers from the neural network than just its outputs, in
     order to calculate the loss.
+    :param num_outputs: An int, number outputs for the network (defaults
+    to 1).
     :param filename: If the network has been fit previously, and weights were
     saved, they can be loaded in the constructor by passing in the filename
     here.
@@ -53,17 +55,17 @@ class _SimulatorNet(_DataSaver):
                 [ttf.int32],                                       # n
                 Tuple[
                     Tensor2[tf32, Samples, NetInputs],             # ins
-                    Optional[Tensor2[tf32, Samples, NetOutputs]]   # targets
+                    Optional[NetTargetBlob]                        # targets
                 ]],
             validation_set_fn: Callable[
                 [],
                 Tuple[
                     Tensor2[tf32, Samples, NetInputs],             # ins
-                    Optional[Tensor2[tf32, Samples, NetOutputs]]   # targets
+                    Optional[NetTargetBlob]                        # targets
                 ]],
             loss_fn: Callable[
                 [NetOutputBlob,                                    # outputs
-                 Optional[Tensor2[tf32, Samples, NetOutputs]]],    # targets
+                 Optional[NetTargetBlob]],                         # targets
                 ttf.float32                                        # loss
             ],
             run_net_fn: Callable[
@@ -72,6 +74,7 @@ class _SimulatorNet(_DataSaver):
                  ttf.bool],                                        # training
                 NetOutputBlob
             ] = run_net,
+            num_outputs: int = 1,
             filename: str = ""
     ) -> None:
 
@@ -80,7 +83,7 @@ class _SimulatorNet(_DataSaver):
         self.loss_fn = loss_fn
         self.run_net_during_training_fn = run_net_fn
 
-        self.net = self.create_net()
+        self.net = self.create_net(num_outputs)
 
         # not filled in at init because it is slow / not always needed, so it
         #   needs to be explicitly filled by calling initialise_for_training
@@ -110,14 +113,14 @@ class _SimulatorNet(_DataSaver):
             net_with_weights_to_save=self.net
         )
 
-    def create_net(self) -> tf.keras.Sequential:
+    def create_net(self, num_outputs: int) -> tf.keras.Sequential:
         net = tf.keras.models.Sequential([
             _FiftyFiftyLayer(50),
             _FiftyFiftyLayer(50),
             _FiftyFiftyLayer(50),
             _FiftyFiftyLayer(50),
             tf.keras.layers.Dense(
-                1,
+                num_outputs,
                 kernel_initializer=tf.keras.initializers.GlorotUniform(),
                 bias_initializer="zeros"
             )
@@ -241,7 +244,7 @@ class _SimulatorNet(_DataSaver):
     def loss_and_gradient(
             self,
             net_ins: Tensor2[tf32, Samples, NetInputs],
-            net_targets: Tensor2[tf32, Samples, NetOutputs],
+            net_targets: Optional[NetTargetBlob],
             training: ttf.bool = tf.constant(False)
     ) -> Tuple[ttf.float32, list]:
 
