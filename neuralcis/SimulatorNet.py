@@ -155,7 +155,7 @@ class SimulatorNet(DataSaver):
                 (learning_rate_check, self.validation_loss_so_far)             # type: ignore
             )
             validation_losses = self.fit_tf(
-                num_minibatches_per_batch=tf.constant(1000),
+                num_minibatches_per_batch=tf.constant(100),
                 num_batches=tf.constant(20),
                 minibatch_size=tf.constant(minibatch_size)
             )
