@@ -168,7 +168,6 @@ class _SingleZNet(_DataSaver):
             _: None
     ) -> ttf.float32:
 
-        print("z loss")
         outputs, sample_grads_floored = net_outputs
         neg_log_likelihoods = self.neg_log_likelihoods(outputs,
                                                        sample_grads_floored)

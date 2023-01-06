@@ -25,7 +25,8 @@ class _FiftyFiftyLayer(tf.keras.layers.Layer):
         self.bias = self.add_weight(
             "bias",
             shape=(self.n_outputs, ),
-            initializer=tf.keras.initializers.RandomUniform(minval=-0.1, maxval=0.1),
+            initializer=tf.keras.initializers.RandomUniform(minval=-0.1,
+                                                            maxval=0.1),
             trainable=True
         )
 
@@ -35,9 +36,11 @@ class _FiftyFiftyLayer(tf.keras.layers.Layer):
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
         potentials = tf.linalg.matmul(inputs, self.kernel) + self.bias
+        tanh_outputs = potentials[:, 0:self.n_outputs_per_activation]
+        elu_outputs = potentials[:, self.n_outputs_per_activation:]
         activations = tf.concat([
-            tf.keras.activations.tanh(potentials[:, 0:self.n_outputs_per_activation]),
-            tf.keras.activations.elu(potentials[:, self.n_outputs_per_activation:])
+            tf.keras.activations.tanh(tanh_outputs),
+            tf.keras.activations.elu(elu_outputs)
         ], axis=1)
 
         return activations
