@@ -38,8 +38,8 @@ class _SinglePNet:
             self.validation_set
         )
 
-    def fit(self, *argv) -> None:
-        self.znet.fit(*argv)
+    def fit(self, *args, **kwargs) -> None:
+        self.znet.fit(*args, **kwargs)
 
     @tf.function
     def sampling_distribution(
