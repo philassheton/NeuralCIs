@@ -1,5 +1,6 @@
 from neuralcis._DataSaver import _DataSaver
 from neuralcis._FiftyFiftyLayer import _FiftyFiftyLayer
+import neuralcis.common as common
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
@@ -45,9 +46,13 @@ class _SimulatorNet(_DataSaver):
     order to calculate the loss.
     :param num_outputs: An int, number outputs for the network (defaults
     to 1).
-    :param filename: If the network has been fit previously, and weights were
-    saved, they can be loaded in the constructor by passing in the filename
-    here.
+    :param num_hidden_layers: An int (optional), number of hidden layers in
+    the network.
+    :param num_neurons_per_hidden_layer: An int (optional), number of neurons
+    per hidden layer.
+    :param filename: A string (optional), if the network has been fit
+    previously, and weights were saved, they can be loaded in the constructor
+    by passing in the filename here.
     """
     def __init__(
             self,
@@ -75,6 +80,8 @@ class _SimulatorNet(_DataSaver):
                 NetOutputBlob
             ] = run_net,
             num_outputs: int = 1,
+            num_hidden_layers: int = common.NUM_HIDDEN_LAYERS,
+            num_neurons_per_hidden_layer: int = common.NEURONS_PER_LAYER,
             filename: str = ""
     ) -> None:
 
@@ -83,7 +90,9 @@ class _SimulatorNet(_DataSaver):
         self.loss_fn = loss_fn
         self.run_net_during_training_fn = run_net_fn
 
-        self.net = self.create_net(num_outputs)
+        self.net = self.create_net(num_outputs,
+                                   num_hidden_layers,
+                                   num_neurons_per_hidden_layer)
 
         # not filled in at init because it is slow / not always needed, so it
         #   needs to be explicitly filled by calling initialise_for_training
@@ -113,18 +122,23 @@ class _SimulatorNet(_DataSaver):
             net_with_weights_to_save=self.net
         )
 
-    def create_net(self, num_outputs: int) -> tf.keras.Sequential:
-        net = tf.keras.models.Sequential([
-            _FiftyFiftyLayer(50),
-            _FiftyFiftyLayer(50),
-            _FiftyFiftyLayer(50),
-            _FiftyFiftyLayer(50),
-            tf.keras.layers.Dense(
-                num_outputs,
-                kernel_initializer=tf.keras.initializers.GlorotUniform(),
-                bias_initializer="zeros"
-            )
-        ])
+    def create_net(
+            self,
+            num_outputs: int,
+            num_hidden_layers: int,
+            num_neurons_per_hidden_layer: int
+    ) -> tf.keras.Sequential:
+
+        num_neurons_of_each_type = int(num_neurons_per_hidden_layer / 2)
+
+        net = tf.keras.models.Sequential()
+        for i in range(num_hidden_layers):
+            net.add(_FiftyFiftyLayer(num_neurons_of_each_type))
+        net.add(tf.keras.layers.Dense(
+            num_outputs,
+            kernel_initializer=tf.keras.initializers.GlorotUniform(),
+            bias_initializer="zeros"
+        ))
 
         # Do this to force it to instantiate some weights
         net_ins, net_outs = self.sampling_distribution_fn(tf.constant(2))
@@ -144,9 +158,10 @@ class _SimulatorNet(_DataSaver):
     def fit(
             self,
             max_epochs: int,
-            minibatch_size: int = 32,
-            learning_rate_initial: float = 1e-3,
-            divide_after_flattening_for: int = 10
+            minibatch_size: int = common.MINIBATCH_SIZE,
+            learning_rate_initial: float = common.LEARNING_RATE_INITIAL,
+            divide_after_flattening_for: int =
+                    common.DIVIDE_AFTER_FLATTENING_FOR
     ) -> None:
 
         learning_rate = learning_rate_initial
@@ -158,8 +173,10 @@ class _SimulatorNet(_DataSaver):
                 (learning_rate_check, self.validation_loss_so_far)             # type: ignore
             )
             validation_losses = self.fit_tf(
-                num_minibatches_per_batch=tf.constant(100),
-                num_batches=tf.constant(20),
+                num_minibatches_per_batch=tf.constant(
+                    common.MINIBATCHES_PER_BATCH
+                ),
+                num_batches=tf.constant(common.BATCHES_PER_EPOCH),
                 minibatch_size=tf.constant(minibatch_size)
             )
 

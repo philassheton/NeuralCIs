@@ -5,6 +5,14 @@ import typing
 from tensor_annotations import axes
 
 VALIDATION_SET_SIZE = 10000
+NUM_HIDDEN_LAYERS = 4
+NEURONS_PER_LAYER = 100
+MINIBATCH_SIZE = 32
+LEARNING_RATE_INITIAL = 1e-3
+DIVIDE_AFTER_FLATTENING_FOR = 10
+BATCHES_PER_EPOCH = 20
+MINIBATCHES_PER_BATCH = 100
+
 
 # axis labels for TensorFlow typing
 # each of these presents what sort of data populates a certain axis in a
