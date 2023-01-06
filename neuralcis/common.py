@@ -41,6 +41,7 @@ ZNET_ANALYSER_NUM_SAMPLES = 1000
 #  Tensor.
 Samples = typing.NewType("Samples", axes.Axis)
 Params = typing.NewType("Params", axes.Axis)
+KnownParams = typing.NewType("KnownParams", axes.Axis)
 Estimates = typing.NewType("Estimates", axes.Axis)
 NetOutputs = typing.NewType("NetOutputs", axes.Axis)
 NetInputs = typing.NewType("NetInputs", axes.Axis)

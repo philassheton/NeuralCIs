@@ -8,7 +8,7 @@ import neuralcis.common as common
 from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from neuralcis.common import Samples, Params, Estimates, NetInputs, NetOutputs
-from neuralcis.common import NetTargetBlob
+from neuralcis.common import KnownParams, NetTargetBlob
 import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
 
@@ -69,7 +69,8 @@ class _CINet:
         estimates = self.sampling_distribution_fn(params)
         target_p = tf.random.uniform((n,), tf.constant(0.), tf.constant(1.))
 
-        inputs = self.net_inputs(estimates, params, target_p)
+        known_params = self.known_params(params)
+        inputs = self.net_inputs(estimates, known_params, target_p)
         outputs = (estimates, params, target_p)
 
         return inputs, outputs                                                 # type: ignore
@@ -78,11 +79,10 @@ class _CINet:
     def net_inputs(
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
-            params: Tensor2[tf32, Samples, Params],
+            known_params: Tensor2[tf32, Samples, KnownParams],
             target_p: Tensor1[tf32, Samples]
     ) -> Tensor2[tf32, Samples, NetInputs]:
 
-        known_params = self.known_params(params)
         return tf.concat([
             estimates, known_params, tf.transpose([target_p])
         ], axis=1)
@@ -91,18 +91,9 @@ class _CINet:
     def known_params(
             self,
             params: Tensor2[tf32, Samples, Params]
-    ) -> Tensor2[tf32, Samples, Params]:
+    ) -> Tensor2[tf32, Samples, KnownParams]:
 
-        return params[:, 1:]
-
-    @tf.function
-    def pnet_inputs(
-            self,
-            estimates: Tensor2[tf32, Samples, Estimates],
-            params: Tensor2[tf32, Samples, Params],
-    ) -> Tensor2[tf32, Samples, NetInputs]:
-
-        return tf.concat([estimates, params], axis=1)
+        return params[:, 1:]                                                   # type: ignore
 
     @tf.function
     def plugin_first_param(
@@ -138,16 +129,50 @@ class _CINet:
 
         estimates, params, p = target_outputs
 
-        lower = estimates[:, 0] - tf.math.exp(net_outputs[:, 0])
-        upper = estimates[:, 0] + tf.math.exp(net_outputs[:, 1])
+        lower, upper = self.output_activation(net_outputs, estimates)
 
-        pnet_params_lower = self.plugin_first_param(params, lower)
-        pnet_params_upper = self.plugin_first_param(params, upper)
-
-        p_lower = self.pnet.p(estimates, pnet_params_lower)
-        p_upper = self.pnet.p(estimates, pnet_params_upper)
+        p_lower = self.run_pnet_plugin_first_param(estimates, params, lower)
+        p_upper = self.run_pnet_plugin_first_param(estimates, params, upper)
 
         squared_errors = (tf.math.square(p_lower - p) +
                           tf.math.square(p_upper - p))
 
         return tf.reduce_sum(squared_errors)
+
+    @tf.function
+    def run_pnet_plugin_first_param(
+            self,
+            estimates: Tensor2[tf32, Samples, Estimates],
+            params: Tensor2[tf32, Samples, Params],
+            first_param: Tensor1[tf32, Samples]
+    ) -> Tensor1[tf32, Samples]:
+
+        plugin_params = self.plugin_first_param(params, first_param)
+        return self.pnet.p(estimates, plugin_params)
+
+    @tf.function
+    def output_activation(
+            self,
+            net_outputs: Tensor2[tf32, Samples, NetOutputs],
+            estimates: Tensor2[tf32, Samples, Estimates]
+    ) -> Tuple[Tensor1[tf32, Samples], Tensor1[tf32, Samples]]:
+
+        lower = estimates[:, 0] - tf.math.exp(net_outputs[:, 0])
+        upper = estimates[:, 0] + tf.math.exp(net_outputs[:, 1])
+
+        return lower, upper
+
+    @tf.function
+    def ci(
+            self,
+            estimates: Tensor2[tf32, Samples, Estimates],
+            known_params: Tensor2[tf32, Samples, KnownParams],
+            conf_levels: Tensor1[tf32, Samples]
+    ):
+
+        net_inputs = self.net_inputs(estimates, known_params, conf_levels)
+        net_outputs = self.cinet.call_tf(net_inputs)
+
+        lower, upper = self.output_activation(net_outputs, estimates)
+
+        return lower, upper
