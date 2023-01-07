@@ -39,8 +39,19 @@ class _CINet:
             num_outputs=2
         )
 
-    def fit(self, *args):
-        self.cinet.fit(*args)
+    def fit(
+            self,
+            *args,
+            initialise_for_training_first: bool = True,
+            **kwargs
+    ) -> None:
+
+        if initialise_for_training_first:
+            self.initialise_for_training()
+        self.cinet.fit(*args, **kwargs)
+
+    def initialise_for_training(self) -> None:
+        self.cinet.set_validation_optimum_loss(tf.constant(0.))
 
     @tf.function
     def get_num_params(self) -> int:
@@ -137,7 +148,7 @@ class _CINet:
         squared_errors = (tf.math.square(p_lower - p) +
                           tf.math.square(p_upper - p))
 
-        return tf.reduce_sum(squared_errors)
+        return tf.reduce_mean(squared_errors)
 
     @tf.function
     def run_pnet_plugin_first_param(

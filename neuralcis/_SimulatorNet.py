@@ -161,7 +161,8 @@ class _SimulatorNet(_DataSaver):
             minibatch_size: int = common.MINIBATCH_SIZE,
             learning_rate_initial: float = common.LEARNING_RATE_INITIAL,
             divide_after_flattening_for: int =
-                    common.DIVIDE_AFTER_FLATTENING_FOR
+                    common.DIVIDE_AFTER_FLATTENING_FOR,
+            target_validation_loss_sd: float = common.TARGET_VALIDATION_LOSS_SD
     ) -> None:
 
         learning_rate = learning_rate_initial
@@ -180,8 +181,8 @@ class _SimulatorNet(_DataSaver):
                 minibatch_size=tf.constant(minibatch_size)
             )
 
-            validation_variance = tfp.stats.variance(validation_losses)
-            if validation_variance < common.TARGET_VALIDATION_LOSS_VARIANCE:
+            validation_sd = tfp.stats.stddev(validation_losses)
+            if validation_sd < target_validation_loss_sd:
                 break
 
             if self.batches_since_optimum > divide_after_flattening_for:       # type: ignore
