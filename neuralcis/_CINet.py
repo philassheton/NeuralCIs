@@ -42,15 +42,15 @@ class _CINet:
     def fit(
             self,
             *args,
-            initialise_for_training_first: bool = True,
+            precompute_optimum_loss: bool = True,
             **kwargs
     ) -> None:
 
-        if initialise_for_training_first:
-            self.initialise_for_training()
+        if precompute_optimum_loss:
+            self.precompute_optimum_loss()
         self.cinet.fit(*args, **kwargs)
 
-    def initialise_for_training(self) -> None:
+    def precompute_optimum_loss(self) -> None:
         self.cinet.set_validation_optimum_loss(tf.constant(0.))
 
     @tf.function

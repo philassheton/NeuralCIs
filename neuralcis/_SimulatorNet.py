@@ -95,7 +95,7 @@ class _SimulatorNet(_DataSaver):
                                    num_neurons_per_hidden_layer)
 
         # not filled in at init because it is slow / not always needed, so it
-        #   needs to be explicitly filled by calling initialise_for_training
+        #   needs to be explicitly filled by calling precompute_optimum_loss
         self.validation_optimum_loss = tf.Variable(np.nan)
 
         self.optimizer = tf.keras.optimizers.Nadam()

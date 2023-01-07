@@ -74,14 +74,14 @@ class _SingleZNet(_DataSaver):
     def fit(
             self,
             *args,
-            initialise_for_training_first: bool = False,
+            precompute_optimum_loss: bool = False,
             **kwargs
     ) -> None:
-        if initialise_for_training_first:
-            self.initialise_for_training()
+        if precompute_optimum_loss:
+            self.precompute_optimum_loss()
         self.net.fit(*args, **kwargs)
 
-    def initialise_for_training(self) -> None:
+    def precompute_optimum_loss(self) -> None:
         print("Calculating optimum loss")
         self.validation_optimum_losses.assign(
             self.estimate_perfect_error_for_validation_set()[:, -1]
