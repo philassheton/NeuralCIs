@@ -1,6 +1,7 @@
 import tensorflow as tf
 
 from typing import Optional, List, Dict
+from neuralcis.common import INSTANCE_VARS, WEIGHTS, FILE_PATH
 
 
 class _DataSaver:
@@ -73,17 +74,17 @@ class _DataSaver:
 
     @staticmethod
     def instance_variables_filename(filename: str) -> str:
-        filename = _DataSaver.construct_filename(filename, " instancevars")
+        filename = _DataSaver.construct_filename(filename, INSTANCE_VARS)
         return _DataSaver.add_path(filename)
 
     @staticmethod
     def weights_filename(filename: str) -> str:
-        filename = _DataSaver.construct_filename(filename, " weights")
+        filename = _DataSaver.construct_filename(filename, WEIGHTS)
         return _DataSaver.add_path(filename)
 
     @staticmethod
     def add_path(filename: str) -> str:
-        return "savednets/%s" % filename
+        return "%s/%s" % (FILE_PATH, filename)
 
     @staticmethod
     def preprocess_arrays_into_multiple_dict_elems(dictionary: Dict) -> Dict:

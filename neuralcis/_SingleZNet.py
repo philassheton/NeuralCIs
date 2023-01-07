@@ -205,29 +205,29 @@ class _SingleZNet(_DataSaver):
             y_and_params: Tensor1[tf32, NetInputs]
     ) -> Tensor1[tf32, NumApproximations]:
 
-        n_samples = 20000
-        n_approximations = 30
+        num_samples = common.NUM_SAMPLES_FOR_IDEAL_ERROR_ESTIMATION
+        largest_gap = common.GAP_BETWEEN_SAMPLES_FOR_PDF_ESTIMATION
 
         y = y_and_params[0]
         params = y_and_params[1:]
 
-        params_repeated = tf.repeat([params], n_samples, axis=0)
+        params_repeated = tf.repeat([params], num_samples, axis=0)
         ys = self.sampling_distribution_fn(params_repeated)
         centred = ys - y
 
         centred_padded = tf.concat([
             centred,
-            tf.repeat(np.inf, n_approximations),
-            tf.repeat(-np.inf, n_approximations)
+            tf.repeat(np.inf, largest_gap),
+            tf.repeat(-np.inf, largest_gap)
         ], axis=0)
 
         points_above = -tf.math.top_k(-centred_padded[centred_padded > 0],
-                                      k=n_approximations).values
+                                      k=largest_gap).values
         points_below = tf.math.top_k(centred_padded[centred_padded <= 0],
-                                     k=n_approximations).values
+                                     k=largest_gap).values
         gaps = points_above - points_below
-        gap_widths = tf.cast(tf.range(n_approximations) * 2 + 1, tf.float32)
-        pdf_estimates = gap_widths / (n_samples * gaps)
+        gap_widths = tf.cast(tf.range(largest_gap) * 2 + 1, tf.float32)
+        pdf_estimates = gap_widths / (num_samples * gaps)
 
         return -tf.math.log(pdf_estimates)
 
@@ -263,7 +263,10 @@ class _SingleZNet(_DataSaver):
         )
 
         # allow max 10% missing values
-        tf.debugging.assert_less_equal(inflation_for_missing_values, 1.1)
+        tf.debugging.assert_less_equal(
+            inflation_for_missing_values,
+            1. / (1. - common.MAX_PROPORTION_MISSING_VALUES_TO_TOLERATE)
+        )
 
         return total_loss * inflation_for_missing_values
 

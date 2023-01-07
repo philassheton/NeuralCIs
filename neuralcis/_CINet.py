@@ -53,7 +53,11 @@ class _CINet:
 
     @tf.function
     def sample_params(self, n: ttf.int32) -> Tensor2[tf32, Samples, Params]:
-        return tf.random.uniform((n, self.get_num_params()), -1., 1.)
+        return tf.random.uniform(
+            (n, self.get_num_params()),
+            tf.constant(common.PARAMS_MIN),
+            tf.constant(common.PARAMS_MAX)
+        )
 
     @tf.function
     def simulate_training_data(

@@ -157,7 +157,7 @@ class _SimulatorNet(_DataSaver):
 
     def fit(
             self,
-            max_epochs: int,
+            max_epochs: int = common.MAX_EPOCHS,
             minibatch_size: int = common.MINIBATCH_SIZE,
             learning_rate_initial: float = common.LEARNING_RATE_INITIAL,
             divide_after_flattening_for: int =
@@ -180,7 +180,8 @@ class _SimulatorNet(_DataSaver):
                 minibatch_size=tf.constant(minibatch_size)
             )
 
-            if tfp.stats.variance(validation_losses) < 1.:
+            validation_variance = tfp.stats.variance(validation_losses)
+            if validation_variance < common.TARGET_VALIDATION_LOSS_VARIANCE:
                 break
 
             if self.batches_since_optimum > divide_after_flattening_for:       # type: ignore
