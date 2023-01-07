@@ -174,16 +174,32 @@ class _CINet:
         return lower, upper
 
     @tf.function
+    def add_known_params(
+            self,
+            good_params: Tensor1[tf32, Samples],
+            known_params: Tensor2[tf32, Samples, KnownParams]
+    ) -> Tensor2[tf32, Samples, Params]:
+
+        return tf.concat([tf.transpose([good_params]), known_params], axis=1)  # type: ignore
+
+    @tf.function
     def ci(
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
             known_params: Tensor2[tf32, Samples, KnownParams],
             conf_levels: Tensor1[tf32, Samples]
-    ):
+    ) -> Tuple[Tensor2[tf32, Samples, Params], Tensor2[tf32, Samples, Params]]:
 
         net_inputs = self.net_inputs(estimates, known_params, conf_levels)
         net_outputs = self.cinet.call_tf(net_inputs)
 
         lower, upper = self.output_activation(net_outputs, estimates)
 
-        return lower, upper
+        # when dealing with transformed values, we need to know all params
+        #    because other params might be used in the de-transform.
+        # TODO: Make sure that the multidimensional case uses the right set of
+        #       params for the de-transform.
+        lower_full = self.add_known_params(lower, known_params)
+        upper_full = self.add_known_params(upper, known_params)
+
+        return lower_full, upper_full
