@@ -3,7 +3,7 @@ import tensorflow as tf
 from typing import Optional, List, Dict
 
 
-class DataSaver:
+class _DataSaver:
     # subobjects to save maps the filename suffix for the object to the object
     # OR an array of objects
     def __init__(self,
@@ -73,13 +73,13 @@ class DataSaver:
 
     @staticmethod
     def instance_variables_filename(filename: str) -> str:
-        filename = DataSaver.construct_filename(filename, " instancevars")
-        return DataSaver.add_path(filename)
+        filename = _DataSaver.construct_filename(filename, " instancevars")
+        return _DataSaver.add_path(filename)
 
     @staticmethod
     def weights_filename(filename: str) -> str:
-        filename = DataSaver.construct_filename(filename, " weights")
-        return DataSaver.add_path(filename)
+        filename = _DataSaver.construct_filename(filename, " weights")
+        return _DataSaver.add_path(filename)
 
     @staticmethod
     def add_path(filename: str) -> str:

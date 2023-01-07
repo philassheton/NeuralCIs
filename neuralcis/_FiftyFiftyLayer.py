@@ -7,9 +7,9 @@ from neuralcis.common import Samples, LayerInputs, LayerOutputs
 tf32 = ttf.float32
 
 
-class FiftyFiftyLayer(tf.keras.layers.Layer):
+class _FiftyFiftyLayer(tf.keras.layers.Layer):
     def __init__(self, n_outputs_per_activation: int) -> None:
-        super(FiftyFiftyLayer, self).__init__()
+        super(_FiftyFiftyLayer, self).__init__()
         self.n_outputs_per_activation = n_outputs_per_activation
         self.n_outputs = n_outputs_per_activation * 2
 

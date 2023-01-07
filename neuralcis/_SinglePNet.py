@@ -1,6 +1,6 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
-from neuralcis.SingleZNet import SingleZNet
+from neuralcis._SingleZNet import _SingleZNet
 from neuralcis import common
 
 # typing
@@ -11,7 +11,7 @@ from neuralcis.common import Samples, Params, Estimates
 import tensor_annotations.tensorflow as ttf
 
 
-class SinglePNet:
+class _SinglePNet:
     def __init__(
             self,
             sampling_distribution_fn: Callable[
@@ -32,7 +32,7 @@ class SinglePNet:
             self.validation_params
         )
 
-        self.znet = SingleZNet(
+        self.znet = _SingleZNet(
             self.sampling_distribution,
             self.sample_params,
             self.validation_set
@@ -67,7 +67,7 @@ class SinglePNet:
     ) -> Tuple[Tensor1[tf32, Samples], Tensor2[tf32, Samples, Params]]:
 
         # TODO: now that y is encoded as "estimates", it feels like it
-        #       might be more logical to code SingleZNet to always have
+        #       might be more logical to code _SingleZNet to always have
         #       params followed by y, to follow the convention of
         #       (params, estimates) pairs in the rest of the code (or
         #       even better reverse (params, estimates) so that we get

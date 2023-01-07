@@ -1,5 +1,5 @@
-from neuralcis.DataSaver import DataSaver
-from neuralcis.SimulatorNet import SimulatorNet
+from neuralcis._DataSaver import _DataSaver
+from neuralcis._SimulatorNet import _SimulatorNet
 
 import neuralcis.common as common
 
@@ -16,7 +16,7 @@ tf32 = ttf.float32
 
 
 # estimates the density of y given params
-class SingleZNet(DataSaver):
+class _SingleZNet(_DataSaver):
     def __init__(
             self,
             sampling_distribution_fn: Callable[
@@ -43,7 +43,7 @@ class SingleZNet(DataSaver):
         y, params = self.validation_set_fn()
         self.validation_optimum_losses = tf.Variable(y * 0.)
 
-        self.net = SimulatorNet(
+        self.net = _SimulatorNet(
             self.simulate_net_inputs_and_none_targets,
             self.validation_set_as_net_inputs_and_none_targets,
             self.loss,
