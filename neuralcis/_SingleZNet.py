@@ -67,7 +67,7 @@ class _SingleZNet(_DataSaver):
 
         return net_inputs, target_outputs
 
-    def __call__(self, y, *argv):
+    def __call__(self, y, *argv) -> Tensor1[tf32, Samples]:
         params = common.combine_input_args_into_tensor(*argv)
         return self.call_tf(y, params)
 
@@ -247,7 +247,7 @@ class _SingleZNet(_DataSaver):
     @tf.function
     def total_ideal_loss_accounting_for_missings(
             self
-    ) -> Tensor1[tf32, Samples]:
+    ) -> ttf.float32:
 
         losses = self.validation_optimum_losses
         total_loss = tf.reduce_sum(losses[                                     # type: ignore

@@ -301,7 +301,7 @@ class _SimulatorNet(_DataSaver):
 
     def set_validation_optimum_loss(
             self,
-            validation_optimum_loss: Tensor1[tf32, Samples]
+            validation_optimum_loss: ttf.float32
     ) -> None:
 
         self.validation_optimum_loss.assign(validation_optimum_loss)
