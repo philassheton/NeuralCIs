@@ -4,6 +4,7 @@ import tensorflow as tf
 import neuralcis.common as common
 from neuralcis._SinglePNet import _SinglePNet
 from neuralcis._CINet import _CINet
+from neuralcis._DataSaver import _DataSaver
 from neuralcis import sampling
 
 from typing import Tuple, Union
@@ -12,7 +13,7 @@ from tensor_annotations.tensorflow import float32 as tf32
 from neuralcis.common import Samples, Estimates, Params
 
 
-class NeuralCIs(ABC):
+class NeuralCIs(ABC, _DataSaver):
     """Train neural networks that compute *p*-values and confidence intervals.
 
     The following instance variables are important to the correct setup of
@@ -254,7 +255,7 @@ class NeuralCIs(ABC):
     #
     ###########################################################################
 
-    def __init__(self) -> None:
+    def __init__(self, filename: str = "") -> None:
         assert(self.num_good_param == 1)
         assert(self.num_nuisance_param == 0)
 
@@ -267,6 +268,12 @@ class NeuralCIs(ABC):
         self.cinet = _CINet(self.pnet,
                             self._sampling_distribution_fn,
                             self.num_known_param)
+
+        _DataSaver.__init__(
+            self,
+            filename,
+            {"pnet": self.pnet,
+             "cinet": self.cinet})
 
     @tf.function
     def _sampling_distribution_fn(

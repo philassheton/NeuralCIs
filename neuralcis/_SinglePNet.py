@@ -1,6 +1,7 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 from neuralcis._SingleZNet import _SingleZNet
+from neuralcis._DataSaver import _DataSaver
 from neuralcis import common
 
 # typing
@@ -11,7 +12,7 @@ from neuralcis.common import Samples, Params, Estimates
 import tensor_annotations.tensorflow as ttf
 
 
-class _SinglePNet:
+class _SinglePNet(_DataSaver):
     def __init__(
             self,
             sampling_distribution_fn: Callable[
@@ -19,7 +20,8 @@ class _SinglePNet:
                 Tensor2[tf32, Samples, Estimates]
             ],
             num_known_params: int,
-            two_sided: bool = True
+            two_sided: bool = True,
+            filename: str = ""
     ) -> None:
 
         self.sampling_distribution_fn = sampling_distribution_fn
@@ -37,6 +39,8 @@ class _SinglePNet:
             self.sample_params,
             self.validation_set
         )
+
+        super().__init__(filename, {"znet": self.znet})
 
     def fit(self, *args, **kwargs) -> None:
         self.znet.fit(*args, **kwargs)
