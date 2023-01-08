@@ -1,4 +1,3 @@
-from neuralcis._DataSaver import _DataSaver
 from neuralcis._SimulatorNet import _SimulatorNet
 
 import neuralcis.common as common
@@ -9,14 +8,17 @@ import numpy as np
 
 from typing import Callable, Tuple, Any
 from neuralcis.common import Params, Samples, NetInputs, NumApproximations
-from neuralcis.common import NetOutputBlob
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 tf32 = ttf.float32
 
 
+NetOutputBlob = Tuple[Tensor1[tf32, Samples],          # net outputs (z values)
+                      Tensor1[tf32, Samples]]      # dz/dy derivs wrt focal var
+
+
 # estimates the density of y given params
-class _SingleZNet(_DataSaver):
+class _SingleZNet(_SimulatorNet):
     def __init__(
             self,
             sampling_distribution_fn: Callable[
@@ -33,7 +35,8 @@ class _SingleZNet(_DataSaver):
                     Tensor1[tf32, Samples],                       # y
                     Tensor2[tf32, Samples, Params]                # params
                 ]],
-            filename: str = ""
+            filename: str = "",
+            **network_setup_args
     ) -> None:
 
         self.sampling_distribution_fn = sampling_distribution_fn
@@ -43,23 +46,19 @@ class _SingleZNet(_DataSaver):
         y, params = self.validation_set_fn()
         self.validation_optimum_losses = tf.Variable(y * 0.)
 
-        self.net = _SimulatorNet(
-            self.simulate_net_inputs_and_none_targets,
-            self.validation_set_as_net_inputs_and_none_targets,
-            self.loss,
-            self.outputs_and_transformation_derivs
-        )
+        _SimulatorNet.__init__(self, filename=filename, **network_setup_args)
 
-        super().__init__(
-            filename,
-            subobjects_to_save={"simulator": self.net}
-        )
+    ###########################################################################
+    #
+    #  Methods overridden from _SimulatorNet
+    #
+    ###########################################################################
 
     @tf.function
-    def simulate_net_inputs_and_none_targets(
+    def simulate_training_data(
             self,
             n: ttf.int32
-    ) -> Tuple[NetOutputBlob, None]:
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], None]:
 
         y, params = self.sample_y_and_params(n)
         net_inputs = self.net_inputs(y, params)
@@ -67,29 +66,80 @@ class _SingleZNet(_DataSaver):
 
         return net_inputs, target_outputs
 
+    @tf.function
+    def get_validation_set(
+            self
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], None]:
+
+        return self.net_inputs(*self.validation_set_fn()), None
+
+    @tf.function
+    def loss(
+            self,
+            net_outputs: NetOutputBlob,
+            target_outputs: None = None
+    ) -> ttf.float32:
+
+        outputs, sample_grads_floored = net_outputs
+        neg_log_likelihoods = self.neg_log_likelihoods(outputs,
+                                                       sample_grads_floored)
+        loss = tf.math.reduce_sum(neg_log_likelihoods)
+
+        tf.debugging.check_numerics(loss,
+                                    "Na or inf in loss in single Z Net opt")
+
+        return loss
+
+    @tf.function
+    def run_net_during_training(
+            self,
+            net: tf.keras.Model,
+            net_inputs: Tensor2[tf32, Samples, NetInputs],
+            training: ttf.bool = tf.constant(True)
+    ) -> NetOutputBlob:
+
+        return self.net_outputs_and_transformation_derivs(
+            net=net,
+            y_and_params=net_inputs,
+            training=training
+        )
+
+    @tf.function
+    def call_tf(
+            self,
+            y: Tensor1[tf32, Samples],
+            params: Tensor2[tf32, Samples, Params]
+    ) -> Tensor1[tf32, Samples]:
+
+        net_inputs = self.net_inputs(y, params)
+        net_outputs = super().call_tf(net_inputs)
+        return self.pull_first_column(net_outputs)
+
+    def compute_optimum_loss(self) -> ttf.float32:
+        # TODO: the individual losses here are not currently saved.  Need to
+        #       rewrite _DataSaver to have functions that can be overridden
+        #       instead of taking constructor args which need screwing with.
+
+        self.validation_optimum_losses.assign(
+            self.estimate_perfect_error_for_validation_set()[:, -1]
+        )
+        return self.total_ideal_loss_accounting_for_missings()
+
+    ###########################################################################
+    #
+    #  Non-Tensorflow members
+    #
+    ###########################################################################
+
     def __call__(self, y, *argv) -> Tensor1[tf32, Samples]:
         params = common.combine_input_args_into_tensor(*argv)
         return self.call_tf(y, params)
 
-    def fit(
-            self,
-            *args,
-            precompute_optimum_loss: bool = False,
-            **kwargs
-    ) -> None:
-        if precompute_optimum_loss:
-            self.precompute_optimum_loss()
-        self.net.fit(*args, **kwargs)
-
-    def precompute_optimum_loss(self) -> None:
-        print("Calculating optimum loss")
-        self.validation_optimum_losses.assign(
-            self.estimate_perfect_error_for_validation_set()[:, -1]
-        )
-        print("Calculated optimum loss")
-        self.net.set_validation_optimum_loss(
-            self.total_ideal_loss_accounting_for_missings()
-        )
+    ###########################################################################
+    #
+    #  Tensorflow members
+    #
+    ###########################################################################
 
     @tf.function
     def net_inputs(
@@ -102,26 +152,6 @@ class _SingleZNet(_DataSaver):
             tf.transpose([y]),
             params
         ], axis=1)
-
-    # TODO: Restructure so this only needs to calculate derivatives when
-    #       calculating the PDF (or log likelihood).
-    @tf.function
-    def call_tf(
-            self,
-            y: Tensor1[tf32, Samples],
-            params: Tensor2[tf32, Samples, Params]
-    ) -> Tensor1[tf32, Samples]:
-
-        net_inputs = self.net_inputs(y, params)
-        net_outputs = self.net.call_tf(net_inputs)
-        return self.pull_first_column(net_outputs)
-
-    @tf.function
-    def validation_set_as_net_inputs_and_none_targets(
-            self
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], None]:
-
-        return self.net_inputs(*self.validation_set_fn()), None
 
     # work first additively in log space to avoid overflows
     @tf.function
@@ -138,15 +168,16 @@ class _SingleZNet(_DataSaver):
         return neg_log_likelihoods
 
     @tf.function
-    def outputs_and_transformation_derivs(
+    def net_outputs_and_transformation_derivs(
             self,
-            net,
+            net: tf.keras.Model,
             y_and_params: Tensor2[tf32, Samples, NetInputs],
-            training: bool = tf.constant(False)
+            training: bool
     ) -> Tuple[Tensor1[tf32, Samples], Tensor1[tf32, Samples]]:
 
         y = self.pull_first_column(y_and_params)
         params = self.get_params_from_net_inputs(y_and_params)
+
         with tf.GradientTape() as tape:                                        # type: ignore
             tape.watch(y)
             net_inputs = self.net_inputs(y, params)
@@ -160,23 +191,6 @@ class _SingleZNet(_DataSaver):
                                                    punitive_but_not_zero)
 
         return outputs, sample_gradients_floored
-
-    @tf.function
-    def loss(
-            self,
-            net_outputs: Tuple[Tensor1[tf32, Samples], Tensor1[tf32, Samples]],
-            _: None
-    ) -> ttf.float32:
-
-        outputs, sample_grads_floored = net_outputs
-        neg_log_likelihoods = self.neg_log_likelihoods(outputs,
-                                                       sample_grads_floored)
-        loss = tf.math.reduce_sum(neg_log_likelihoods)
-
-        tf.debugging.check_numerics(loss,
-                                    "Na or inf in loss in single Z Net opt")
-
-        return loss
 
     @tf.function
     def sample_params(
@@ -196,8 +210,15 @@ class _SingleZNet(_DataSaver):
         y = self.sampling_distribution_fn(params)
         return y, params
 
+    ###########################################################################
+    #
+    #  Estimation of ideal error
+    #
+    ###########################################################################
+
     # TODO: Is there a cleaner way than concatting y_and_params so we can map
     #  over them?  map allows you to do (y, params) but then it asks for self..
+
     @ tf.function
     def estimate_perfect_error_for_one_datapoint(
             self,
@@ -244,6 +265,7 @@ class _SingleZNet(_DataSaver):
     # TODO: The optimum error estimator still calculates a series of estimates
     #       and now only the last one is used, so rewrite the functions to only
     #       pass around one set of approximations.
+
     @tf.function
     def total_ideal_loss_accounting_for_missings(
             self
@@ -268,6 +290,12 @@ class _SingleZNet(_DataSaver):
         )
 
         return total_loss * inflation_for_missing_values
+
+    ###########################################################################
+    #
+    #  Type conversions
+    #
+    ###########################################################################
 
     # TODO: The following functions only currently exist as a coping mechanism
     #  for gaps in the tensorflow_annotations (it does not seem to understand

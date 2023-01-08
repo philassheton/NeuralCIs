@@ -8,12 +8,18 @@ import neuralcis.common as common
 from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from neuralcis.common import Samples, Params, Estimates, NetInputs, NetOutputs
-from neuralcis.common import KnownParams, NetTargetBlob
+from neuralcis.common import KnownParams
 import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
 
 
-class _CINet:
+NetOutputBlob = Tensor2[tf32, Samples, NetOutputs]
+NetTargetBlob = Tuple[Tensor2[tf32, Samples, Estimates],
+                      Tensor2[tf32, Samples, Params],
+                      Tensor1[tf32, Samples]]                        # p-values
+
+
+class _CINet(_SimulatorNet):
     def __init__(
             self,
             pnet: _SinglePNet,                # TODO: make a protocol for PNets
@@ -21,7 +27,9 @@ class _CINet:
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Estimates]
             ],
-            num_known_param: int
+            num_known_param: int,
+            filename: str = "",
+            **network_setup_args
     ) -> None:
 
         self.pnet = pnet
@@ -32,26 +40,68 @@ class _CINet:
             common.VALIDATION_SET_SIZE
         )
 
-        self.cinet = _SimulatorNet(
-            self.simulate_training_data,
-            self.get_validation_set,
-            self.loss,
-            num_outputs=2
-        )
+        _SimulatorNet.__init__(self,
+                               num_outputs=2,
+                               filename=filename,
+                               **network_setup_args)
 
-    def fit(
+    ###########################################################################
+    #
+    #  Methods overridden from _SimulatorNet
+    #
+    ###########################################################################
+
+    @tf.function
+    def simulate_training_data(
             self,
-            *args,
-            precompute_optimum_loss: bool = True,
-            **kwargs
-    ) -> None:
+            n: ttf.int32
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], NetTargetBlob]:
 
-        if precompute_optimum_loss:
-            self.precompute_optimum_loss()
-        self.cinet.fit(*args, **kwargs)
+        params = self.sample_params(n)
+        estimates = self.sampling_distribution_fn(params)
+        target_p = tf.random.uniform((n,), tf.constant(0.), tf.constant(1.))
 
-    def precompute_optimum_loss(self) -> None:
-        self.cinet.set_validation_optimum_loss(tf.constant(0.))
+        known_params = self.known_params(params)
+        inputs = self.net_inputs(estimates, known_params, target_p)
+        outputs = (estimates, params, target_p)
+
+        return inputs, outputs
+
+    @tf.function
+    def get_validation_set(
+            self
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], NetTargetBlob]:
+
+        return self.validation_set
+
+    @tf.function
+    def loss(
+            self,
+            net_outputs: NetOutputBlob,
+            target_outputs: NetTargetBlob
+    ) -> ttf.float32:
+
+        estimates, params, p = target_outputs
+
+        lower, upper = self.output_activation(net_outputs, estimates)
+
+        p_lower = self.run_pnet_plugin_first_param(estimates, params, lower)
+        p_upper = self.run_pnet_plugin_first_param(estimates, params, upper)
+
+        squared_errors = (tf.math.square(p_lower - p) +
+                          tf.math.square(p_upper - p))
+
+        return tf.reduce_mean(squared_errors)
+
+    @tf.function
+    def compute_optimum_loss(self) -> ttf.float32:
+        return tf.constant(0.)
+
+    ###########################################################################
+    #
+    #  Tensorflow members
+    #
+    ###########################################################################
 
     @tf.function
     def get_num_params(self) -> int:
@@ -69,22 +119,6 @@ class _CINet:
             tf.constant(common.PARAMS_MIN),
             tf.constant(common.PARAMS_MAX)
         )
-
-    @tf.function
-    def simulate_training_data(
-            self,
-            n: ttf.int32
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], NetTargetBlob]:
-
-        params = self.sample_params(n)
-        estimates = self.sampling_distribution_fn(params)
-        target_p = tf.random.uniform((n,), tf.constant(0.), tf.constant(1.))
-
-        known_params = self.known_params(params)
-        inputs = self.net_inputs(estimates, known_params, target_p)
-        outputs = (estimates, params, target_p)
-
-        return inputs, outputs                                                 # type: ignore
 
     @tf.function
     def net_inputs(
@@ -119,36 +153,6 @@ class _CINet:
             known_params
         ], axis=1)
         return combined_params
-
-    @tf.function
-    def get_validation_set(
-            self
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], NetTargetBlob]:
-
-        return self.validation_set
-
-    @tf.function
-    def loss(
-            self,
-            net_outputs: Tensor2[tf32, Samples, NetOutputs],
-            target_outputs: Tuple[
-                Tensor2[tf32, Samples, Estimates],
-                Tensor2[tf32, Samples, Params],
-                Tensor1[tf32, Samples]
-            ]
-    ) -> ttf.float32:
-
-        estimates, params, p = target_outputs
-
-        lower, upper = self.output_activation(net_outputs, estimates)
-
-        p_lower = self.run_pnet_plugin_first_param(estimates, params, lower)
-        p_upper = self.run_pnet_plugin_first_param(estimates, params, upper)
-
-        squared_errors = (tf.math.square(p_lower - p) +
-                          tf.math.square(p_upper - p))
-
-        return tf.reduce_mean(squared_errors)
 
     @tf.function
     def run_pnet_plugin_first_param(
@@ -191,7 +195,7 @@ class _CINet:
     ) -> Tuple[Tensor2[tf32, Samples, Params], Tensor2[tf32, Samples, Params]]:
 
         net_inputs = self.net_inputs(estimates, known_params, conf_levels)
-        net_outputs = self.cinet.call_tf(net_inputs)
+        net_outputs = self.call_tf(net_inputs)
 
         lower, upper = self.output_activation(net_outputs, estimates)
 
