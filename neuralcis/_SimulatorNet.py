@@ -121,7 +121,7 @@ class _SimulatorNet(ABC, _DataSaver):
             n: ttf.int32
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], Optional[NetTargetBlob]]:
 
-        """Generate net input samples and targets.
+        """Generate net input samples and output targets.
 
         Must be a `tf.function`.
 
@@ -174,19 +174,6 @@ class _SimulatorNet(ABC, _DataSaver):
     ###########################################################################
 
     @tf.function
-    def compute_optimum_loss(self) -> ttf.float32:
-
-        """Compute an estimate of the optimum loss for the validation set.
-
-        If this is not possible, the default behaviour in this version
-        (which returns `np.nan`) will suppress use of an optimum loss.
-
-        :return: A `tf.float32` estimate of the optimum loss value.
-        """
-
-        return tf.constant(np.nan)
-
-    @tf.function
     def run_net_during_training(
             self,
             net: tf.keras.Model,
@@ -200,15 +187,28 @@ class _SimulatorNet(ABC, _DataSaver):
         outputs of the network to calculate the loss.
 
         :param net: The underlying Keras network to be run.
-        :param net_inputs: A 2D samples x network `Tensor` of inputs.
+        :param net_inputs: A 2D samples x inputs `Tensor` of inputs.
         :param training: A bool that is passed into the Sequential object,
             defaults to True (since we only run this function in training
-            mode)
+            mode).  Is not used except to pass to the Keras model.
         :return: Whatever values from the network that are needed by
             `self.loss` in order to be able to calculate the loss.
         """
 
         return net(net_inputs, training=training)
+
+    @tf.function
+    def compute_optimum_loss(self) -> ttf.float32:
+
+        """Compute an estimate of the optimum loss for the validation set.
+
+        If this is not possible, the default behaviour in this version
+        (which returns `np.nan`) will suppress use of an optimum loss.
+
+        :return: A `tf.float32` estimate of the optimum loss value.
+        """
+
+        return tf.constant(np.nan)
 
     ###########################################################################
     #

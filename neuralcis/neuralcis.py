@@ -19,14 +19,15 @@ class NeuralCIs(ABC, _DataSaver):
     The following instance variables are important to the correct setup of
     the model:
 
-    :ivar self.num_good_param: An int, the number of parameters to be estimated.
-        In Version 1.0.0, this defaults to 1 and **CANNOT** be changed.
-    :ivar self.num_nuisance_param: An int, the number of nuisance variables that
-        need to be removed from the estimation.  In Version 1.0.0, this
+    :ivar self.num_good_param: An int, the number of parameters to be
+        estimated.  In Version 1.0.0, this defaults to 1 and **CANNOT** be
+        changed.
+    :ivar self.num_nuisance_param: An int, the number of nuisance variables
+        that need to be removed from the estimation.  In Version 1.0.0, this
         defaults to 0 and **CANNOT** be changed.
-    :ivar self.num_known_param: An int, the number of further parameters that are
-        known *a priori* (for example sample sizes).  This defaults to 0 and
-        **CAN** be changed.
+    :ivar self.num_known_param: An int, the number of further parameters
+        that are known *a priori* (for example sample sizes).  This defaults
+        to 0 and **CAN** be changed.
 
     The following methods must also be implemented:
 
@@ -364,5 +365,9 @@ class NeuralCIs(ABC, _DataSaver):
 
         return tf.math.reduce_max(errors)
 
-    def _tensor1_first_elem_to_float(self, tensor: Tensor1[tf32, Samples]) -> float:
+    def _tensor1_first_elem_to_float(
+            self,
+            tensor: Tensor1[tf32, Samples]
+    ) -> float:
+
         return float(tensor.numpy()[0])
