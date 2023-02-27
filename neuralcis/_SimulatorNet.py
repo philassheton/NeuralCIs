@@ -37,7 +37,7 @@ class _SimulatorNet(ABC, _DataSaver):
         also be a `tf.function`.
     :func loss: A function that takes the output from
         `self.run_net_during_training` and the target values from
-        `self.simulate_sampling_distribution` and calculates a loss value.
+        `self.sampling_distribution_fn` and calculates a loss value.
 
     The following function can be overridden if more than just the network
     outputs are needed to calculate the loss:
@@ -141,7 +141,7 @@ class _SimulatorNet(ABC, _DataSaver):
         Must be a `tf.function`.
 
         Should return simulations in the same format as
-        `simulate_sampling_distribution`.
+        `sampling_distribution_fn`.
 
         :return: A tuple containing two elements: (1) A 2D `Tensor` of
         samples x network inputs and (2) whatever target values are needed
