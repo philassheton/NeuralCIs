@@ -1,45 +1,39 @@
-from abc import ABC, abstractmethod
-
 import tensorflow as tf
-import neuralcis.common as common
+from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
+
+from neuralcis import common
 from neuralcis._SinglePNet import _SinglePNet
 from neuralcis._CINet import _CINet
 from neuralcis._DataSaver import _DataSaver
 from neuralcis import sampling
 
-from typing import Tuple, Union
+# for typing
+from typing import Tuple, Union, Callable, List, Dict
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
 from neuralcis.common import Samples, Estimates, Params
+from neuralcis.distributions import Distribution
 
 
-class NeuralCIs(ABC, _DataSaver):
+class NeuralCIs(_DataSaver):
     """Train neural networks that compute *p*-values and confidence intervals.
-
-    The following instance variables are important to the correct setup of
-    the model:
-
-    :ivar self.num_good_param: An int, the number of parameters to be
-        estimated.  In Version 1.0.0, this defaults to 1 and **CANNOT** be
-        changed.
-    :ivar self.num_nuisance_param: An int, the number of nuisance variables
-        that need to be removed from the estimation.  In Version 1.0.0, this
-        defaults to 0 and **CANNOT** be changed.
-    :ivar self.num_known_param: An int, the number of further parameters
-        that are known *a priori* (for example sample sizes).  This defaults
-        to 0 and **CAN** be changed.
 
     The following methods must also be implemented:
 
-    :func simulate_sampling_distribution: Generate samples from the sampling
-        distribution.
-    :func params_from_std_uniform: Mapping from a set of standard uniform
-        variables to an appropriate sampling of the parameters.
-    :func params_from_std_uniform: The inversion of the mapping in `
-        params_from_std_uniform`.
-    :func estimates_to_std_uniform: A mapping from parameter estimates into
-        a similar space to that used by `params_from_std_uniform`.  In most
-        cases this can be just the same transform.
+    :param sampling_distribution_fn: Generate samples from the sampling
+        distribution.  This function will be fed 1D Tensorflow Tensors, where
+         the elements of each Tensor at a given index represent the
+         parameter values at one given sample, and should return 1D Tensors
+         of the same length, in the same order.  The return value should be
+         a dict, whose values are estimates of the parameters (except for
+         any parameters that are known *a priori*), and whose keys are the
+         names of those parameters (and exactly the same as the names used
+         in the function signature).  See example below.
+    :param filename: Optional string; will load network weights from a
+        previous training session.
+    :param **param_distributions: For each parameter to the
+        sampling_distribution_fn a parameter sampling distribution object
+        needs to be passed in by name (same name as in the sampling function).
 
     Once an instance of the new class is instantiated, the following members
     allow the model to be fit, and for p-values and confidence intervals to
@@ -48,81 +42,73 @@ class NeuralCIs(ABC, _DataSaver):
     :func fit:  Fit the networks to the simulation.
     :func p_and_ci: Calculate *p*-value and confidence interval for a novel
         observation.
+
+    Example:
+
+    import tensorflow as tf
+    import neuralcis
+
+    def normal_sampling_fn(mu, sigma, n):
+        std_normal = tf.random.normal(tf.shape(mu))
+        mu_hat = std_normal * sigma / tf.math.sqrt(n) + mu
+        return {"mu": mu_hat}
+
+    cis = neuralcis.NeuralCIs(
+        normal_sampling_fn,
+        mu=   neuralcis.Uniform(  -2., 2.  ),
+        sigma=neuralcis.LogUniform(.1, 10. ),
+        n=    neuralcis.LogUniform(3., 300.)
+    )
+
+    cis.fit()
+    print(cis.p_and_ci(1.96, mu=0., sigma=4., n=16.))
     """
 
-    num_good_param: int = 1
-    num_nuisance_param: int = 0
-    num_known_param: int = 0
-
-    @abstractmethod
-    def simulate_sampling_distribution(
+    def __init__(
             self,
-            *params: Tensor1[tf32, Samples]
-    ) -> Tuple[Tensor1[tf32, Samples], ...]:
+            sampling_distribution_fn: Callable[
+                [Tuple[Tensor1[tf32, Samples], ...]],
+                Dict["str", Tensor1[tf32, Samples]]
+            ],
+            filename: str = "",
+            **param_distributions: Distribution
+    ) -> None:
 
-        """Generate samples from the sampling distribution.
+        if isinstance(sampling_distribution_fn, TFFunction):
+            self.sampling_distribution_fn = sampling_distribution_fn
+        else:
+            self.sampling_distribution_fn = tf.function(
+                sampling_distribution_fn
+            )
 
-        This must be a `tf.function` and should take as arguments the
-         parameters to the model, each as a 1D `Tensor` of `float32s`, and
-         return a tuple of parameter estimates, each also being a 1D `Tensor`.
-         In Version 1.0.0 this tuple should only contain one Tensor.  The
-         *n*th element of each `Tensor` returned should be a single sample
-         drawn from the sampling distribution defined by the parameters
-         defined at the *n*th element of each input `Tensor`.
-         """
+        (
+            self.param_names_in_sim_order,
+            self.estimate_names,
+            self.sim_to_net_order,
+            self.net_to_sim_order,
+            self.param_dists_in_sim_order,
+            self.estimate_dists_in_sim_order
+        ) = self._align_simulation_params(param_distributions)
 
-    @abstractmethod
-    def params_from_std_uniform(
+        self.num_param = len(self.param_dists_in_sim_order)
+        self.num_estimate = len(self.estimate_dists_in_sim_order)
+
+        assert(self._max_error_of_reverse_mapping().numpy() <
+               common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
+
+        num_known_param = self.num_param - 1
+        self.pnet = _SinglePNet(self._sampling_dist_net_interface,
+                                num_known_param)
+
+        self.cinet = _CINet(self.pnet,
+                            self._sampling_dist_net_interface,
+                            num_known_param)
+
+        _DataSaver.__init__(
             self,
-            *params: Tensor1[tf32, Samples]
-    ) -> Tuple[Tensor1[tf32, Samples], ...]:
-
-        """Transform standard uniform random variables into the parameters.
-
-        This must be a `tf.function` and should take as arguments as many 1D
-        `tf.float32` `Tensor`s as there are parameters.  These `Tensors` are
-        random standard uniform and should be converted into an appropriate
-        sampling of the parameter values within the desired ranges.  The
-        return value should be a tuple of transformed 1D `Tensor`s.
-        """
-
-    @abstractmethod
-    def params_to_std_uniform(
-            self,
-            *args: Tensor1[tf32, Samples],
-            **kwargs: Tensor1[tf32, Samples]
-    ) -> Tuple[Tensor1[tf32, Samples], ...]:
-
-        """Invert the `params_from_std_uniform` mapping.
-
-        This must be a `tf.function` and should take as arguments the
-        parameters to the model, each as a 1D `Tensor` of `tf.float32`s. The
-        return value should be a tuple of 1D `Tensor`s of the same cardinality
-        as the inputs, which are mapped from the inputs according to the exact
-        inverse of the `params_from_std_uniform` mapping.
-        """
-
-    @abstractmethod
-    def estimates_to_std_uniform(
-            self,
-            *args: Tensor1[tf32, Samples],
-            **kwargs: Tensor1[tf32, Samples]
-    ) -> Tuple[Tensor1[tf32, Samples], ...]:
-
-        """Transform the *estimates* similarly to `params_to_std_uniform`.
-
-        This must be a `tf.function` and should take as arguments the
-        estimates sampled by the model, each as a 1D `Tensor` of `
-        tf.float32s` (in Version 1.0.0, this is just a single input).
-        The return value is a tuple of 1D `Tensor`s (again, with just one
-        element).  This should apply a similar mapping to that applied to
-        the parameters in `params_to_std_uniform`; it is not necessary for
-        it to result in a standard uniform variable (unlike with the
-        parameters) but it should be *roughly* distributed between 0 and 1.
-        In most cases, the same transform can be used for the estimates as
-        for the parameters; care must only be taken that it does not generate
-        significant outliers far beyond 0 or 1.
-        """
+            filename,
+            {"pnet": self.pnet,
+             "cinet": self.cinet})
 
     def fit(
             self,
@@ -202,9 +188,10 @@ class NeuralCIs(ABC, _DataSaver):
 
     def p_and_ci(
             self,
-            *estimates_and_params: float,
-            conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL
-    ) -> Tuple[float, float, float]:
+            estimate: float,
+            conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL,
+            **params: float
+    ) -> Dict[str, float]:
 
         """Calculate the p-value and confidence interval for a novel case.
 
@@ -212,23 +199,23 @@ class NeuralCIs(ABC, _DataSaver):
         single estimate, null parameter value, and known parameters, and
         it will return p-value, lower bound, upper bound.
 
-        :param estimate, null param value, known params: Pass in one float
-            value for each of the following (*positional params*):
-            (1) observed parameter estimate, (2) null parameter value for
-            *p*-value and (3, 4, ...) known parameter values.
+        :param estimate: A float, the estimated value of the parameter.
+        :param **params**: For each parameter input to the simulation, a
+            named argument passing in the value of that parameter (for
+            the parameter being estimated, this should be the null value
+            under which the *p*-value is to be calculated).  Each should
+            be a float.
         :param conf_level: A float (default .95).  Confidence level for the
             confidence interval.
-        :return: Tuple of three floats: p-value, lower and upper CI bounds.
+        :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        estimates_and_params_expanded = [
-            tf.constant([x]) for x in estimates_and_params
-        ]
-        estimates = estimates_and_params_expanded[0:self.num_good_param]
-        params = estimates_and_params_expanded[self.num_good_param:]
+        estimates_tf = [tf.constant([estimate])]
+        params_sim_order = [params[i] for i in self.param_names_in_sim_order]
+        params_tf_sim_order = [tf.constant([x]) for x in params_sim_order]
 
-        estimates_uniform = self._estimates_to_transformed(*estimates)
-        params_uniform = self._params_to_transformed(*params)
+        estimates_uniform = self._estimates_to_net(*estimates_tf)
+        params_uniform = self._params_to_net(*params_tf_sim_order)
 
         known_params = self.cinet.known_params(params_uniform)
         p = self.pnet.p(estimates_uniform, params_uniform)
@@ -238,14 +225,25 @@ class NeuralCIs(ABC, _DataSaver):
             tf.constant([1. - conf_level])
         )
 
-        lower, *_ = self._params_from_transformed(lower_transformed)
-        upper, *_ = self._params_from_transformed(upper_transformed)
+        # TODO: improve this: it should be explicitly pulling the estimate(s)
+        #       rather than relying on it/them being first in the
+        #       sim_to_net_order.
+        index_of_estimate = self.sim_to_net_order[0]
 
-        return (
-            self._tensor1_first_elem_to_float(p),
-            self._tensor1_first_elem_to_float(lower),
-            self._tensor1_first_elem_to_float(upper)
-        )
+        lower = self._params_from_net(lower_transformed)[index_of_estimate]
+        upper = self._params_from_net(upper_transformed)[index_of_estimate]
+
+        # TODO: when moving to simultaneous intervals, this will need to change
+        assert(len(self.estimate_names) == 1)
+        estimate_name = self.estimate_names[0]
+        lower_name = estimate_name + "_lower"
+        upper_name = estimate_name + "_upper"
+
+        return {
+            "p": self._tensor1_first_elem_to_float(p),
+            lower_name: self._tensor1_first_elem_to_float(lower),
+            upper_name: self._tensor1_first_elem_to_float(upper)
+        }
 
     ###########################################################################
     #
@@ -256,47 +254,93 @@ class NeuralCIs(ABC, _DataSaver):
     #
     ###########################################################################
 
-    def __init__(self, filename: str = "") -> None:
-        assert(self.num_good_param == 1)
-        assert(self.num_nuisance_param == 0)
-
-        assert(self._max_error_of_reverse_mapping().numpy() <
-               common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
-
-        self.pnet = _SinglePNet(self._sampling_distribution_fn,
-                                self.num_known_param)
-
-        self.cinet = _CINet(self.pnet,
-                            self._sampling_distribution_fn,
-                            self.num_known_param)
-
-        _DataSaver.__init__(
-            self,
-            filename,
-            {"pnet": self.pnet,
-             "cinet": self.cinet})
-
     @tf.function
-    def _sampling_distribution_fn(
+    def _sampling_dist_net_interface(
             self,
             params_transformed: Tensor2[tf32, Samples, Params]
     ) -> Tensor2[tf32, Samples, Estimates]:
 
-        params = self._params_from_transformed(params_transformed)
-        estimates = self.simulate_sampling_distribution(*params)
-        estimates_transformed = self._estimates_to_transformed(*estimates)
+        params = self._params_from_net(params_transformed)
+        estimates = self.sampling_distribution_fn(*params).values()
+        estimates_transformed = self._estimates_to_net(*estimates)
 
         return estimates_transformed
 
-    def _get_num_params(self) -> int:
-        return (
-                self.num_good_param +
-                self.num_nuisance_param +
-                self.num_known_param
-        )
+    ###########################################################################
+    #
+    #  Shuffling data to and from the format the underlying nets use, and the
+    #   format used by the user-provided sampling function.  These two formats
+    #   differ in two key ways:
+    #
+    #   (1) The net assumes that the parameters should be sampled uniformly
+    #       from [-1, 1].  The net first translates these into standard uniform
+    #       values and then uses the user-provided distribution objects to
+    #       transform these standard uniform values into the raw parameters.
+    #
+    #   (2) The net assumes a particular order to the parameters, whereas the
+    #       inputs to the sampling function could be in any order.  The order
+    #       assumed by the net is: (i) parameters to be estimated,
+    #       (ii) nuisance parameters (not yet supported) and then (iii) known
+    #       parameters.
+    #
+    ###########################################################################
 
     @tf.function
-    def _std_uniform_to_transformed(
+    def _params_from_net(
+            self,
+            transformed: Tensor2[tf32, Samples, Params]
+    ) -> List[Tensor1[tf32, Samples]]:
+
+        uniform = self._std_uniform_from_net(transformed)
+        uniform_net_order = tf.unstack(uniform, num=self.num_param, axis=1)
+        uniform_sim_order = self._to_sim_order(uniform_net_order)
+        dist_unif = zip(self.param_dists_in_sim_order, uniform_sim_order)
+        params = [dist.from_std_uniform(unif) for dist, unif in dist_unif]
+
+        return params
+
+    @tf.function
+    def _params_to_net(
+            self,
+            *params: Tensor1[tf32, Samples]
+    ) -> Tensor2[tf32, Samples, Params]:
+
+        dist_par = zip(self.param_dists_in_sim_order, params)
+        unif_sim_order = [dist.to_std_uniform(par) for dist, par in dist_par]
+        unif_net_order = self._to_net_order(unif_sim_order)
+        params_std_uniform_stacked = tf.stack(unif_net_order, axis=1)
+        return self._std_uniform_to_net(params_std_uniform_stacked)
+
+    @tf.function
+    def _estimates_to_net(
+            self,
+            *estimates: Tensor1[tf32, Samples]
+    ) -> Tensor2[tf32, Samples, Estimates]:
+
+        # the net is organised in the same order as the estimates so no need
+        #   for a reordering (unlike with the params)
+        dist_est = zip(self.estimate_dists_in_sim_order, estimates)
+        uniform = [dist.to_std_uniform(est) for dist, est in dist_est]
+        uniform_stacked = tf.stack(uniform, axis=1)
+        return self._std_uniform_to_net(uniform_stacked)
+
+    @tf.function
+    def _to_sim_order(self, tensors: List[Tensor1]) -> List[Tensor1]:
+        return [tensors[i] for i in self.net_to_sim_order]
+
+    @tf.function
+    def _to_net_order(self, tensors: List[Tensor1]) -> List[Tensor1]:
+        return [tensors[i] for i in self.sim_to_net_order]
+
+    def _tensor1_first_elem_to_float(
+            self,
+            tensor: Tensor1[tf32, Samples]
+    ) -> float:
+
+        return float(tensor.numpy()[0])
+
+    @tf.function
+    def _std_uniform_to_net(
             self,
             std_uniform: Tensor2[tf32, Samples, Union[Estimates, Params]]
     ) -> Tensor2[tf32, Samples, Union[Estimates, Params]]:
@@ -306,7 +350,7 @@ class NeuralCIs(ABC, _DataSaver):
         )
 
     @tf.function
-    def _std_uniform_from_transformed(
+    def _std_uniform_from_net(
             self,
             transformed: Tensor2[tf32, Samples, Union[Estimates, Params]]
     ) -> Tensor2[tf32, Samples, Union[Estimates, Params]]:
@@ -315,59 +359,110 @@ class NeuralCIs(ABC, _DataSaver):
             transformed, common.PARAMS_MIN, common.PARAMS_MAX
         )
 
-    @tf.function
-    def _estimates_to_transformed(
+    ###########################################################################
+    #
+    #  Analyse the sampling function and accompanying parameter distribution
+    #   functions, to find the order in which parameters are expected by the
+    #   sampling distribution function, and which parameters are estimated.
+    #
+    ###########################################################################
+
+    def _get_estimates_names(
             self,
-            *estimates: Tensor1[tf32, Samples]
-    ) -> Tensor2[tf32, Samples, Estimates]:
+            param_distributions_named: Dict[str, Distribution]
+    ) -> List[str]:
 
-        estimates_std_uniform_split = self.estimates_to_std_uniform(*estimates)
-        estimates_std_uniform = tf.stack(estimates_std_uniform_split, axis=1)
-        return self._std_uniform_to_transformed(estimates_std_uniform)
+        test_params = self._generate_params_test_sample(
+            param_distributions_named, 2
+        )
+        estimates = self.sampling_distribution_fn(*test_params)
+        return list(estimates.keys())
 
-    @tf.function
-    def _params_to_transformed(
+    def _generate_params_test_sample(
             self,
-            *params: Tensor1[tf32, Samples]
-    ) -> Tensor2[tf32, Samples, Params]:
+            param_distributions_named: Dict[str, Distribution],
+            n: int
+    ) -> List[Tensor1[tf32, Samples]]:
 
-        params_std_uniform_split = self.params_to_std_uniform(*params)
-        params_std_uniform = tf.stack(params_std_uniform_split, axis=1)
-        return self._std_uniform_to_transformed(params_std_uniform)
+        sim_params = self._simulation_params()
+        dists = [param_distributions_named[p] for p in sim_params]
+        params = [d.from_std_uniform(tf.random.uniform((n,))) for d in dists]
+        return params
 
-    @tf.function
-    def _params_from_transformed(
+    def _simulation_params(
+            self
+    ) -> List[str]:
+
+        return self.sampling_distribution_fn.function_spec.arg_names
+
+    def _align_simulation_params(
             self,
-            transformed: Tensor2[tf32, Samples, Params]
-    ) -> Tuple[Tensor1[tf32, Samples], ...]:
+            param_distributions_named: dict
+    ) -> Tuple[
+        List[str],
+        List[str],
+        List[int],
+        List[int],
+        List[Distribution],
+        List[Distribution]
+    ]:
 
-        std_uniform = self._std_uniform_from_transformed(transformed)
-        std_uniform_split = tf.unstack(std_uniform,
-                                       num=self._get_num_params(),
-                                       axis=1)
+        sim_order_names = self._simulation_params()
+        n = len(param_distributions_named)
 
-        return self.params_from_std_uniform(*std_uniform_split)
+        estimate_names = self._get_estimates_names(param_distributions_named)
+
+        assert(
+            sorted(param_distributions_named.keys()) == sorted(sim_order_names)
+        )
+        assert(len(estimate_names) == 1)
+
+        # pull the estimated param(s) to the start to match the convention
+        #   within the networks
+        good_param_indices_in_sim_pars = \
+            [sim_order_names.index(e) for e in estimate_names]
+        known_param_indices_in_sim_pars = \
+            [i for i in range(n) if i not in good_param_indices_in_sim_pars]
+        sim_to_net_order = \
+            good_param_indices_in_sim_pars + known_param_indices_in_sim_pars
+
+        sorted_inds_and_net_to_sim = sorted(zip(sim_to_net_order, range(n)))
+        net_to_sim_order = [x[1] for x in sorted_inds_and_net_to_sim]
+
+        param_transforms_in_sim_order = [
+            param_distributions_named[i] for i in sim_order_names
+        ]
+        estimate_transforms_in_sim_order = [
+            param_distributions_named[i] for i in estimate_names
+        ]
+
+        return (
+            sim_order_names,
+            estimate_names,
+            sim_to_net_order,
+            net_to_sim_order,
+            param_transforms_in_sim_order,
+            estimate_transforms_in_sim_order
+        )
+
+    ###########################################################################
+    #
+    #  Quick check to see how accurately the reverse mapping of the
+    #       distribution objects can reconstruct the values entered.  This
+    #       also serves as a regtest of sorts (but needs to be part of the
+    #       object to stop the user from passing in their own distribution
+    #       objects that do not work properly).
+    #
+    ###########################################################################
 
     def _max_error_of_reverse_mapping(self) -> Tensor0[tf32]:
-        """Test how accurately the reverse mapping can construct the forward
-        mapping.
-
-        :return: Float32 Tensor, maximum absolute error.
-        """
         test_params = tf.random.uniform(
-            (common.SAMPLES_TO_TEST_PARAM_MAPPINGS, self._get_num_params()),
+            (common.SAMPLES_TO_TEST_PARAM_MAPPINGS, self.num_param),
             common.PARAMS_MIN,
             common.PARAMS_MAX
         )
-        as_params = self._params_from_transformed(test_params)
-        as_uniform = self._params_to_transformed(*as_params)
+        as_params = self._params_from_net(test_params)
+        as_uniform = self._params_to_net(*as_params)
         errors = tf.math.abs(as_uniform - test_params)                         # type: ignore
 
         return tf.math.reduce_max(errors)
-
-    def _tensor1_first_elem_to_float(
-            self,
-            tensor: Tensor1[tf32, Samples]
-    ) -> float:
-
-        return float(tensor.numpy()[0])
