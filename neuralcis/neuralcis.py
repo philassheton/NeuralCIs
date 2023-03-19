@@ -2,9 +2,9 @@ import tensorflow as tf
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 
 from neuralcis import common
-from neuralcis._SinglePNet import _SinglePNet
-from neuralcis._CINet import _CINet
-from neuralcis._DataSaver import _DataSaver
+from neuralcis._single_p_net import _SinglePNet
+from neuralcis._ci_net import _CINet
+from neuralcis._data_saver import _DataSaver
 from neuralcis import sampling
 
 # for typing

@@ -1,5 +1,5 @@
-from neuralcis._DataSaver import _DataSaver
-from neuralcis._FiftyFiftyLayer import _FiftyFiftyLayer
+from neuralcis._data_saver import _DataSaver
+from neuralcis._fifty_fifty_layer import _FiftyFiftyLayer
 import neuralcis.common as common
 
 from abc import ABC, abstractmethod

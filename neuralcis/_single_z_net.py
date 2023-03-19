@@ -1,4 +1,4 @@
-from neuralcis._SimulatorNet import _SimulatorNet
+from neuralcis._simulator_net import _SimulatorNet
 
 import neuralcis.common as common
 
@@ -283,7 +283,7 @@ class _SingleZNet(_SimulatorNet):
                 n_validation_samples - n_missing_losses
         )
 
-        # allow max 10% missing values
+        # allow max_value 10% missing values
         tf.debugging.assert_less_equal(
             inflation_for_missing_values,
             1. / (1. - common.MAX_PROPORTION_MISSING_VALUES_TO_TOLERATE)

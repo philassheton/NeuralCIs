@@ -1,7 +1,7 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
-from neuralcis._SingleZNet import _SingleZNet
-from neuralcis._DataSaver import _DataSaver
+from neuralcis._single_z_net import _SingleZNet
+from neuralcis._data_saver import _DataSaver
 from neuralcis import common
 
 # typing

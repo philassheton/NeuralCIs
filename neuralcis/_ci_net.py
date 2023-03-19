@@ -1,7 +1,7 @@
 import tensorflow as tf
 
-from neuralcis._SinglePNet import _SinglePNet
-from neuralcis._SimulatorNet import _SimulatorNet
+from neuralcis._single_p_net import _SinglePNet
+from neuralcis._simulator_net import _SimulatorNet
 import neuralcis.common as common
 
 # typing imports
