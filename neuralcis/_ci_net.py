@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from neuralcis._single_p_net import _SinglePNet
+from neuralcis._p_net import _PNet
 from neuralcis._simulator_net import _SimulatorNet
 import neuralcis.common as common
 
@@ -22,7 +22,7 @@ NetTargetBlob = Tuple[Tensor2[tf32, Samples, Estimates],
 class _CINet(_SimulatorNet):
     def __init__(
             self,
-            pnet: _SinglePNet,                # TODO: make a protocol for PNets
+            pnet: _PNet,                      # TODO: make a protocol for PNets
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Estimates]

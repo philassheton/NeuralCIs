@@ -1,6 +1,6 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
-from neuralcis._single_z_net import _SingleZNet
+from neuralcis._z_net import _ZNet
 from neuralcis._data_saver import _DataSaver
 from neuralcis import common
 
@@ -12,7 +12,7 @@ from neuralcis.common import Samples, Params, Estimates
 import tensor_annotations.tensorflow as ttf
 
 
-class _SinglePNet(_DataSaver):
+class _PNet(_DataSaver):
     def __init__(
             self,
             sampling_distribution_fn: Callable[
@@ -34,7 +34,7 @@ class _SinglePNet(_DataSaver):
             self.validation_params
         )
 
-        self.znet = _SingleZNet(
+        self.znet = _ZNet(
             self.sampling_distribution,
             self.sample_params,
             self.validation_set
@@ -71,7 +71,7 @@ class _SinglePNet(_DataSaver):
     ) -> Tuple[Tensor1[tf32, Samples], Tensor2[tf32, Samples, Params]]:
 
         # TODO: now that y is encoded as "estimates", it feels like it
-        #       might be more logical to code _SingleZNet to always have
+        #       might be more logical to code _ZNet to always have
         #       params followed by y, to follow the convention of
         #       (params, estimates) pairs in the rest of the code (or
         #       even better reverse (params, estimates) so that we get

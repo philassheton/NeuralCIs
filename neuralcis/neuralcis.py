@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 
 from neuralcis import common
-from neuralcis._single_p_net import _SinglePNet
+from neuralcis._p_net import _PNet
 from neuralcis._ci_net import _CINet
 from neuralcis._data_saver import _DataSaver
 from neuralcis import sampling
@@ -97,8 +97,7 @@ class NeuralCIs(_DataSaver):
                common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
 
         num_known_param = self.num_param - 1
-        self.pnet = _SinglePNet(self._sampling_dist_net_interface,
-                                num_known_param)
+        self.pnet = _PNet(self._sampling_dist_net_interface, num_known_param)
 
         self.cinet = _CINet(self.pnet,
                             self._sampling_dist_net_interface,

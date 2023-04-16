@@ -18,7 +18,7 @@ NetOutputBlob = Tuple[Tensor1[tf32, Samples],          # net outputs (z values)
 
 
 # estimates the density of y given params
-class _SingleZNet(_SimulatorNet):
+class _ZNet(_SimulatorNet):
     def __init__(
             self,
             sampling_distribution_fn: Callable[
