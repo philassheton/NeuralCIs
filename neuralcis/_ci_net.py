@@ -27,14 +27,14 @@ class _CINet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Estimates]
             ],
-            num_known_param: int,
+            num_param: int,
             filename: str = "",
             **network_setup_args
     ) -> None:
 
         self.pnet = pnet
         self.sampling_distribution_fn = sampling_distribution_fn
-        self.num_known_param = num_known_param
+        self.num_param = num_param
 
         self.validation_set = self.simulate_training_data(
             common.VALIDATION_SET_SIZE
@@ -104,18 +104,9 @@ class _CINet(_SimulatorNet):
     ###########################################################################
 
     @tf.function
-    def get_num_params(self) -> int:
-        """Get the total number of parameters.
-
-        At present, this only supports the SinglePNet so there must be
-        precisely one unknown parameter plus the known parameters.
-        """
-        return self.num_known_param + 1
-
-    @tf.function
     def sample_params(self, n: ttf.int32) -> Tensor2[tf32, Samples, Params]:
         return tf.random.uniform(
-            (n, self.get_num_params()),
+            (n, self.num_param),
             tf.constant(common.PARAMS_MIN),
             tf.constant(common.PARAMS_MAX)
         )
@@ -138,6 +129,11 @@ class _CINet(_SimulatorNet):
             params: Tensor2[tf32, Samples, Params]
     ) -> Tensor2[tf32, Samples, KnownParams]:
 
+        # TODO: The heart of the bit that will need to change to accommodate
+        #       simultaneous CIs.  At present it is only taking the first
+        #       param as unknown, and taking the other params from the null
+        #       hypothesis.
+
         return params[:, 1:]                                                   # type: ignore
 
     @tf.function
@@ -146,6 +142,8 @@ class _CINet(_SimulatorNet):
             params: Tensor2[tf32, Samples, Params],
             first_param: Tensor1[tf32, Samples]
     ):
+
+        # TODO: Also will need to change to accommodate more parameters.
 
         known_params = self.known_params(params)
         combined_params = tf.concat([

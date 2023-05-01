@@ -96,12 +96,12 @@ class NeuralCIs(_DataSaver):
         assert(self._max_error_of_reverse_mapping().numpy() <
                common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
 
-        num_known_param = self.num_param - 1
-        self.pnet = _PNet(self._sampling_dist_net_interface, num_known_param)
-
+        self.pnet = _PNet(self._sampling_dist_net_interface,
+                          num_unknown_param=self.num_estimate,
+                          num_known_param=self.num_param - self.num_estimate)
         self.cinet = _CINet(self.pnet,
                             self._sampling_dist_net_interface,
-                            num_known_param)
+                            self.num_param)
 
         _DataSaver.__init__(
             self,
@@ -187,9 +187,9 @@ class NeuralCIs(_DataSaver):
 
     def p_and_ci(
             self,
-            estimate: float,
-            conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL,
-            **params: float
+            estimates: Dict[str, float],
+            params: Dict[str, float],
+            conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL
     ) -> Dict[str, float]:
 
         """Calculate the p-value and confidence interval for a novel case.
@@ -198,10 +198,10 @@ class NeuralCIs(_DataSaver):
         single estimate, null parameter value, and known parameters, and
         it will return p-value, lower bound, upper bound.
 
-        :param estimate: A float, the estimated value of the parameter.
-        :param **params**: For each parameter input to the simulation, a
-            named argument passing in the value of that parameter (for
-            the parameter being estimated, this should be the null value
+        :param estimates: A dict, the estimated values of the parameters.
+        :param params: A dict of floats.  For each parameter input to the
+            simulation, the value of that parameter (for
+            the parameters being estimated, this should be the null values
             under which the *p*-value is to be calculated).  Each should
             be a float.
         :param conf_level: A float (default .95).  Confidence level for the
@@ -209,12 +209,15 @@ class NeuralCIs(_DataSaver):
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        estimates_tf = [tf.constant([estimate])]
-        params_sim_order = [params[i] for i in self.param_names_in_sim_order]
-        params_tf_sim_order = [tf.constant([x]) for x in params_sim_order]
+        estimates_tf = [
+            tf.constant([estimates[n]]) for n in self.estimate_names
+        ]
+        params_tf = [
+            tf.constant([params[n]]) for n in self.param_names_in_sim_order
+        ]
 
         estimates_uniform = self._estimates_to_net(*estimates_tf)
-        params_uniform = self._params_to_net(*params_tf_sim_order)
+        params_uniform = self._params_to_net(*params_tf)
 
         known_params = self.cinet.known_params(params_uniform)
         p = self.pnet.p(estimates_uniform, params_uniform)
@@ -232,8 +235,7 @@ class NeuralCIs(_DataSaver):
         lower = self._params_from_net(lower_transformed)[index_of_estimate]
         upper = self._params_from_net(upper_transformed)[index_of_estimate]
 
-        # TODO: when moving to simultaneous intervals, this will need to change
-        assert(len(self.estimate_names) == 1)
+        # TODO: currently only makes an interval for the first estimate
         estimate_name = self.estimate_names[0]
         lower_name = estimate_name + "_lower"
         upper_name = estimate_name + "_upper"
@@ -414,7 +416,6 @@ class NeuralCIs(_DataSaver):
         assert(
             sorted(param_distributions_named.keys()) == sorted(sim_order_names)
         )
-        assert(len(estimate_names) == 1)
 
         # pull the estimated param(s) to the start to match the convention
         #   within the networks

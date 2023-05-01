@@ -72,7 +72,8 @@ class _SimulatorNet(ABC, _DataSaver):
             num_outputs: int = 1,
             num_hidden_layers: int = common.NUM_HIDDEN_LAYERS,
             num_neurons_per_hidden_layer: int = common.NEURONS_PER_LAYER,
-            filename: str = ""
+            filename: str = "",
+            subobjects_to_save: dict = None
     ) -> None:
 
         self.net = self.create_net(num_outputs,
@@ -106,7 +107,8 @@ class _SimulatorNet(ABC, _DataSaver):
             instance_tf_variables_to_save=[
                 "validation_loss_so_far"
             ],
-            net_with_weights_to_save=self.net
+            net_with_weights_to_save=self.net,
+            subobjects_to_save=subobjects_to_save
         )
 
     ###########################################################################
