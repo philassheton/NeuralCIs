@@ -45,6 +45,7 @@ ERROR_ALLOWED_FOR_PARAM_MAPPINGS = 1e-5
 #  Tensor.
 Samples = typing.NewType("Samples", axes.Axis)
 Params = typing.NewType("Params", axes.Axis)
+UnknownParams = typing.NewType("UnknownParams", axes.Axis)
 KnownParams = typing.NewType("KnownParams", axes.Axis)
 FocalParam = typing.NewType("FocalParam", axes.Axis)
 NuisanceParams = typing.NewType("NuisanceParams", axes.Axis)
@@ -60,6 +61,7 @@ MinAndMax = typing.NewType("MinAndMax", axes.Axis)
 TrainingBatches = typing.NewType("TrainingBatches", axes.Axis)
 FixedParams = typing.NewType("FixedParams", axes.Axis)
 ParamsAndKS = typing.NewType("ParamsAndKS", axes.Axis)
+One = typing.NewType("One", axes.Axis)
 
 # Again for typing, represents a blob of output from a network that can be
 #   passed into a loss function.
