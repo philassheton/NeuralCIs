@@ -1,11 +1,11 @@
 import tensorflow as tf
 
-from neuralcis._p_net_pivotal import _PNetPivotal
+from neuralcis._p_net import _PNet
 from neuralcis._simulator_net import _SimulatorNet
 import neuralcis.common as common
 
 # typing imports
-from typing import Callable, Tuple
+from typing import Callable, Tuple, List
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from neuralcis.common import Samples, Params, Estimates, NetInputs, NetOutputs
 from neuralcis.common import KnownParams
@@ -22,7 +22,7 @@ NetTargetBlob = Tuple[Tensor2[tf32, Samples, Estimates],
 class _CINet(_SimulatorNet):
     def __init__(
             self,
-            pnet: _PNetPivotal,               # TODO: make a protocol for PNets
+            pnet: _PNet,               # TODO: make a protocol for PNets
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Estimates]
@@ -41,7 +41,7 @@ class _CINet(_SimulatorNet):
         )
 
         _SimulatorNet.__init__(self,
-                               num_outputs=2,
+                               num_outputs=[2],
                                filename=filename,
                                **network_setup_args)
 
@@ -55,7 +55,7 @@ class _CINet(_SimulatorNet):
     def simulate_training_data(
             self,
             n: ttf.int32
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], NetTargetBlob]:
+    ) -> Tuple[List[Tensor2[tf32, Samples, NetInputs]], NetTargetBlob]:
 
         params = self.sample_params(n)
         estimates = self.sampling_distribution_fn(params)
@@ -70,7 +70,7 @@ class _CINet(_SimulatorNet):
     @tf.function
     def get_validation_set(
             self
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], NetTargetBlob]:
+    ) -> Tuple[List[Tensor2[tf32, Samples, NetInputs]], NetTargetBlob]:
 
         return self.validation_set
 
@@ -117,11 +117,13 @@ class _CINet(_SimulatorNet):
             estimates: Tensor2[tf32, Samples, Estimates],
             known_params: Tensor2[tf32, Samples, KnownParams],
             target_p: Tensor1[tf32, Samples]
-    ) -> Tensor2[tf32, Samples, NetInputs]:
+    ) -> List[Tensor2[tf32, Samples, NetInputs]]:
 
-        return tf.concat([
+        ins = tf.concat([
             estimates, known_params, tf.transpose([target_p])
         ], axis=1)
+
+        return [ins]
 
     @tf.function
     def known_params(

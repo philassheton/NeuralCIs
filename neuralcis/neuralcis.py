@@ -3,7 +3,7 @@ from tensorflow.python.eager.def_function import Function as TFFunction        #
 
 from neuralcis import common
 from neuralcis import sampling
-from neuralcis._p_net_pivotal import _PNetPivotal
+from neuralcis._p_net import _PNet
 from neuralcis._ci_net import _CINet
 from neuralcis._data_saver import _DataSaver
 
@@ -112,7 +112,7 @@ class NeuralCIs(_DataSaver):
         assert(self._max_error_of_reverse_mapping().numpy() <
                common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
 
-        self.pnet = _PNetPivotal(
+        self.pnet = _PNet(
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
             num_unknown_param=self.num_estimate,
@@ -377,7 +377,7 @@ class NeuralCIs(_DataSaver):
 
     @tf.function
     def _reorder(self, tensors: List[Tensor1], order: List[int]) \
-        -> List[Tensor1]:
+            -> List[Tensor1]:
 
         return [tensors[i] for i in order]
 

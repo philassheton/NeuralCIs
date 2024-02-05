@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Sequence
 from neuralcis.common import INSTANCE_VARS, WEIGHTS, FILE_PATH
 
 
@@ -11,14 +11,21 @@ class _DataSaver:
                  filename: str,
                  subobjects_to_save: Optional[Dict] = None,
                  instance_tf_variables_to_save: Optional[List] = None,
-                 net_with_weights_to_save: tf.keras.Sequential = None) -> None:
+                 net_with_weights_to_save: tf.keras.Sequential = None,
+                 nets_with_weights_to_save: Sequence[tf.keras.Sequential] = (),
+    ) -> None:
 
         if subobjects_to_save is None:
             subobjects_to_save = {}
         if instance_tf_variables_to_save is None:
             instance_tf_variables_to_save = []
 
-        self.net_with_weights_to_save = net_with_weights_to_save
+        nets_with_weights_to_save = list(nets_with_weights_to_save)
+
+        if net_with_weights_to_save is not None:
+            nets_with_weights_to_save.append(net_with_weights_to_save)
+
+        self.nets_with_weights_to_save = nets_with_weights_to_save
         self.instance_tf_variables_to_save = instance_tf_variables_to_save
         self.subobjects_to_save = \
             self.preprocess_arrays_into_multiple_dict_elems(subobjects_to_save)
@@ -32,9 +39,12 @@ class _DataSaver:
         if filename == "":
             return
 
-        if self.net_with_weights_to_save:
+        if len(self.nets_with_weights_to_save) == 1:
             weights_filename = self.weights_filename(filename)
-            self.net_with_weights_to_save.save_weights(weights_filename)
+            self.nets_with_weights_to_save[0].save_weights(weights_filename)
+        elif len(self.nets_with_weights_to_save) > 1:
+            for i, net in enumerate(self.nets_with_weights_to_save):
+                net.save_weights(self.weights_filename(filename, i))
 
         for suffix, obj in self.subobjects_to_save.items():
             object_filename = self.construct_filename(filename, suffix)
@@ -52,9 +62,12 @@ class _DataSaver:
         if filename == "":
             return
 
-        if self.net_with_weights_to_save:
+        if len(self.nets_with_weights_to_save) == 1:
             weights_filename = self.weights_filename(filename)
-            self.net_with_weights_to_save.load_weights(weights_filename)
+            self.nets_with_weights_to_save[0].load_weights(weights_filename)
+        elif len(self.nets_with_weights_to_save) > 1:
+            for i, net in enumerate(self.nets_with_weights_to_save):
+                net.load_weights(self.weights_filename(filename, i))
 
         for suffix, obj in self.subobjects_to_save.items():
             object_filename = self.construct_filename(filename, suffix)
@@ -78,8 +91,12 @@ class _DataSaver:
         return _DataSaver.add_path(filename)
 
     @staticmethod
-    def weights_filename(filename: str) -> str:
-        filename = _DataSaver.construct_filename(filename, WEIGHTS)
+    def weights_filename(filename: str, index: Optional[int] = None) -> str:
+        if index is None:
+            weights_name = WEIGHTS
+        else:
+            weights_name = f'{WEIGHTS} {index}'
+        filename = _DataSaver.construct_filename(filename, weights_name)
         return _DataSaver.add_path(filename)
 
     @staticmethod
