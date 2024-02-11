@@ -109,8 +109,8 @@ class NeuralCIs(_DataSaver):
         self.num_param = len(self.param_dists_in_sim_order)
         self.num_estimate = len(self.estimate_dists_in_sim_order)
 
-        assert(self._max_error_of_reverse_mapping().numpy() <
-               common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
+        assert (self._max_error_of_reverse_mapping().numpy() <
+                common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
 
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
@@ -128,19 +128,7 @@ class NeuralCIs(_DataSaver):
             {"pnet": self.pnet,
              "cinet": self.cinet})
 
-    def fit(
-            self,
-            max_epochs: int = common.MAX_EPOCHS,
-            minibatch_size: int = common.MINIBATCH_SIZE,
-            learning_rate_initial: float = common.LEARNING_RATE_INITIAL,
-            divide_after_flattening_for: int =
-                    common.DIVIDE_AFTER_FLATTENING_FOR,
-            target_validation_loss_sd_p_net: float =
-                    common.TARGET_VALIDATION_LOSS_SD_P_NET,
-            target_validation_loss_sd_ci_net: float =
-                    common.TARGET_VALIDATION_LOSS_SD_CI_NET,
-            precompute_optimum_loss: bool = False
-    ) -> None:
+    def fit(self, *args, **kwargs):
 
         """Fit the networks to the simulation.
 
@@ -148,61 +136,38 @@ class NeuralCIs(_DataSaver):
         tweak settings by passing in any of the arguments listed below.
 
         This is a very rough network fitting algorithm in Version 1.0.0.
-        Better fitting of the models is a priority in future versions.  The
-        training works as follows:
+        Better fitting of the models is a priority in future versions.
+        Currently, the default Keras training loop is used with an
+        exponentially decreasing learning rate (it will be
+        decreased every epoch such that it halves every
+        `learning_rate_half_life_epochs` epochs.
 
-        A number of progressively smaller learning rates are used until the
-        error hardly changes from one batch to the next.  Each epoch consists
-        of running a fixed number (default 20) of batches of minibatches.
-        After each batch, the error is calculated on the validation set.
-        After each epoch, the set of errors from the batches are examined: if
-        the best loss has failed to be improved on for ten batches, the
-        learning rate is halved.  (The argument `divide_after_flattening_for`
-        modifies the number of batches it may fail to improve.)   If the
-        set of losses from the batches in the epoch have a standard deviation
-        less than the target (`target_validation_loss_sd_p_net` or
-        `target_validation_loss_sd_ci_net`), training is terminated.
+        Training is run by default using the Adam algorithm with Nesterov
+        gradients; this can be tweaked using the compile method.  Nesterov
+        gradients are rather useful in this first cut version of the net,
+        where invertabilty is forced by punitive gradients (so the Nesterov
+        gradients help the optimisation to avoid jumping into the "danger
+        zone").  But, in future cuts where invertability might be built-in,
+        they might not be necessary.
 
-        Training is run using the Adam algorithm with Nesterov gradients.
-
-        :param precompute_optimum_loss:  A bool (default `False`).  If
-            True, an approximate value will be computed for the optimum error
-            that can be achieved on the validation set.  This makes monitoring
-            the progress of training much easier and will hopefully lead to
-            some helpful improvements to the training algorithm in future
-            versions.
-        :param max_epochs:  An int (default 1000).  Maximum number of epochs
-            before training quits.
-        :param minibatch_size: An int (default 32).  Number of samples per
-            minibatch.
-        :param learning_rate_initial: A float (default .001).  Learning rate
-            for the first epoch(s).
-        :param divide_after_flattening_for: An int (default 10).  If training
-            has not improved for this many batches, halve the training rate.
-        :param target_validation_loss_sd_p_net: A float (default 1).  If the
-            validation errors for the batches within the last epoch have a
-            standard deviation below this number, terminate training.  This
-            applies only to training of the p-net.
-        :param target_validation_loss_sd_ci_net: A float (default 1e-6).  Same
-            as `target_validation_loss_sd_p_net`, but applied to the CI net.
+        :param steps_per_epoch:  An int (default 1000).  Number of steps
+            before learning rate is decreased.
+        :param epochs:  An int (default 50).  Number of epochs to run.
+        :param verbose: An int or string (default 'auto').  See docs for
+            tf.keras.Model.fit.
+        :param learning_rate_initial: A float (default .05).  Learning rate
+            for the first epoch.
+        :param learning_rate_half_life_epochs: An int (default 4).  Learning
+            rate will halve each time this number of epochs has passed.
+        :param callbacks: An array of callbacks to be used during training.
         """
 
-        self.pnet.fit(
-            max_epochs=max_epochs,
-            minibatch_size=minibatch_size,
-            learning_rate_initial=learning_rate_initial,
-            divide_after_flattening_for=divide_after_flattening_for,
-            target_validation_loss_sd=target_validation_loss_sd_p_net,
-            precompute_optimum_loss=precompute_optimum_loss
-        )
-        self.cinet.fit(
-            max_epochs=max_epochs,
-            minibatch_size=minibatch_size,
-            learning_rate_initial=learning_rate_initial,
-            divide_after_flattening_for=divide_after_flattening_for,
-            target_validation_loss_sd=target_validation_loss_sd_ci_net,
-            precompute_optimum_loss=precompute_optimum_loss
-        )
+        self.pnet.fit(*args, **kwargs)
+        self.cinet.fit(*args, **kwargs)
+
+    def compile(self, *args, **kwargs):
+        self.pnet.compile(*args, **kwargs)
+        self.cinet.compile(*args, **kwargs)
 
     def p_and_ci(
             self,
@@ -462,7 +427,7 @@ class NeuralCIs(_DataSaver):
 
         estimate_names = self._get_estimates_names(param_distributions_named)
 
-        assert(
+        assert (
             sorted(param_distributions_named.keys()) == sorted(sim_order_names)
         )
 

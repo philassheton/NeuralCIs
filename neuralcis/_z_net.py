@@ -89,7 +89,7 @@ class _ZNet(_SimulatorNet):
         return self.net_inputs(*self.validation_set_fn()), None
 
     @tf.function
-    def loss(
+    def get_loss(
             self,
             net_outputs: NetOutputBlob,
             target_outputs: None = None
@@ -98,7 +98,7 @@ class _ZNet(_SimulatorNet):
         outputs, jacobians_floored = net_outputs
         neg_log_likelihoods = self.neg_log_likelihoods(outputs,
                                                        jacobians_floored)
-        loss = tf.math.reduce_sum(neg_log_likelihoods)
+        loss = tf.math.reduce_mean(neg_log_likelihoods)
 
         tf.debugging.check_numerics(loss,
                                     "Na or inf in loss in multiple Z Net opt")

@@ -54,6 +54,9 @@ class _PNet(_DataSaver):
     def fit(self, *args, **kwargs) -> None:
         self.znet.fit(*args, **kwargs)
 
+    def compile(self, *args, **kwargs) -> None:
+        self.znet.compile(*args, **kwargs)
+
     @tf.function
     def sampling_distribution(
             self,

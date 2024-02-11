@@ -75,7 +75,7 @@ class _CINet(_SimulatorNet):
         return self.validation_set
 
     @tf.function
-    def loss(
+    def get_loss(
             self,
             net_outputs: NetOutputBlob,
             target_outputs: NetTargetBlob
