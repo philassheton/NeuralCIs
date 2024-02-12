@@ -48,6 +48,7 @@ class _DataSaver:
 
         for suffix, obj in self.subobjects_to_save.items():
             object_filename = self.construct_filename(filename, suffix)
+            print(f'saving {object_filename}')
             obj.save(object_filename)
 
         if len(self.instance_tf_variables_to_save):
