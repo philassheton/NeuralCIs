@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
+import numpy as np
 
 from neuralcis import common
 from neuralcis import sampling
@@ -8,7 +9,7 @@ from neuralcis._ci_net import _CINet
 from neuralcis._data_saver import _DataSaver
 
 # for typing
-from typing import Tuple, Union, Callable, List, Dict
+from typing import Tuple, Union, Callable, List, Dict, Sequence, Optional
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
 from neuralcis.common import Samples, Estimates, Params
@@ -169,6 +170,119 @@ class NeuralCIs(_DataSaver):
         self.pnet.compile(*args, **kwargs)
         self.cinet.compile(*args, **kwargs)
 
+    def ps_grid(
+            self,
+            estimates: Dict,
+            params: Dict,
+            return_also_axes=True
+    ):
+
+        """Calculate the p-value across a grid of estimates and/or params.
+
+        The estimates and params are each a dict mapping each estimate/param
+        name to either a range/sequence of values or a single value.  The
+        computation then happens across the complete grid of combinations
+        all these values.
+
+        :param estimates:
+        :param params:
+        :return:
+        """
+
+        estimates_values = [tf.constant(x, dtype=tf.float32)
+                            for x in estimates.values()]
+        params_values = [tf.constant(x, dtype=tf.float32)
+                         for x in params.values()]
+        all_values = estimates_values + params_values
+        all_grids = tf.meshgrid(*all_values)
+        shape = all_grids[0].shape
+        all_grids_flattened = [tf.reshape(x, [-1]) for x in all_grids]
+
+        num_estimates = len(estimates_values)
+        estimates_grids_flattened = {
+            k: v for k, v in zip(estimates.keys(),
+                                 all_grids_flattened[0:num_estimates])
+        }
+        params_grids_flattened = {
+            k: v for k, v in zip(params.keys(),
+                                 all_grids_flattened[num_estimates:])
+        }
+        ps = self.ps_and_cis(estimates_grids_flattened, params_grids_flattened)
+        ps = np.squeeze(np.reshape(ps['p'], shape))
+
+        if return_also_axes:
+            return [np.squeeze(gr)
+                    for gr, inp in zip(all_grids, all_values)
+                    if inp.shape != ()] + [ps]
+        else:
+            return ps
+
+    def ps_and_cis(
+            self,
+            estimates: Dict[str, np.ndarray],
+            params: Dict[str, np.ndarray],
+            conf_levels: Optional[np.ndarray] = None
+    ) -> Dict[str, np.ndarray]:
+
+        """Calculate the p-values and confidence intervals for a series of
+        novel cases.
+
+        :param estimates: A dict of lists of floats, all the same length; the
+            estimated values of the parameters in each case.
+        :param params: A dict of lists of floats, all the same length; for
+            each parameter input to the simulation, the values of that
+            parameter that corresponds with each estimate (for
+            the parameters being estimated, this should be the null values
+            under which the *p*-value is to be calculated).  Each should
+            be a float.
+        :param conf_levels: An optional list of floats (default .95).
+            Confidence level for each respective  confidence interval.  If
+            None, then no confidence interval is computed and only p-values
+            are returned.
+        :return: Dict with float values: p-value, lower and upper CI bounds.
+        """
+
+        estimates_tf = [
+            tf.constant(estimates[n]) for n in self.estimate_names
+        ]
+        params_tf = [
+            tf.constant(params[n]) for n in self.param_names_in_sim_order
+        ]
+
+        estimates_uniform = self._estimates_to_net(*estimates_tf)
+        params_uniform = self._params_to_net(*params_tf)
+
+        known_params = self.cinet.known_params(params_uniform)
+        p = self.pnet.p(estimates_uniform, params_uniform)
+
+        if conf_levels is None:
+            return {'p': p.numpy()}
+        else:
+            lower_transformed, upper_transformed = self.cinet.ci(
+                estimates_uniform,
+                known_params,
+                tf.constant(1. - conf_levels)
+            )
+
+            # TODO: improve this: it should be explicitly pulling the
+            #       estimate(s) rather than relying on it/them being first
+            #       in the sim_to_net_order.
+            index_of_estimate = self.sim_to_net_order[0]
+
+            lower = self._params_from_net(lower_transformed)[index_of_estimate]
+            upper = self._params_from_net(upper_transformed)[index_of_estimate]
+
+            # TODO: currently only makes an interval for the first estimate
+            estimate_name = self.estimate_names[0]
+            lower_name = estimate_name + "_lower"
+            upper_name = estimate_name + "_upper"
+
+            return {
+                "p": p.numpy(),
+                lower_name: lower.numpy(),
+                upper_name: upper.numpy()
+            }
+
     def p_and_ci(
             self,
             estimates: Dict[str, float],
@@ -193,42 +307,19 @@ class NeuralCIs(_DataSaver):
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        estimates_tf = [
-            tf.constant([estimates[n]]) for n in self.estimate_names
-        ]
-        params_tf = [
-            tf.constant([params[n]]) for n in self.param_names_in_sim_order
-        ]
+        estimates_numpy = {k: np.array([v], dtype=np.float32)
+                           for k, v in estimates.items()}
+        params_numpy = {k: np.array([v], dtype=np.float32)
+                        for k, v in params.items()}
+        conf_levels = np.array([conf_level], dtype=np.float32)
 
-        estimates_uniform = self._estimates_to_net(*estimates_tf)
-        params_uniform = self._params_to_net(*params_tf)
+        ps_and_cis = self.ps_and_cis(estimates_numpy,
+                                     params_numpy,
+                                     conf_levels)
 
-        known_params = self.cinet.known_params(params_uniform)
-        p = self.pnet.p(estimates_uniform, params_uniform)
-        lower_transformed, upper_transformed = self.cinet.ci(
-            estimates_uniform,
-            known_params,
-            tf.constant([1. - conf_level])
-        )
+        p_and_ci = {k: v[0] for k, v in ps_and_cis.items()}
 
-        # TODO: improve this: it should be explicitly pulling the estimate(s)
-        #       rather than relying on it/them being first in the
-        #       sim_to_net_order.
-        index_of_estimate = self.sim_to_net_order[0]
-
-        lower = self._params_from_net(lower_transformed)[index_of_estimate]
-        upper = self._params_from_net(upper_transformed)[index_of_estimate]
-
-        # TODO: currently only makes an interval for the first estimate
-        estimate_name = self.estimate_names[0]
-        lower_name = estimate_name + "_lower"
-        upper_name = estimate_name + "_upper"
-
-        return {
-            "p": self._tensor1_first_elem_to_float(p),
-            lower_name: self._tensor1_first_elem_to_float(lower),
-            upper_name: self._tensor1_first_elem_to_float(upper)
-        }
+        return p_and_ci
 
     ###########################################################################
     #
