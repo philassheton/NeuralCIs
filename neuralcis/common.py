@@ -12,14 +12,14 @@ FILE_PATH = "savedmodels"
 
 # model construction
 VALIDATION_SET_SIZE = 10000
-NUM_HIDDEN_LAYERS = 10
+NUM_HIDDEN_LAYERS = 3
 NEURONS_PER_LAYER = 10
 
 # training
 EPOCHS = 50
 STEPS_PER_EPOCH = 1000
 MINIBATCH_SIZE = 1024
-LEARNING_RATE_INITIAL = 0.05
+LEARNING_RATE_INITIAL = 0.005
 LEARNING_RATE_HALF_LIFE_EPOCHS = 4
 
 # computation of ideal loss
@@ -47,6 +47,7 @@ FocalParam = typing.NewType("FocalParam", axes.Axis)
 NuisanceParams = typing.NewType("NuisanceParams", axes.Axis)
 Estimates = typing.NewType("Estimates", axes.Axis)
 Ys = typing.NewType("Ys", axes.Axis)
+Zs = typing.NewType("Zs", axes.Axis)
 NetOutputs = typing.NewType("NetOutputs", axes.Axis)
 NetInputs = typing.NewType("NetInputs", axes.Axis)
 LayerInputs = typing.NewType("LayerInputs", axes.Axis)
@@ -58,6 +59,8 @@ TrainingBatches = typing.NewType("TrainingBatches", axes.Axis)
 FixedParams = typing.NewType("FixedParams", axes.Axis)
 ParamsAndKS = typing.NewType("ParamsAndKS", axes.Axis)
 One = typing.NewType("One", axes.Axis)
+Contrast = typing.NewType("Contrast", axes.Axis)
+J = typing.NewType("J", axes.Axis)
 
 # Again for typing, represents a blob of output from a network that can be
 #   passed into a loss function.

@@ -41,7 +41,6 @@ def samples_size_from_std_uniform(
     return tf.math.exp(log_n)
 
 
-
 @tf.function
 def samples_size_to_std_uniform(
         n: Tensor1[tf32, Samples],

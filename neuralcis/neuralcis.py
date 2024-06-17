@@ -9,7 +9,7 @@ from neuralcis._ci_net import _CINet
 from neuralcis._data_saver import _DataSaver
 
 # for typing
-from typing import Tuple, Union, Callable, List, Dict, Sequence, Optional
+from typing import Tuple, Union, Callable, List, Dict, Optional
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
 from neuralcis.common import Samples, Estimates, Params
@@ -179,13 +179,18 @@ class NeuralCIs(_DataSaver):
 
         """Calculate the p-value across a grid of estimates and/or params.
 
-        The estimates and params are each a dict mapping each estimate/param
-        name to either a range/sequence of values or a single value.  The
-        computation then happens across the complete grid of combinations
-        all these values.
+        For each estimate and param, either a single fixed value or a
+        range/sequence of values must be entered via the two dicts, estimates
+        and params.  The p-value is then computed at all combinations of each
+        of these values.
 
-        :param estimates:
-        :param params:
+        :param estimates: Dict mapping each estimate name to either a
+        range/sequence of values, or to a single fixed value.
+        :param params: Dict mapping each param name to either a
+        range/sequence of values, or to a single fixed value.
+        :param return_also_axes: A bool (default True) that determines whether
+        all the axes (estimates, params, etc) are returned.  If False, just
+        one grid of p-values are returned.
         :return:
         """
 
@@ -317,7 +322,7 @@ class NeuralCIs(_DataSaver):
                                      params_numpy,
                                      conf_levels)
 
-        p_and_ci = {k: v[0] for k, v in ps_and_cis.items()}
+        p_and_ci = {k: v[0].tolist() for k, v in ps_and_cis.items()}
 
         return p_and_ci
 
@@ -437,9 +442,9 @@ class NeuralCIs(_DataSaver):
 
         return [tensors[i] for i in order]
 
+    @staticmethod
     def _tensor1_first_elem_to_float(
-            self,
-            tensor: Tensor1[tf32, Samples]
+            tensor: Tensor1[tf32, Samples],
     ) -> float:
 
         return float(tensor.numpy()[0])
@@ -494,8 +499,8 @@ class NeuralCIs(_DataSaver):
         params = [d.from_std_uniform(tf.random.uniform((n,))) for d in dists]
         return params
 
+    @staticmethod
     def _get_tf_params(
-            self,
             tf_function: TFFunction,
     ) -> List[str]:
 

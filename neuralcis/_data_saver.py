@@ -7,12 +7,13 @@ from neuralcis.common import INSTANCE_VARS, WEIGHTS, FILE_PATH
 class _DataSaver:
     # subobjects to save maps the filename suffix for the object to the object
     # OR an array of objects
-    def __init__(self,
-                 filename: str,
-                 subobjects_to_save: Optional[Dict] = None,
-                 instance_tf_variables_to_save: Optional[List] = None,
-                 net_with_weights_to_save: tf.keras.Sequential = None,
-                 nets_with_weights_to_save: Sequence[tf.keras.Sequential] = (),
+    def __init__(
+            self,
+            filename: str,
+            subobjects_to_save: Optional[Dict] = None,
+            instance_tf_variables_to_save: Optional[List] = None,
+            net_with_weights_to_save: tf.keras.Sequential = None,
+            nets_with_weights_to_save: Sequence[tf.keras.Sequential] = (),
     ) -> None:
 
         if subobjects_to_save is None:
@@ -108,7 +109,7 @@ class _DataSaver:
     def preprocess_arrays_into_multiple_dict_elems(dictionary: Dict) -> Dict:
         expanded_dict = {}
         for key, value in dictionary.items():
-            if type(value) == list:
+            if isinstance(value, list):
                 for i in range(len(value)):
                     expanded_dict["%s%d" % (key, i)] = value[i]
             else:

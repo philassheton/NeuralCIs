@@ -30,6 +30,7 @@ class TransformUniformDistribution(Distribution):
     uniform_max: Tensor0
 
     def __init__(self, min_value: float, max_value: float):
+        assert max_value > min_value
         self.uniform_min = self.to_uniform_mapping(tf.constant(min_value))
         self.uniform_max = self.to_uniform_mapping(tf.constant(max_value))
 

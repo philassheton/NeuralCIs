@@ -41,7 +41,7 @@ class _CINet(_SimulatorNet):
         )
 
         _SimulatorNet.__init__(self,
-                               num_outputs=[2],
+                               num_outputs_for_each_net=[2],
                                filename=filename,
                                **network_setup_args)
 
@@ -91,7 +91,7 @@ class _CINet(_SimulatorNet):
         squared_errors = (tf.math.square(p_lower - p) +
                           tf.math.square(p_upper - p))
 
-        return tf.reduce_mean(squared_errors)
+        return tf.reduce_mean(squared_errors)                                  # type: ignore
 
     @tf.function
     def compute_optimum_loss(self) -> ttf.float32:
@@ -170,12 +170,15 @@ class _CINet(_SimulatorNet):
             self,
             net_outputs: Tensor2[tf32, Samples, NetOutputs],
             estimates: Tensor2[tf32, Samples, Estimates]
-    ) -> Tuple[Tensor1[tf32, Samples], Tensor1[tf32, Samples]]:
+    ) -> Tuple[
+        Tensor1[tf32, Samples],
+        Tensor1[tf32, Samples]
+    ]:
 
         lower = estimates[:, 0] - tf.math.exp(net_outputs[:, 0])
         upper = estimates[:, 0] + tf.math.exp(net_outputs[:, 1])
 
-        return lower, upper
+        return lower, upper                                                    # type: ignore
 
     @tf.function
     def add_known_params(

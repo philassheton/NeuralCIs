@@ -1,6 +1,8 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 from neuralcis._z_net import _ZNet
+from neuralcis._coordi_net import _CoordiNet
+from neuralcis._estimator_net import _EstimatorNet
 from neuralcis._data_saver import _DataSaver
 from neuralcis import common
 
@@ -8,8 +10,7 @@ from neuralcis import common
 from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Params, Estimates, Ys
-import tensor_annotations.tensorflow as ttf
+from neuralcis.common import Samples, Params, Estimates, NetInputs, Ys
 
 
 class _PNet(_DataSaver):
@@ -33,42 +34,65 @@ class _PNet(_DataSaver):
         self.num_known_param = num_known_param
 
         self.validation_params = self.sample_params(common.VALIDATION_SET_SIZE)
-        self.validation_estimates = self.sampling_distribution(
+        self.validation_estimates = self.sampling_distribution_fn(
             self.validation_params
         )
 
-        self.znet = _ZNet(
-            self.sampling_distribution,                                        # type: ignore
+        self.estimatornet = _EstimatorNet(
+            sampling_distribution_fn,
             self.sample_params,
             contrast_fn,
-            self.validation_set,                                               # type: ignore
+            **network_setup_args
+        )
+        self.coordinet = _CoordiNet(
+            self.estimatornet,
+            sampling_distribution_fn,
+            self.sample_params,
+            **network_setup_args
+        )
+        self.znet = _ZNet(
+            self.sampling_distribution_remapped,                               # type: ignore
+            self.sample_params,
+            contrast_fn,
+            self.validation_set_remapped,                                      # type: ignore
             [i + num_unknown_param for i in range(num_known_param)],
             **network_setup_args
         )
 
         super().__init__(
             filename=filename,
-            subobjects_to_save={"znet": self.znet}
+            subobjects_to_save={"znet": self.znet,
+                                "estimatornet": self.estimatornet,
+                                "coordinet": self.coordinet}
         )
 
     def fit(self, *args, **kwargs) -> None:
+        self.estimatornet.fit(*args, **kwargs)
+        self.coordinet.fit(*args, **kwargs)
         self.znet.fit(*args, **kwargs)
 
     def compile(self, *args, **kwargs) -> None:
+        self.estimatornet.compile(*args, **kwargs)
+        self.coordinet.compile(*args, **kwargs)
         self.znet.compile(*args, **kwargs)
 
     @tf.function
-    def sampling_distribution(
+    def sampling_distribution_remapped(
             self,
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor2[tf32, Samples, Estimates]:
 
-        return self.sampling_distribution_fn(params)
+        estimates = self.sampling_distribution_fn(params)
+        inputs: Tensor2[tf32, Samples, NetInputs] = estimates                  # type: ignore
+        outputs = self.coordinet.call_tf([inputs])
+        estimate_coords: Tensor2[tf32, Samples, Estimates] = outputs           # type: ignore
+
+        return estimate_coords
 
     @tf.function
     def sample_params(
             self,
-            n: ttf.int32
+            n: int,
     ) -> Tensor2[tf32, Samples, Params]:
 
         return tf.random.uniform(
@@ -88,17 +112,36 @@ class _PNet(_DataSaver):
         return self.validation_estimates, self.validation_params
 
     @tf.function
+    def validation_set_remapped(
+            self
+    ) -> Tuple[
+        Tensor2[tf32, Samples, Estimates],
+        Tensor2[tf32, Samples, Params]
+    ]:
+
+        inputs: Tensor2[tf32, Samples, NetInputs] = self.validation_estimates  # type: ignore
+        outputs = self.coordinet.call_tf([inputs])
+        estimates_remapped: Tensor2[tf32, Samples, Estimates] = outputs        # type: ignore
+
+        return estimates_remapped, self.validation_params
+
+    @tf.function
     def p(
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
             params_null: Tensor2[tf32, Samples, Params]
     ) -> Tensor1[tf32, Samples]:
 
-        ys: Tensor2[tf32, Samples, Ys] = estimates                             # type: ignore
-        zs = self.znet.call_tf(ys, params_null)
-        z_focal = zs[:, 0]
+        inputs: Tensor2[tf32, Samples, NetInputs] = estimates                  # type: ignore
+        outputs = self.coordinet.call_tf([inputs])
+
+        coords: Tensor2[tf32, Samples, Ys] = outputs                           # type: ignore
+        zs = self.znet.call_tf_y_params(coords, params_null)
+
+        z_focal: Tensor1[tf32, Samples] = zs[:, 0]                             # type: ignore
         cdf = tfp.distributions.Normal(0., 1.).cdf(z_focal)
-        p = 1. - tf.math.abs(cdf*2. - 1.)
+
+        p: Tensor1[tf32, Samples] = 1. - tf.math.abs(cdf*2. - 1.)              # type: ignore
 
         return p
 
