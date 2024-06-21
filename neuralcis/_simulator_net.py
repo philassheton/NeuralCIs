@@ -247,6 +247,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         #       superclass to this function break.  Rethink!
         assert len(args) == 0   # Cannot use the usual fit args here!!
 
+        print(f"Training {self.__class__.__name__}")
+
         def learning_rate(epoch):
             return learning_rate_initial * 2**(-epoch /
                                                learning_rate_half_life_epochs)
@@ -324,8 +326,14 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             common.MINIBATCH_SIZE
         )
         self.call_tf(net_ins)
+        self.rescale_layer_weights()
 
         return self.nets, self.num_nets
+
+    def rescale_layer_weights(self):
+        for net in self.nets:
+            for layer in net.layers:
+                layer.scale_weights()
 
     @staticmethod
     def create_net(

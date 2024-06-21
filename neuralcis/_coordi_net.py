@@ -1,6 +1,6 @@
 from neuralcis._simulator_net import _SimulatorNet
 from neuralcis._layers import _DefaultIn, _DefaultHid, _DefaultOut
-from neuralcis._layers import _MonotonicLayer
+from neuralcis._layers import _MonotonicTanhLayer, _MonotonicLinearLayer
 from neuralcis import common
 
 import tensorflow as tf
@@ -46,9 +46,9 @@ class _CoordiNet(_SimulatorNet):
         _SimulatorNet.__init__(
             self,
             (1, self.num_y - 1),
-            first_layer_type_or_types=(_MonotonicLayer, _DefaultIn),
-            hidden_layer_type_or_types=(_MonotonicLayer, _DefaultHid),
-            output_layer_type_or_types=(_MonotonicLayer, _DefaultOut),
+            first_layer_type_or_types=(_MonotonicTanhLayer, _DefaultIn),
+            hidden_layer_type_or_types=(_MonotonicTanhLayer, _DefaultHid),
+            output_layer_type_or_types=(_MonotonicLinearLayer, _DefaultOut),
             filename=filename,
             **network_setup_args
         )

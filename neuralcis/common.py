@@ -15,6 +15,13 @@ VALIDATION_SET_SIZE = 10000
 NUM_HIDDEN_LAYERS = 3
 NEURONS_PER_LAYER = 10
 
+# layers
+TANH_MULTIPLIER = 5.                                                           # we need to multiply the tanh up a bit if we want standard normal outputs
+LAYER_LEARNING_RATE_INITIAL = .01
+LAYER_LEARNING_HALF_LIFE_EPOCHS = 1
+LAYER_LEARNING_STEPS_PER_EPOCH = 1000
+LAYER_LEARNING_EPOCHS = 4
+
 # training
 EPOCHS = 50
 STEPS_PER_EPOCH = 1000
