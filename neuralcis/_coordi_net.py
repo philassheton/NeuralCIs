@@ -87,8 +87,12 @@ class _CoordiNet(_SimulatorNet):
 
         # Volume-preserving map
         jacobdets = tf.linalg.det(jacobians)
-        eps = 1e-37
-        loss = tf.reduce_mean(tf.abs(tf.math.log(tf.maximum(jacobdets, eps))))
+        punitive_but_not_zero_jacobdets = 1e-10 * tf.math.sigmoid(jacobdets)
+        jacobdets_floored = tf.math.maximum(
+            jacobdets,
+            punitive_but_not_zero_jacobdets,
+        )
+        loss = tf.reduce_mean(tf.abs(tf.math.log(jacobdets_floored)))
 
         return loss
 
