@@ -40,6 +40,10 @@ class _ZNet(_SimulatorNet):
                 NetInputBlob
             ],
             known_param_indices: Sequence[int],
+            coords_fn: Callable[                                               # coords_fn allows us to remap the ys before they are fed into the znet
+                [Tensor2[tf32, Samples, Ys]],                                  #   -- transformation Jacobians will then reach through this transform
+                Tensor2[tf32, Samples, Ys]                                     #      to give the distribution of the *inputs* to this function.
+            ] = tf.identity,
             first_layer_type_or_types: LayerTypeOrTypes = _DefaultIn,
             hidden_layer_type_or_types: LayerTypeOrTypes = _DefaultHid,
             output_layer_type_or_types: LayerTypeOrTypes = _DefaultOut,
@@ -51,6 +55,7 @@ class _ZNet(_SimulatorNet):
         self.validation_set_fn = validation_set_fn
         self.param_sampling_fn = param_sampling_fn
         self.contrast_fn = contrast_fn
+        self.coords_fn = coords_fn
 
         ys, params = self.validation_set_fn()
 
@@ -157,10 +162,12 @@ class _ZNet(_SimulatorNet):
 
         # TODO: relate this to the contrast rather than "known param" naming
         ys, params = input_blob
+        coords = self.coords_fn(ys)
         known_params = tf.gather(params, self.known_param_indices, axis=1)
         contrast = self.contrast_fn(params)[:, None]
-        contrast_net_inputs = tf.concat([ys, contrast, known_params], axis=1)
-        other_net_inputs = tf.concat([ys, params], axis=1)
+        contrast_net_inputs = tf.concat([coords, contrast, known_params],
+                                        axis=1)
+        other_net_inputs = tf.concat([coords, params], axis=1)
         return contrast_net_inputs, other_net_inputs
 
     # work first additively in log space to avoid overflows

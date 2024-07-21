@@ -46,25 +46,29 @@ class _PNet(_DataSaver):
             self.validation_params
         )
 
+        known_param_indices = [
+            i + num_unknown_param for i in range(num_known_param)
+        ]
         self.estimatornet = _EstimatorNet(
             sampling_distribution_fn,
             self.sample_params,
             contrast_fn,
-            **network_setup_args
+            **network_setup_args,
         )
         self.coordinet = _CoordiNet(
             self.estimatornet,
             sampling_distribution_fn,
             self.sample_params,
-            **network_setup_args
+            **network_setup_args,
         )
         self.znet = _ZNet(
-            self.sampling_distribution_remapped,                               # type: ignore
+            self.sampling_distribution_fn,                                     # type: ignore
             self.sample_params,
             contrast_fn,
-            self.validation_set_remapped,                                      # type: ignore
-            [i + num_unknown_param for i in range(num_known_param)],
-            **network_setup_args
+            self.validation_set,
+            known_param_indices,
+            self.coordinet.call_tf,
+            **network_setup_args,
         )
 
         super().__init__(
@@ -84,18 +88,6 @@ class _PNet(_DataSaver):
         self.coordinet.compile(*args, **kwargs)
         self.znet.compile(*args, **kwargs)
 
-    @tf.function
-    def sampling_distribution_remapped(
-            self,
-            params: Tensor2[tf32, Samples, Params],
-    ) -> Tensor2[tf32, Samples, Estimates]:
-
-        estimates = self.sampling_distribution_fn(params)
-        inputs: Tensor2[tf32, Samples, NetInputs] = estimates                  # type: ignore
-        outputs = self.coordinet.call_tf([inputs])
-        estimate_coords: Tensor2[tf32, Samples, Estimates] = outputs           # type: ignore
-
-        return estimate_coords
 
     @tf.function
     def sample_params(
@@ -119,19 +111,7 @@ class _PNet(_DataSaver):
 
         return self.validation_estimates, self.validation_params
 
-    @tf.function
-    def validation_set_remapped(
-            self
-    ) -> Tuple[
-        Tensor2[tf32, Samples, Estimates],
-        Tensor2[tf32, Samples, Params]
-    ]:
 
-        inputs: Tensor2[tf32, Samples, NetInputs] = self.validation_estimates  # type: ignore
-        outputs = self.coordinet.call_tf([inputs])
-        estimates_remapped: Tensor2[tf32, Samples, Estimates] = outputs        # type: ignore
-
-        return estimates_remapped, self.validation_params
 
     @tf.function
     def p(
