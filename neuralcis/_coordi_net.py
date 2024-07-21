@@ -45,6 +45,8 @@ class _CoordiNet(_SimulatorNet):
             common.VALIDATION_SET_SIZE
         )
         self.num_y = self.validation_ys.shape[1]
+        self.output_scaler = tf.Variable(tf.ones(self.num_y)[None, :])
+        self.output_biaser = tf.Variable(tf.zeros(self.num_y)[None, :])
 
         _SimulatorNet.__init__(
             self,
@@ -52,6 +54,7 @@ class _CoordiNet(_SimulatorNet):
             first_layer_type_or_types=(_MonotonicTanhLayer, _DefaultIn),
             hidden_layer_type_or_types=(_MonotonicTanhLayer, _DefaultHid),
             output_layer_type_or_types=(_MonotonicLinearLayer, _DefaultOut),
+            instance_tf_variables_to_save=("output_scaler", "output_biaser"),
             filename=filename,
             **network_setup_args
         )
@@ -120,3 +123,34 @@ class _CoordiNet(_SimulatorNet):
         con_estimate = self.estimatornet.call_tf(estimates)
         return [con_estimate, estimates]                                       # Type: ignore
 
+    @tf.function
+    def _call_tf(
+            self,
+            net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]],
+            training: bool
+    ) -> Tensor2[tf32, Samples, NetOutputs]:
+
+        coords = super()._call_tf(net_ins, training=training)
+        coords_std = (coords + self.output_biaser) * self.output_scaler
+
+        return coords_std
+
+    def fit(self, *args, **kwargs) -> None:
+        super().fit(*args, **kwargs)
+        self.estimate_scalers()
+
+    @tf.function
+    def estimate_scalers(
+            self
+    ) -> None:
+
+        self.output_biaser.assign(self.output_biaser * 0.)
+        self.output_scaler.assign(self.output_scaler * 0. + 1)
+        estimates, _ = self.simulate_training_data(100000)
+        coords = self.call_tf(estimates)
+        means = tf.math.reduce_mean(coords, 0)
+        sds = tf.math.reduce_std(coords, 0)
+        mean_shift = 0. - means
+        sd_shift = 1. / sds
+        self.output_biaser.assign(mean_shift[None, :])
+        self.output_scaler.assign(sd_shift[None, :])
