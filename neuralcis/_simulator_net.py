@@ -12,9 +12,9 @@ import inspect
 from abc import ABC, abstractmethod
 
 # typing imports
-from typing import Optional, Tuple, Sequence, List, Union, Type
+from typing import Optional, Tuple, Sequence, List, Dict, Union, Type
 from neuralcis.common import Samples, NetInputs, NetOutputs, NodesInLayer
-from neuralcis.common import NetOutputBlob, NetTargetBlob
+from neuralcis.common import NetInputBlob, NetOutputBlob, NetTargetBlob
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
@@ -155,8 +155,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     def simulate_training_data(
             self,
             n: ttf.int32
-    ) -> Tuple[Sequence[Tensor2[tf32, Samples, NetInputs]],
-               Optional[NetTargetBlob]]:
+    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
 
         """Generate net input samples and output targets.
 
@@ -171,8 +170,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     @abstractmethod
     def get_validation_set(
             self
-    ) -> Tuple[Sequence[Tensor2[tf32, Samples, NetInputs]],
-               Optional[NetTargetBlob]]:
+    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
 
         """Return the validation set.
 
@@ -211,6 +209,13 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     #  Methods which might be overridden for better features.
     #
     ###########################################################################
+
+    def net_inputs(
+            self,
+            inputs: NetInputBlob,
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
+
+        return inputs
 
     @tf.function
     def compute_optimum_loss(self) -> ttf.float32:
@@ -270,17 +275,17 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     @tf.function
     def train_step(self, _):
-        net_ins, net_targets = self.simulate_training_data(
+        input_blob, targets = self.simulate_training_data(
             common.MINIBATCH_SIZE
         )
-        loss, grads = self.loss_and_gradient(net_ins, net_targets)
+        loss, grads = self.loss_and_gradient(input_blob, targets)
         self.optimizer.apply_gradients(zip(grads, self.train_weights))
 
         self.loss_tracker.update_state(loss)
 
         return {'loss': self.loss_tracker.result()}
 
-    def test_step(self, data):
+    def test_step(self, _):
         return {'loss_val': self.validation_loss()}
 
     ###########################################################################
@@ -322,10 +327,10 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                      for i, n_out in enumerate(num_outputs_for_each_net)]
 
         # Need to run some data through the nets to instantiate them.
-        net_ins, net_targets = self.simulate_training_data(
+        input_blob, targets = self.simulate_training_data(
             common.MINIBATCH_SIZE
         )
-        self.call_tf(net_ins)
+        self.call_tf(input_blob)
         self.rescale_layer_weights()
 
         return self.nets, self.num_nets
@@ -394,15 +399,16 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     @tf.function
     def call_tf(
             self,
-            net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]],
+            input_blob: NetInputBlob,
     ) -> Tensor2[tf32, Samples, NetOutputs]:
 
-        return self._call_tf(net_ins, training=False)
+        net_inputs = self.net_inputs(input_blob)
+        return self._call_tf(net_inputs, training=False)
 
     @tf.function
     def call_tf_training(
             self,
-            net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]],
+            input_blob: NetInputBlob,
     ) -> NetOutputBlob:
 
         """Making this a separate function, rather than using the training
@@ -410,7 +416,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         networks, we want to override only what happens when we call the net
         during training (e.g. to return the Jacobians)."""
 
-        return self._call_tf(net_ins, training=True)
+        net_inputs = self.net_inputs(input_blob)
+        return self._call_tf(net_inputs, training=True)
 
     @tf.function
     def _call_tf(
@@ -425,8 +432,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     @tf.function
     def validation_loss(self):
-        validation_ins, validation_targets = self.get_validation_set()
-        validation_outs = self.call_tf(validation_ins)
+        validation_input_blob, validation_targets = self.get_validation_set()
+        validation_outs = self.call_tf_training(validation_input_blob)
         validation_loss = self.get_loss(validation_outs, validation_targets)
 
         return validation_loss
@@ -434,14 +441,14 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     @tf.function
     def loss_and_gradient(
             self,
-            net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]],
-            net_targets: Optional[NetTargetBlob]
+            input_blob: NetInputBlob,
+            targets: Optional[NetTargetBlob]
     ) -> Tuple[ttf.float32, list]:
 
         with tf.GradientTape() as tape2:                                       # type: ignore
             tape2.watch(self.train_weights)
-            net_outs = self.call_tf_training(net_ins)
-            loss = self.get_loss(net_outs, net_targets)
+            net_outs = self.call_tf_training(input_blob)
+            loss = self.get_loss(net_outs, targets)
         gradient = tape2.gradient(loss, self.train_weights)
 
         return loss, gradient
@@ -464,7 +471,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             inputs=self.nets[net_index].input,
             outputs=[layer.output for layer in self.nets[net_index].layers]
         )
-        validation_ins, validation_outs = self.get_validation_set()
+        validation_input_blob, validation_outs = self.get_validation_set()
+        validation_ins = self.net_inputs(validation_input_blob)[net_index]
         layer_outs = extractor(validation_ins)
         layer_variances = [
             tfp.stats.variance(out, sample_axis=0) for out in layer_outs

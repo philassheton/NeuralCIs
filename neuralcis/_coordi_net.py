@@ -14,6 +14,9 @@ from tensor_annotations.tensorflow import Tensor2
 tf32 = ttf.float32
 
 
+NetInputBlob = Tensor2[tf32, Samples, Estimates]
+
+
 class _CoordiNet(_SimulatorNet):
     def __init__(
             self,
@@ -41,7 +44,7 @@ class _CoordiNet(_SimulatorNet):
         self.validation_ys, _ = self.simulate_training_data(
             common.VALIDATION_SET_SIZE
         )
-        self.num_y = self.validation_ys[0].shape[1]
+        self.num_y = self.validation_ys.shape[1]
 
         _SimulatorNet.__init__(
             self,
@@ -58,21 +61,19 @@ class _CoordiNet(_SimulatorNet):
             self,
             n: int,
     ) -> Tuple[
-        List[Tensor2[tf32, Samples, NetInputs]],
-        Optional[NetTargetBlob]
+        NetInputBlob,
+        None,
     ]:
 
         params = self.param_sampling_fn(n)
         estimates = self.sampling_distribution_fn(params)
-        inputs: Tensor2[tf32, Samples, NetInputs] = estimates                  # type: ignore
 
-        return [inputs], None
+        return estimates, None                                                 # type: ignore
 
     @tf.function
     def get_validation_set(
-            self
-    ) -> Tuple[Sequence[Tensor2[tf32, Samples, NetInputs]],
-               Optional[NetTargetBlob]]:
+            self,
+    ) -> Tuple[NetInputBlob, None]:
 
         return self.validation_ys, None
 
@@ -99,24 +100,23 @@ class _CoordiNet(_SimulatorNet):
     @tf.function
     def call_tf_training(
             self,
-            net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]]
+            estimates: NetInputBlob,
     ) -> NetOutputBlob:
 
         with tf.GradientTape() as tape:
-            tape.watch(net_ins[0])
+            tape.watch(estimates)
+            net_ins = self.net_inputs(estimates)
             coords = self._call_tf(net_ins, training=True)
-        jacobians = tape.batch_jacobian(coords, net_ins[0])
+        jacobians = tape.batch_jacobian(coords, estimates)
 
         return coords, jacobians
 
     @tf.function
-    def _call_tf(
+    def net_inputs(
             self,
-            net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]],
-            training: bool
-    ) -> Tensor2[tf32, Samples, NetOutputs]:
+            estimates: NetInputBlob,
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs]]:
 
-        estimate = self.estimatornet._call_tf(net_ins, training=training)
-        coords = super()._call_tf([estimate, net_ins[0]], training=training)
+        con_estimate = self.estimatornet.call_tf(estimates)
+        return [con_estimate, estimates]                                       # Type: ignore
 
-        return coords

@@ -4,13 +4,14 @@ from neuralcis._simulator_net import _SimulatorNet
 from neuralcis import common
 
 # Typing
-from typing import Tuple, Sequence, List, Optional, Callable
+from typing import Tuple, Optional, Callable
 from neuralcis.common import Samples, Params, Estimates
 from neuralcis.common import NetInputs, NetOutputBlob
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 
 tf32 = ttf.float32
+NetInputBlob = Tensor2[tf32, Samples, Estimates]
 NetTargetBlob = Tensor1[tf32, Samples]
 
 
@@ -49,26 +50,34 @@ class _EstimatorNet(_SimulatorNet):
             self,
             num_param_samples: int,
     ) -> Tuple[
-        List[Tensor2[tf32, Samples, NetInputs]],
+        NetInputBlob,
         NetTargetBlob,
     ]:
 
         params = self.param_sampling_fn(num_param_samples)
         params_replicated = tf.tile(params, (self.num_samples_per_params, 1))
         y_samples = self.sampling_distribution_fn(params_replicated)
-        inputs: Tensor2[tf32, Samples, NetInputs] = y_samples                  # type: ignore
         targets = self.contrast_fn(params)
 
-        return [inputs], targets
+        return y_samples, targets
 
     @tf.function
     def get_validation_set(
             self,
     ) -> Tuple[
-        Sequence[Tensor2[tf32, Samples, NetInputs]],
-        Optional[NetTargetBlob]
+        NetInputBlob,
+        NetTargetBlob,
     ]:
+
         return self.validation_ys, self.validation_targets
+
+    @tf.function
+    def net_inputs(
+            self,
+            estimates: NetInputBlob,
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
+
+        return (estimates, )                                                   # Type: ignore
 
     @tf.function
     def get_loss(

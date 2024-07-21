@@ -10,7 +10,15 @@ from neuralcis import common
 from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Params, Estimates, NetInputs, Ys
+from neuralcis.common import Samples, Params, Estimates, Ys
+from neuralcis.common import NetInputs, NetOutputs
+
+NetInputBlob = Tuple[
+    Tensor2[tf32, Samples, Estimates],
+    Tensor2[tf32, Samples, Params],
+]
+
+
 
 
 class _PNet(_DataSaver):

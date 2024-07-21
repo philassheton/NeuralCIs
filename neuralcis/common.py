@@ -71,6 +71,7 @@ J = typing.NewType("J", axes.Axis)
 
 # Again for typing, represents a blob of output from a network that can be
 #   passed into a loss function.
+NetInputBlob = typing.TypeVar("NetInputBlob")
 NetOutputBlob = typing.TypeVar("NetOutputBlob")
 NetTargetBlob = typing.TypeVar("NetTargetBlob")
 

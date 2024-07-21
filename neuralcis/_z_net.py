@@ -12,6 +12,9 @@ from tensor_annotations.tensorflow import Tensor1, Tensor2
 tf32 = ttf.float32
 
 
+NetInputBlob = Tuple[Tensor2[tf32, Samples, Ys],                    # -> ys
+                     Tensor2[tf32, Samples, Params]]                # -> params
+
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
                       Tensor1[tf32, Samples]]          # Jacobian determinants
 
@@ -33,10 +36,8 @@ class _ZNet(_SimulatorNet):
             ],
             validation_set_fn: Callable[
                 [],
-                Tuple[
-                    Tensor2[tf32, Samples, Ys],                   # -> ys
-                    Tensor2[tf32, Samples, Params]                # -> params
-                ]],
+                NetInputBlob
+            ],
             known_param_indices: Sequence[int],
             filename: str = "",
             **network_setup_args
@@ -68,31 +69,27 @@ class _ZNet(_SimulatorNet):
             self,
             n: int,
     ) -> Tuple[
-            Tuple[Tensor2[tf32, Samples, NetInputs], ...],
+            NetInputBlob,
             None
     ]:
 
-        ys, params = self.sample_ys_and_params(n)
-        net_inputs = self.net_inputs(ys, params)
-        target_outputs = None
-
-        return net_inputs, target_outputs
+        return self.sample_ys_and_params(n), None
 
     @tf.function
     def get_validation_set(
             self
     ) -> Tuple[
-            Tuple[Tensor2[tf32, Samples, NetInputs], ...],
+            NetInputBlob,
             None
     ]:
 
-        return self.net_inputs(*self.validation_set_fn()), None
+        return self.validation_set_fn(), None
 
     @tf.function
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
-            target_outputs: None = None
+            target_outputs: None = None,
     ) -> ttf.float32:
 
         outputs, jacobians_floored = net_outputs
@@ -108,20 +105,14 @@ class _ZNet(_SimulatorNet):
     @tf.function
     def call_tf_training(
             self,
-            net_inputs: Sequence[Tensor2[tf32, Samples, NetInputs]],
+            input_blob: NetInputBlob,
     ) -> NetOutputBlob:
 
-        return self.net_outputs_and_transformation_jacobdets(net_inputs)
-
-    @tf.function
-    def call_tf_y_params(
-            self,
-            ys: Tensor2[tf32, Samples, Ys],
-            params: Tensor2[tf32, Samples, Params],
-    ) -> Tensor2[tf32, Samples, Zs]:
-
-        net_inputs = self.net_inputs(ys, params)
-        return self.call_tf(net_inputs)                                        # type: ignore
+        out, det = self.net_outputs_and_transformation_jacobdets(
+            input_blob,
+            training=True,
+        )
+        return out, det
 
     def compute_optimum_loss(self) -> ttf.float32:
         # TODO: the individual losses here are not currently saved.  Need to
@@ -131,19 +122,6 @@ class _ZNet(_SimulatorNet):
         # TODO: implement optimum loss for multi-znet.
 
         return tf.constant(0.)
-
-    ###########################################################################
-    #
-    #  Non-Tensorflow members
-    #
-    ###########################################################################
-
-    def __call__(self, *y_and_params) -> Tensor2[tf32, Samples, Zs]:
-        y_and_params_parsed = common.combine_input_args_into_tensor(
-            *y_and_params
-        )
-        y, params = self.separate_net_inputs(y_and_params_parsed)
-        return self.call_tf_y_params(y, params)
 
     ###########################################################################
     #
@@ -158,32 +136,16 @@ class _ZNet(_SimulatorNet):
     @tf.function
     def net_inputs(
             self,
-            ys: Tensor2[tf32, Samples, Ys],
-            params: Tensor2[tf32, Samples, Params]
+            input_blob: NetInputBlob,
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
         # TODO: relate this to the contrast rather than "known param" naming
+        ys, params = input_blob
         known_params = tf.gather(params, self.known_param_indices, axis=1)
         contrast = self.contrast_fn(params)[:, None]
         contrast_net_inputs = tf.concat([ys, contrast, known_params], axis=1)
         other_net_inputs = tf.concat([ys, params], axis=1)
         return contrast_net_inputs, other_net_inputs
-
-    @tf.function
-    def separate_net_inputs(
-            self,
-            net_inputs: Sequence[Tensor2[tf32, Samples, NetInputs]]
-    ) -> Tuple[
-        Tensor2[tf32, Samples, Ys],
-        Tensor2[tf32, Samples, Params]
-    ]:
-
-        y: Tensor2[tf32, Samples, Ys] = \
-            net_inputs[1][:, 0:self.num_z_total()]                             # type: ignore
-        params: Tensor2[tf32, Samples, Params] = \
-            net_inputs[1][:, self.num_z_total():]                              # type: ignore
-
-        return y, params
 
     # work first additively in log space to avoid overflows
     @tf.function
@@ -203,18 +165,19 @@ class _ZNet(_SimulatorNet):
     @tf.function
     def net_outputs_and_transformation_jacobdets(
             self,
-            net_inputs: Sequence[Tensor2[tf32, Samples, NetInputs]],
-    ) -> Tuple[Tensor2[tf32, Samples, Zs], Tensor1[tf32, Samples]]:
+            input_blob: NetInputBlob,
+            training=False,
+    ) -> Tuple[
+        Tensor2[tf32, Samples, Zs],                                            # Net outputs
+        Tensor1[tf32, Samples],                                                # Jacobian determinants punished for being negative
+    ]:
 
-        # TODO: Definitely needs a tidy!!  Currently the ys and params are
-        #       pulled together into net_inputs at simulate_training_data,
-        #       then unfused in here, then refused later on!!  I think the
-        #       solution will have to have a NetInputBlob too.
-        ys, params = self.separate_net_inputs(net_inputs)
+        ys, params = input_blob
 
         with tf.GradientTape() as tape:                                        # type: ignore
             tape.watch(ys)
-            outputs = self.call_tf_y_params(ys, params)
+            inputs = self.net_inputs((ys, params))
+            outputs = self._call_tf(inputs, training=training)
 
         jacobians = tape.batch_jacobian(outputs, ys)
         jacobdets = tf.linalg.det(jacobians)
@@ -254,10 +217,7 @@ class _ZNet(_SimulatorNet):
     def sample_ys_and_params(
             self,
             n: int,
-    ) -> Tuple[
-        Tensor2[tf32, Samples, Ys],
-        Tensor2[tf32, Samples, Params]
-    ]:
+    ) -> NetInputBlob:
 
         params = self.sample_params(n)
         y = self.sampling_distribution_fn(params)

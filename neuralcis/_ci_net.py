@@ -13,6 +13,9 @@ import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
 
 
+NetInputBlob = Tuple[Tensor2[tf32, Samples, Estimates],
+                     Tensor2[tf32, Samples, Params],
+                     Tensor1[tf32, Samples]]                         # p-values
 NetOutputBlob = Tensor2[tf32, Samples, NetOutputs]
 NetTargetBlob = Tuple[Tensor2[tf32, Samples, Estimates],
                       Tensor2[tf32, Samples, Params],
@@ -55,14 +58,14 @@ class _CINet(_SimulatorNet):
     def simulate_training_data(
             self,
             n: ttf.int32
-    ) -> Tuple[List[Tensor2[tf32, Samples, NetInputs]], NetTargetBlob]:
+    ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
         params = self.sample_params(n)
         estimates = self.sampling_distribution_fn(params)
         target_p = tf.random.uniform((n,), tf.constant(0.), tf.constant(1.))
 
         known_params = self.known_params(params)
-        inputs = self.net_inputs(estimates, known_params, target_p)
+        inputs = (estimates, known_params, target_p)
         outputs = (estimates, params, target_p)
 
         return inputs, outputs
@@ -70,7 +73,7 @@ class _CINet(_SimulatorNet):
     @tf.function
     def get_validation_set(
             self
-    ) -> Tuple[List[Tensor2[tf32, Samples, NetInputs]], NetTargetBlob]:
+    ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
         return self.validation_set
 
@@ -114,11 +117,10 @@ class _CINet(_SimulatorNet):
     @tf.function
     def net_inputs(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
-            known_params: Tensor2[tf32, Samples, KnownParams],
-            target_p: Tensor1[tf32, Samples]
+            net_input_blob: NetInputBlob,
     ) -> List[Tensor2[tf32, Samples, NetInputs]]:
 
+        estimates, known_params, target_p = net_input_blob
         ins = tf.concat([
             estimates, known_params, tf.transpose([target_p])
         ], axis=1)
@@ -197,7 +199,7 @@ class _CINet(_SimulatorNet):
             conf_levels: Tensor1[tf32, Samples]
     ) -> Tuple[Tensor2[tf32, Samples, Params], Tensor2[tf32, Samples, Params]]:
 
-        net_inputs = self.net_inputs(estimates, known_params, conf_levels)
+        net_inputs = self.net_inputs((estimates, known_params, conf_levels))
         net_outputs = self.call_tf(net_inputs)
 
         lower, upper = self.output_activation(net_outputs, estimates)
