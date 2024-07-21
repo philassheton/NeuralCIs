@@ -117,11 +117,13 @@ class NeuralCIs(_DataSaver):
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
             num_unknown_param=self.num_estimate,
-            num_known_param=self.num_param - self.num_estimate
+            num_known_param=self.num_param - self.num_estimate,
+            train_initial_weights=not len(filename),
         )
         self.cinet = _CINet(self.pnet,
                             self._sampling_dist_net_interface,
-                            self.num_param)
+                            self.num_param,
+                            train_initial_weights=not len(filename))
 
         _DataSaver.__init__(
             self,

@@ -1,4 +1,5 @@
-from neuralcis._simulator_net import _SimulatorNet
+from neuralcis._simulator_net import _SimulatorNet, LayerTypeOrTypes
+from neuralcis._layers import _DefaultIn, _DefaultHid, _DefaultOut
 
 import neuralcis.common as common
 
@@ -39,6 +40,9 @@ class _ZNet(_SimulatorNet):
                 NetInputBlob
             ],
             known_param_indices: Sequence[int],
+            first_layer_type_or_types: LayerTypeOrTypes = _DefaultIn,
+            hidden_layer_type_or_types: LayerTypeOrTypes = _DefaultHid,
+            output_layer_type_or_types: LayerTypeOrTypes = _DefaultOut,
             filename: str = "",
             **network_setup_args
     ) -> None:
@@ -54,7 +58,19 @@ class _ZNet(_SimulatorNet):
         self.num_z = [1, num_y - 1]
         self.known_param_indices = known_param_indices
 
+        # Allow MonotonicWithParams layers to be used on first net if needed.
+        #  This counts all estimates except the first (num_y - 1) plus the
+        #  contrast (1) plus all known params as "not needing to be monotone"
+        layer_kwargs = [
+            {'num_params': (num_y-1) + 1 + len(self.known_param_indices)},
+            {},
+        ]
+
         super().__init__(num_outputs_for_each_net=self.num_z,
+                         first_layer_type_or_types=first_layer_type_or_types,
+                         hidden_layer_type_or_types=hidden_layer_type_or_types,
+                         output_layer_type_or_types=output_layer_type_or_types,
+                         layer_kwargs=layer_kwargs,
                          filename=filename,
                          **network_setup_args)
 

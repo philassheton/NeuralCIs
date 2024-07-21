@@ -1,7 +1,7 @@
 from neuralcis._data_saver import _DataSaver
 from neuralcis._layers import _SimNetLayer
 from neuralcis._layers import _DefaultIn, _DefaultHid, _DefaultOut
-import neuralcis.common as common
+from neuralcis import common, _layers
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
@@ -97,12 +97,17 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             first_layer_type_or_types: LayerTypeOrTypes = _DefaultIn,
             hidden_layer_type_or_types: LayerTypeOrTypes = _DefaultHid,
             output_layer_type_or_types: LayerTypeOrTypes = _DefaultOut,
+            layer_kwargs: Optional[Sequence[Dict]] = None,
+            train_initial_weights: bool = False,
             filename: str = "",
             subobjects_to_save: dict = None,
             instance_tf_variables_to_save: Sequence[str] = (),
             *model_args,
             **model_kwargs,
     ) -> None:
+
+        if layer_kwargs is None:
+            layer_kwargs = [{} for o in num_outputs_for_each_net]
 
         tf.keras.Model.__init__(self, *model_args, **model_kwargs)
 
@@ -112,7 +117,9 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             num_neurons_per_hidden_layer,
             first_layer_type_or_types,
             hidden_layer_type_or_types,
-            output_layer_type_or_types
+            output_layer_type_or_types,
+            layer_kwargs,
+            train_initial_weights,
         )
 
         trainable_weights = [net.trainable_weights for net in self.nets]
@@ -302,6 +309,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             first_layer_type_or_types: LayerTypeOrTypes,
             hidden_layer_type_or_types: LayerTypeOrTypes,
             output_layer_type_or_types: LayerTypeOrTypes,
+            layer_kwargs: Sequence[Dict],
+            train_initial_weights: bool,
     ) -> Tuple[
         List[tf.keras.Model],
         int,
@@ -323,7 +332,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                                      num_neurons_per_hidden_layer,
                                      first_layer_types[i],
                                      hidden_layer_types[i],
-                                     output_layer_types[i])
+                                     output_layer_types[i],
+                                     layer_kwargs[i])
                      for i, n_out in enumerate(num_outputs_for_each_net)]
 
         # Need to run some data through the nets to instantiate them.
@@ -331,14 +341,16 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             common.MINIBATCH_SIZE
         )
         self.call_tf(input_blob)
-        self.rescale_layer_weights()
+        if train_initial_weights:
+            self.rescale_layer_weights()
 
         return self.nets, self.num_nets
 
     def rescale_layer_weights(self):
-        for net in self.nets:
-            for layer in net.layers:
-                layer.scale_weights()
+        my_class_name = self.__class__.__name__
+        for i, net in enumerate(self.nets):
+            print(f"\n\nRescaling weights in net {i} of {my_class_name}:")
+            _layers.initialise_layers(net.layers)
 
     @staticmethod
     def create_net(
@@ -348,13 +360,15 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             input_layer_type: Type[_SimNetLayer],
             hidden_layer_type: Type[_SimNetLayer],
             output_layer_type: Type[_SimNetLayer],
+            layer_kwargs: Dict,
     ) -> tf.keras.Sequential:
 
         net = tf.keras.models.Sequential()
-        net.add(input_layer_type(num_neurons_per_hidden_layer))
+        net.add(input_layer_type(num_neurons_per_hidden_layer, **layer_kwargs))
         for i in range(num_hidden_layers):
-            net.add(hidden_layer_type(num_neurons_per_hidden_layer))
-        net.add(output_layer_type(num_outputs))
+            net.add(hidden_layer_type(num_neurons_per_hidden_layer,
+                                      **layer_kwargs))
+        net.add(output_layer_type(num_outputs, **layer_kwargs))
 
         return net
 

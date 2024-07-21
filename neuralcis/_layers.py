@@ -1,19 +1,15 @@
-from abc import ABC, abstractmethod
-
-import tensorflow as tf
-import tensorflow_probability as tfp
-import numpy as np
-
-from typing import List
-from tensor_annotations.tensorflow import Tensor2
-
 import neuralcis.common as common
+
+import numpy as np
+import tensorflow as tf
+from abc import ABC, abstractmethod
 
 # Typing
 from typing import List, Tuple
-from tensor_annotations.tensorflow import Tensor1, Tensor2
+from neuralcis.common import Samples, LayerInputs, LayerOutputs, Ys, Params
+from tensor_annotations.tensorflow import Tensor2
 import tensor_annotations.tensorflow as ttf
-from neuralcis.common import Samples, LayerInputs, LayerOutputs
+
 tf32 = ttf.float32
 
 
@@ -24,33 +20,52 @@ def scaled_tanh(x):
 
 class _SimNetLayer(tf.keras.layers.Layer, ABC):
     must_have_same_inputs_as_outputs = False
+    initialization_step_size_multiplier = 1.
 
-    def __init__(self, num_outputs: int) -> None:
+    def __init__(self, num_outputs: int, **layer_kwargs) -> None:
         super().__init__()
         self.num_outputs = num_outputs
         self.num_inputs = None
-        self.kernel = None
+        self.kernel_raw = None                                                 # Critically, kernel_raw will be ignored by the initializer!!
+        self.output_scaler = None                                              # The kernel scaler is just there to allow us to scale the individual channels in the initialization without adjusting individuals cells
         self.bias = None
+
+    def weights_dims(self) -> Tuple[int, int]:
+        return self.num_inputs, self.num_outputs
+
+    def num_matmul_outputs(self) -> int:
+        return self.num_outputs
+
+    def initialisation_adjustables(self) -> Tuple[tf.Tensor, ...]:
+        return (self.output_scaler, self.bias)
+
+    def weights(self) -> Tuple[tf.Tensor, ...]:
+        return self.kernel_raw * self.output_scaler, self.bias
 
     def build(self, input_shape: List) -> None:
         self.num_inputs = int(input_shape[-1])
         if self.must_have_same_inputs_as_outputs:
             self.check_inputs_and_outputs_match()
 
-        kernel_min, kernel_max = self.kernel_init_min_max(self.num_inputs,
-                                                          self.num_outputs)
+        W_num_in, W_num_out = self.weights_dims()
+        kernel_min, kernel_max, bias_init = self.inits(W_num_in, W_num_out)
 
-        self.kernel = self.add_weight(
-            "kernel",
-            shape=(self.num_inputs, self.num_outputs),
+        self.kernel_raw = self.add_weight(
+            "kernel_raw",
+            shape=(W_num_in, W_num_out),
             initializer=tf.keras.initializers.RandomUniform(minval=kernel_min,
                                                             maxval=kernel_max),
             trainable=True,
         )
+        self.output_scaler = self.add_weight(                                  # The output scaler exists to help with initialization
+            "kernel_scaler",
+            shape=(1, self.num_matmul_outputs()),
+            initializer = tf.keras.initializers.Ones(),
+        )
         self.bias = self.add_weight(
             "bias",
-            shape=(self.num_outputs,),
-            initializer=tf.keras.initializers.Zeros(),
+            shape=(W_num_out,),
+            initializer=tf.keras.initializers.Constant(bias_init),
             trainable=True,
         )
 
@@ -67,70 +82,79 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
     #    and anyway we will scale_weights once constructed, so we start with
     #    Glorot as a basic guide and then divide by 10 to get us something
     #    "safe".
-    def kernel_init_min_max(
+    def inits(
             self,
             fan_in: int,
             fan_out: int
-    ) -> Tuple[float, float]:
+    ) -> Tuple[float, float, float]:
 
         glorot_size = np.sqrt(6. / (fan_in + fan_out))
         glorot_safe = glorot_size / 10.
-        return -glorot_safe, glorot_safe
-
-    def scale_weights(self):
-        print(f"Rescaling {self.__class__.__name__} weights:")
-        initializer = _LayerInitializer(self)
-        initializer.compile()
-        initializer.fit()
-
-        test_inputs = tf.random.normal((1000, self.num_inputs))
-        test_outputs = self(test_inputs)
-        print(f"Means: {tf.math.reduce_mean(test_outputs, 0).numpy()}")
-        print(f"SDs:   {tf.math.reduce_std(test_outputs, 0).numpy()}")
-        print(f"Mins:  {tf.math.reduce_min(test_outputs, 0).numpy()}")
-        print(f"Maxes: {tf.math.reduce_max(test_outputs, 0).numpy()}")
+        return -glorot_safe, glorot_safe, 0.
 
     @abstractmethod
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerInputs]:
-        pass
+
+        raise NotImplementedError()
 
 
 class _LayerInitializer(tf.keras.models.Model):
-    def __init__(self, layer: _SimNetLayer):
+    def __init__(
+            self,
+            layer: _SimNetLayer,
+            previous_layers: List[_SimNetLayer],
+    ) -> None:
         super().__init__()
         self.layer = layer
+        self.previous_layers = previous_layers
         self.dummy_dataset = tf.data.Dataset.random()
         self.loss_tracker = tf.keras.metrics.Mean(name='loss')
+        self.layer_inputs = self.layer.num_inputs
+        self.net_inputs = self.layer_inputs
+        if len(self.previous_layers):
+            self.net_inputs = self.previous_layers[0].num_inputs
+        self.loss_rescale = (
+            tf.math.sqrt(tf.cast(self.layer_inputs, tf.float32)) *             # Scaling up by number of inputs (sqrted) allows us to take big steps that are still not too big if there are very few inputs
+            self.layer.initialization_step_size_multiplier
+        )
 
     def train_step(self, _):
-        # TODO: Replace this with a proper loss function
-        weights = self.trainable_weights
-        batch = common.MINIBATCH_SIZE
-        inputs = tf.random.normal((batch, self.layer.num_inputs))
-        with tf.GradientTape() as tape:
+        weights = self.layer.initialisation_adjustables()
+        batch = common.LAYER_LEARNING_BATCH_SIZE
+
+        inputs = tf.random.uniform((batch, self.net_inputs), -1., 1.)
+        for previous_layer in self.previous_layers:
+            inputs = previous_layer(inputs)
+
+        with (tf.GradientTape() as tape):
             tape.watch(weights)
             outputs = self.layer(inputs)
             variances = tf.math.reduce_variance(outputs, 0)
             means = tf.math.reduce_mean(outputs, 0)
+            # TODO: First draft; replace this with a proper loss function
             loss = tf.reduce_mean(
-                tf.math.abs(tf.math.log(variances)) +                          # This will NOT be consistent across batches...
+                tf.math.abs(tf.math.log(variances * 3.)) +
                 tf.math.square(means)
             )
-        gradients = tape.gradient(loss, weights)
+            loss_scaled = (
+                    loss *
+                    self.loss_rescale *
+                    self.layer.initialization_step_size_multiplier
+            )
+
+        gradients = tape.gradient(loss_scaled, weights)
         self.optimizer.apply_gradients(zip(gradients, weights))
         self.loss_tracker.update_state(loss)
 
         return {'loss': self.loss_tracker.result()}
 
     def compile(self, optimizer='sgd', *args, **kwargs):
-        super().compile(optimizer, *args, **kwargs)
+        super().compile(optimizer, loss=None, *args, **kwargs)
 
     def fit(self, *args) -> None:
-        # TODO: this is rather ugly, effectively making any call from the
-        #       superclass to this function break.  Rethink!
         assert len(args) == 0  # Cannot use the usual fit args here!!
 
         learning_rate_initial = common.LAYER_LEARNING_RATE_INITIAL
@@ -151,12 +175,33 @@ class _LayerInitializer(tf.keras.models.Model):
                     callbacks=[lr_scheduler])
 
 
+def initialise_layers(layers: List[_SimNetLayer]) -> None:
+    num_inputs = layers[0].num_inputs
+    test_values = tf.random.uniform((1000, num_inputs)) * 2. - 1
+    for i, layer in enumerate(layers):
+        previous_layers = layers[0:i]
+
+        print(f"    Rescaling {layer.__class__.__name__} weights:")
+        initializer = _LayerInitializer(layer, previous_layers)
+        initializer.compile()
+        initializer.fit()
+
+        test_values = layer(test_values)
+        print(f"        Mins:  {tf.math.reduce_min(test_values, 0).numpy()}")
+        print(f"        Maxes: {tf.math.reduce_max(test_values, 0).numpy()}")
+        print(f"        Means: {tf.math.reduce_mean(test_values, 0).numpy()}")
+        print(f"        SDs:   {tf.math.reduce_std(test_values, 0).numpy()}")
+        print(f"        ({layer.__class__.__name__} at layer {i})")
+
+
 class _LinearLayer(_SimNetLayer):
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerInputs]:
-        return tf.linalg.matmul(inputs, self.kernel) + self.bias
+
+        W, b = self.weights()
+        return tf.linalg.matmul(inputs, W) + b
 
 
 class _FiftyFiftyLayer(_SimNetLayer):
@@ -170,7 +215,8 @@ class _FiftyFiftyLayer(_SimNetLayer):
             inputs: Tensor2[tf32, Samples, LayerInputs]
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
-        potentials = tf.linalg.matmul(inputs, self.kernel) + self.bias
+        W, b = self.weights()
+        potentials = tf.linalg.matmul(inputs, W) + b
         tanh_outputs = potentials[:, 0:self.num_outputs_per_activation]
         elu_outputs = potentials[:, self.num_outputs_per_activation:]
         activations = tf.concat([
@@ -189,7 +235,8 @@ class _MultiplyerLayer(_SimNetLayer):
             inputs: Tensor2[tf32, Samples, LayerInputs]
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
-        potentials = tf.linalg.matmul(inputs, self.kernel) + self.bias
+        W, b = self.weights()
+        potentials = tf.linalg.matmul(inputs, W) + b
 
         outputs = potentials * inputs
         mean = tf.math.reduce_mean(outputs, axis=1)
@@ -202,88 +249,194 @@ class _MultiplyerLayer(_SimNetLayer):
 
 
 class _MonotonicLinearLayer(_SimNetLayer):
+    initialization_step_size_multiplier = .1
+
     @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
-        kernel = tf.math.exp(self.kernel)
-        bias = self.bias
-        potentials = tf.linalg.matmul(inputs, kernel) + bias
-
-        return potentials
-
-    def kernel_init_min_max(
-            self,
-            fan_in: int,
-            fan_out: int
-    ) -> Tuple[float, float]:
-
-        neg, pos = super().kernel_init_min_max(fan_in, fan_out)
-        return np.log(pos * .5), np.log(pos)                                   # Must be positive!
-
-
-class _MonotonicTanhLayer(_MonotonicLinearLayer):
-    @tf.function
-    def call(
-            self,
-            inputs: Tensor2[tf32, Samples, LayerInputs],
-    ) -> Tensor2[tf32, Samples, LayerOutputs]:
-
-        potentials = super().call(inputs)
-        activations = scaled_tanh(potentials)
+        Wlog, b = self.weights()
+        W = tf.math.exp(Wlog)
+        potentials = tf.linalg.matmul(inputs, W) + b
+        activations = self.activation_function(potentials)
 
         return activations
 
+    def activation_function(
+            self,
+            potentials: Tensor2[tf32, Samples, LayerOutputs],
+    ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
-class _DoubleTriangularLayer(_SimNetLayer):
-    must_have_same_inputs_as_outputs = True
+        return potentials
 
-    def __init__(self, num_outputs: int) -> None:
-        super().__init__(num_outputs)
-        self.num_outputs = num_outputs
-        self.lower = None
-        self.upper = None
-        self.bias = None
+    def inits(
+            self,
+            fan_in: int,
+            fan_out: int
+    ) -> Tuple[float, float, float]:
 
-    def build(self, input_shape: list) -> None:
+        neg, pos, b = super().inits(fan_in, fan_out)
+        return np.log(pos * .5), np.log(pos), b                                # Must be positive!
+
+
+class _MonotonicTanhLayer(_MonotonicLinearLayer):
+    initialization_step_size_multiplier = 1.
+
+    def activation_function(
+            self,
+            potentials: Tensor2[tf32, Samples, LayerOutputs],
+    ) -> Tensor2[tf32, Samples, LayerOutputs]:
+
+        return scaled_tanh(potentials)
+
+
+class _MonotonicLeakyReluLayer(_MonotonicLinearLayer):
+
+    def __init__(
+            self,
+            *args,
+            **kwargs
+    ) -> None:
+
+        super().__init__(*args, **kwargs)
+        self.leaky_relu = tf.keras.layers.LeakyReLU(common.LEAKY_RELU_SLOPE)
+
+    def activation_function(
+            self,
+            potentials: Tensor2[tf32, Samples, LayerOutputs],
+    ) -> Tensor2[tf32, Samples, LayerOutputs]:
+
+        return self.leaky_relu(potentials)
+
+
+class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
+
+    def __init__(
+            self,
+            num_outputs: int,
+            num_params: int,
+    ) -> None:
+
+        super().__init__(num_outputs + num_params)
+        self.num_params = num_params
+        self.num_mono_in = None
+        self.num_mono_out = None
+        self.num_virtual_weights = None
+
+    def weights_dims(self):
+        return self.num_params, (self.num_mono_in + 1) * self.num_mono_out     # +1 because we need an extra num_mono_out to generate virtual biases also
+
+    def num_matmul_outputs(
+            self,
+    ) -> int:
+
+        return self.num_mono_out
+
+    def initialisation_adjustables(self) -> Tuple[tf.Tensor, ...]:
+        return self.output_scaler, self.output_shifter
+
+    def build(
+            self,
+            input_shape: List
+    ) -> None:
+
+        self.num_mono_in = input_shape[-1] - self.num_params
+        self.num_mono_out = self.num_outputs - self.num_params                 # For backward compatibility, self.num_outputs and self.num_inputs refer to the TOTAL number of inputs and outputs (including params)
+        self.num_virtual_weights = self.num_mono_in * self.num_mono_out
+
         self.num_inputs = int(input_shape[-1])
-        self.check_inputs_and_outputs_match()
-        num_weights = self.num_inputs * (self.num_inputs + 1) // 2
-        assert self.num_inputs == self.num_outputs
+        if self.must_have_same_inputs_as_outputs:
+            self.check_inputs_and_outputs_match()
 
-        self.lower = self.add_weight(
-            'lower',
-            shape=(num_weights, ),
-            initializer=tf.keras.initializers.GlorotUniform(),
-            trainable=True
+        kernel_rows, kernel_cols = self.weights_dims()
+        virtual_kernel_min, virtual_kernel_max, bias_init = self.inits(
+            self.num_mono_in,
+            self.num_mono_out,
         )
-        self.upper = self.add_weight(
-            'upper',
-            shape=(num_weights, ),
-            initializer=tf.keras.initializers.GlorotUniform(),
-            trainable=True
+
+        self.kernel_raw = self.add_weight(
+            "kernel_raw",
+            shape=(kernel_rows, kernel_cols),
+            initializer=tf.keras.initializers.Zeros(),
+            trainable=True,
+        )
+        self.output_scaler = self.add_weight(
+            # The output scaler exists to help with initialization
+            "output_scaler",
+            shape=(1, self.num_matmul_outputs()),
+            initializer=tf.keras.initializers.Ones(),
+        )
+        self.output_shifter = self.add_weight(
+            "output_shifter",
+            shape=(1, self.num_matmul_outputs()),
+            initializer=tf.keras.initializers.Zeros(),
         )
         self.bias = self.add_weight(
-            'bias',
-            shape=(self.num_outputs, ),
-            initializer=tf.keras.initializers.RandomUniform(),
-            trainable=True
+            "bias",
+            shape=(kernel_cols,),
+            # We use the kernel_min and kernel_max for the BIAS since, when
+            #     combined with zero kernel as initialization, it will
+            #     construct the virtual kernel within this min and max...
+            initializer=tf.keras.initializers.RandomUniform(
+                virtual_kernel_min,
+                virtual_kernel_max,
+            ),
+            trainable=True,
         )
 
-    def call(self, inputs):
-        lower = tfp.math.fill_triangular(self.lower)
-        upper = tfp.math.fill_triangular(self.upper, upper=True)
-        outputs = tf.linalg.matmul(inputs, lower)
-        outputs = tf.linalg.matmul(outputs, upper)
-        outputs = outputs + self.bias[None, :]
-        outputs = tf.keras.activations.elu(outputs)
+        # ... however the later elements of the BIAS *are* for the bias, not
+        #     the kernel...
+        self.bias[self.num_virtual_weights:].assign(
+            self.bias[self.num_virtual_weights:] * 0. + bias_init
+        )
 
-        return outputs
+    @tf.function
+    def weights(
+            self,
+            params = None,
+    ):
+
+        if params is None:
+            raise Exception("self.weights() called on with-params layer "
+                            "without passing also params!")
+
+        batch_size, _ = params.shape
+        W, b = self.kernel_raw, self.bias
+        logkernel_bias_flat = tf.linalg.matmul(params, W) + b
+        logkernel = tf.reshape(logkernel_bias_flat[:, 0:self.num_virtual_weights],
+                               (batch_size, self.num_mono_in, self.num_mono_out))
+        bias = logkernel_bias_flat[:, self.num_virtual_weights:]
+
+        return logkernel + tf.math.log(self.output_scaler), bias + self.output_shifter
+
+    @tf.function
+    def ins_mono_and_params(
+            self,
+            inputs: Tensor2[tf32, Samples, LayerInputs],
+    ) -> Tuple[Tensor2[tf32, Samples, Ys],
+               Tensor2[tf32, Samples, Params]]:
+
+        return inputs[:, 0:-self.num_params], inputs[:, -self.num_params:]     # type: ignore
+
+    @tf.function
+    def call(
+            self,
+            inputs: Tensor2[tf32, Samples, LayerInputs],
+    ) -> Tensor2[tf32, Samples, LayerOutputs]:
+
+        ins_mono, params = self.ins_mono_and_params(inputs)
+        Wlog, b = self.weights(params)
+        W = tf.math.exp(Wlog)
+
+        # IMPORTANT: W is a 3d tensor of one weights matrix per data point
+        potentials = tf.linalg.matmul(ins_mono[:, None, :], W)[:, 0, :] + b
+        activations = self.activation_function(potentials)
+
+        return tf.concat([activations, params], axis=1)
 
 
 _DefaultIn = _LinearLayer
 _DefaultHid = _MultiplyerLayer
 _DefaultOut = _LinearLayer
-
