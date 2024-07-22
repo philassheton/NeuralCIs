@@ -88,15 +88,27 @@ class _CoordiNet(_SimulatorNet):
     ) -> ttf.float32:
 
         coords, jacobians = net_outputs
-
-        # Volume-preserving map
         jacobdets = tf.linalg.det(jacobians)
-        punitive_but_not_zero_jacobdets = 1e-10 * tf.math.sigmoid(jacobdets)
+
+        # do not allow sigmoid(determinants) to underrun to zero
+        min_allowed = common.MIN_ALLOWED_JACOBDET_IN_COORDINET
+        extra_space = tf.maximum(tf.reduce_min(jacobdets) / min_allowed, 1.)
+        sigmoid_safe = tf.math.sigmoid(jacobdets / extra_space)                # Safe in the sense it never goes to zero!!
+
+        punitive_but_not_zero_jacobdets = 1e-10 * sigmoid_safe
         jacobdets_floored = tf.math.maximum(
             jacobdets,
             punitive_but_not_zero_jacobdets,
         )
+
+        # Volume-preserving map.  TODO: revist to find a better loss if used.
         loss = tf.reduce_mean(tf.abs(tf.math.log(jacobdets_floored)))
+
+        # Conformal map
+        # n, r, c = jacobians.shape
+        # identity = tf.linalg.eye(r)[None, :, :]
+        # jacobians_sq = tf.linalg.matmul(jacobians, jacobians, transpose_a=True)
+        # loss = loss + tf.math.reduce_mean(tf.math.square(jacobians_sq - identity))
 
         return loss
 
