@@ -1,8 +1,6 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 from neuralcis._z_net import _ZNet
-from neuralcis._coordi_net import _CoordiNet
-from neuralcis._estimator_net import _EstimatorNet
 from neuralcis._data_saver import _DataSaver
 from neuralcis import common
 
@@ -46,43 +44,24 @@ class _PNet(_DataSaver):
         known_param_indices = [
             i + num_unknown_param for i in range(num_known_param)
         ]
-        self.estimatornet = _EstimatorNet(
-            sampling_distribution_fn,
-            self.sample_params,
-            contrast_fn,
-            **network_setup_args,
-        )
-        self.coordinet = _CoordiNet(
-            self.estimatornet,
-            sampling_distribution_fn,
-            self.sample_params,
-            **network_setup_args,
-        )
         self.znet = _ZNet(
             self.sampling_distribution_fn,                                     # type: ignore
             self.sample_params,
             contrast_fn,
             self.validation_set,
             known_param_indices,
-            self.coordinet.call_tf,                                            # type: ignore
             **network_setup_args,
         )
 
         super().__init__(
             filename=filename,
-            subobjects_to_save={"znet": self.znet,
-                                "estimatornet": self.estimatornet,
-                                "coordinet": self.coordinet}
+            subobjects_to_save={"znet": self.znet}
         )
 
     def fit(self, *args, **kwargs) -> None:
-        self.estimatornet.fit(*args, **kwargs)
-        self.coordinet.fit(*args, **kwargs)
         self.znet.fit(*args, **kwargs)
 
     def compile(self, *args, **kwargs) -> None:
-        self.estimatornet.compile(*args, **kwargs)
-        self.coordinet.compile(*args, **kwargs)
         self.znet.compile(*args, **kwargs)
 
 
