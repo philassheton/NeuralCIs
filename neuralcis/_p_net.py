@@ -10,15 +10,12 @@ from neuralcis import common
 from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Params, Estimates, Ys
-from neuralcis.common import NetInputs, NetOutputs
+from neuralcis.common import Samples, Params, Estimates
 
 NetInputBlob = Tuple[
     Tensor2[tf32, Samples, Estimates],
     Tensor2[tf32, Samples, Params],
 ]
-
-
 
 
 class _PNet(_DataSaver):
@@ -67,7 +64,7 @@ class _PNet(_DataSaver):
             contrast_fn,
             self.validation_set,
             known_param_indices,
-            self.coordinet.call_tf,
+            self.coordinet.call_tf,                                            # type: ignore
             **network_setup_args,
         )
 
@@ -111,8 +108,6 @@ class _PNet(_DataSaver):
 
         return self.validation_estimates, self.validation_params
 
-
-
     @tf.function
     def p(
             self,
@@ -120,14 +115,8 @@ class _PNet(_DataSaver):
             params_null: Tensor2[tf32, Samples, Params]
     ) -> Tensor1[tf32, Samples]:
 
-        inputs: Tensor2[tf32, Samples, NetInputs] = estimates                  # type: ignore
-        outputs = self.coordinet.call_tf([inputs])
-
-        coords: Tensor2[tf32, Samples, Ys] = outputs                           # type: ignore
-        zs = self.znet.call_tf_y_params(coords, params_null)
-
-        z_focal: Tensor1[tf32, Samples] = zs[:, 0]                             # type: ignore
-        cdf = tfp.distributions.Normal(0., 1.).cdf(z_focal)
+        zs = self.znet.call_tf((estimates, params_null))
+        cdf = tfp.distributions.Normal(0., 1.).cdf(zs[:, 0])
 
         p: Tensor1[tf32, Samples] = 1. - tf.math.abs(cdf*2. - 1.)              # type: ignore
 

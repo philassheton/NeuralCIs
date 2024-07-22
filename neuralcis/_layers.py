@@ -37,7 +37,7 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
         return self.num_outputs
 
     def initialisation_adjustables(self) -> Tuple[tf.Tensor, ...]:
-        return (self.output_scaler, self.bias)
+        return self.output_scaler, self.bias
 
     def weights(self) -> Tuple[tf.Tensor, ...]:
         return self.kernel_raw * self.output_scaler, self.bias
@@ -60,7 +60,7 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
         self.output_scaler = self.add_weight(                                  # The output scaler exists to help with initialization
             "kernel_scaler",
             shape=(1, self.num_matmul_outputs()),
-            initializer = tf.keras.initializers.Ones(),
+            initializer=tf.keras.initializers.Ones(),
         )
         self.bias = self.add_weight(
             "bias",
@@ -324,6 +324,8 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
         self.num_mono_in = None
         self.num_mono_out = None
         self.num_virtual_weights = None
+        self.output_shifter = None
+        self.output_scaler = None
 
     def weights_dims(self):
         return self.num_params, (self.num_mono_in + 1) * self.num_mono_out     # +1 because we need an extra num_mono_out to generate virtual biases also
@@ -395,7 +397,7 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
     @tf.function
     def weights(
             self,
-            params = None,
+            params=None,
     ):
 
         if params is None:
@@ -405,11 +407,16 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
         batch_size, _ = params.shape
         W, b = self.kernel_raw, self.bias
         logkernel_bias_flat = tf.linalg.matmul(params, W) + b
-        logkernel = tf.reshape(logkernel_bias_flat[:, 0:self.num_virtual_weights],
-                               (batch_size, self.num_mono_in, self.num_mono_out))
+        logkernel = tf.reshape(
+            logkernel_bias_flat[:, 0:self.num_virtual_weights],
+            (batch_size, self.num_mono_in, self.num_mono_out)
+        )
         bias = logkernel_bias_flat[:, self.num_virtual_weights:]
 
-        return logkernel + tf.math.log(self.output_scaler), bias + self.output_shifter
+        return (
+            logkernel + tf.math.log(self.output_scaler),
+            bias + self.output_shifter
+        )
 
     @tf.function
     def ins_mono_and_params(

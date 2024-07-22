@@ -107,7 +107,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     ) -> None:
 
         if layer_kwargs is None:
-            layer_kwargs = [{} for o in num_outputs_for_each_net]
+            layer_kwargs = [{} for _ in num_outputs_for_each_net]
 
         tf.keras.Model.__init__(self, *model_args, **model_kwargs)
 

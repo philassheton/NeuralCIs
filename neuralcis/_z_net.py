@@ -1,8 +1,6 @@
 from neuralcis._simulator_net import _SimulatorNet, LayerTypeOrTypes
 from neuralcis._layers import _DefaultIn, _DefaultHid, _DefaultOut
 
-import neuralcis.common as common
-
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 
@@ -213,9 +211,7 @@ class _ZNet(_SimulatorNet):
             punitive_but_not_zero_jacobdets
         )
 
-        return outputs, jacobdets_floored
-
-
+        return outputs, jacobdets_floored                                      # type: ignore
 
     @tf.function
     def sample_params(

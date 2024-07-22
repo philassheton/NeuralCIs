@@ -6,7 +6,7 @@ from neuralcis import common
 import tensorflow as tf
 
 # Typing
-from typing import Tuple, Sequence, List, Optional, Callable
+from typing import Tuple, Sequence, Optional, Callable
 from neuralcis.common import Samples, Params, Estimates, NetInputs
 from neuralcis.common import NetOutputs, NetTargetBlob, NetOutputBlob
 from tensor_annotations import tensorflow as ttf
@@ -104,12 +104,6 @@ class _CoordiNet(_SimulatorNet):
         # Volume-preserving map.  TODO: revist to find a better loss if used.
         loss = tf.reduce_mean(tf.abs(tf.math.log(jacobdets_floored)))
 
-        # Conformal map
-        # n, r, c = jacobians.shape
-        # identity = tf.linalg.eye(r)[None, :, :]
-        # jacobians_sq = tf.linalg.matmul(jacobians, jacobians, transpose_a=True)
-        # loss = loss + tf.math.reduce_mean(tf.math.square(jacobians_sq - identity))
-
         return loss
 
     @tf.function
@@ -143,7 +137,7 @@ class _CoordiNet(_SimulatorNet):
     ) -> Tensor2[tf32, Samples, NetOutputs]:
 
         coords = super()._call_tf(net_ins, training=training)
-        coords_std = (coords + self.output_biaser) * self.output_scaler
+        coords_std = (coords + self.output_biaser) * self.output_scaler        # type: ignore
 
         return coords_std
 
@@ -156,8 +150,8 @@ class _CoordiNet(_SimulatorNet):
             self
     ) -> None:
 
-        self.output_biaser.assign(self.output_biaser * 0.)
-        self.output_scaler.assign(self.output_scaler * 0. + 1)
+        self.output_biaser.assign(self.output_biaser * 0.)                     # type: ignore
+        self.output_scaler.assign(self.output_scaler * 0. + 1)                 # type: ignore
         estimates, _ = self.simulate_training_data(100000)
         coords = self.call_tf(estimates)
         means = tf.math.reduce_mean(coords, 0)
