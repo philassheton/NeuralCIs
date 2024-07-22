@@ -259,12 +259,31 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         #       superclass to this function break.  Rethink!
         assert len(args) == 0   # Cannot use the usual fit args here!!
 
+        use_decay = common.USE_DECAYING_LEARNING_RATE
+        use_plateau = common.USE_DECREASE_LEARNING_RATE_ON_PLATEAU
+        assert use_decay or use_plateau
+        assert not (use_decay and use_plateau)
+
         print(f"Training {self.__class__.__name__}")
 
-        def learning_rate(epoch):
-            return learning_rate_initial * 2**(-epoch /
-                                               learning_rate_half_life_epochs)
-        lr_scheduler = tf.keras.callbacks.LearningRateScheduler(learning_rate)
+        if use_decay:
+            def learning_rate(epoch):
+                return learning_rate_initial * 2**(-epoch /
+                                                learning_rate_half_life_epochs)
+            lr_scheduler = tf.keras.callbacks.LearningRateScheduler(
+                learning_rate
+            )
+
+        elif use_plateau:
+            lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss_val",
+                factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU,
+                patience=common.LEARNING_RATE_PLATEAU_PATIENCE,
+                min_lr=common.LEARNING_RATE_MINIMUM,
+            )
+
+        else:
+            raise Exception("Should not even be possible to reach this!")
 
         if callbacks is None:
             callbacks = [lr_scheduler]
@@ -279,8 +298,19 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                            verbose=verbose,
                            callbacks=callbacks)
 
-    def compile(self, optimizer='nadam', *args, **kwargs):
-        super().compile(optimizer, *args, **kwargs)
+    def compile(
+            self,
+            optimizer=None,
+            *args,
+            **kwargs
+    ) -> None:
+
+        if optimizer is None:
+            optimizer = tf.keras.optimizers.Adam(
+                amsgrad=common.AMS_GRAD,
+                learning_rate=common.LEARNING_RATE_INITIAL,
+            )
+        super().compile(optimizer, loss=None, *args, **kwargs)
 
     @tf.function
     def train_step(self, _):
