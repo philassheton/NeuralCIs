@@ -6,7 +6,7 @@ from neuralcis import common
 import tensorflow as tf
 
 # Typing
-from typing import Tuple, Sequence, Optional, Callable
+from typing import Tuple, Sequence, Dict, Optional, Callable
 from neuralcis.common import Samples, Params, Estimates, NetInputs
 from neuralcis.common import NetOutputs, NetTargetBlob, NetOutputBlob
 from tensor_annotations import tensorflow as ttf
@@ -141,9 +141,10 @@ class _CoordiNet(_SimulatorNet):
 
         return coords_std
 
-    def fit(self, *args, **kwargs) -> None:
-        super().fit(*args, **kwargs)
+    def fit(self, *args, **kwargs) -> Dict:
+        history = super().fit(*args, **kwargs)
         self.estimate_scalers()
+        return history
 
     @tf.function
     def estimate_scalers(

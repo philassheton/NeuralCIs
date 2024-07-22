@@ -99,6 +99,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             output_layer_type_or_types: LayerTypeOrTypes = _DefaultOut,
             layer_kwargs: Optional[Sequence[Dict]] = None,
             train_initial_weights: bool = False,
+            internal_nets: Optional[Sequence[tf.keras.Model]] = None,
             filename: str = "",
             subobjects_to_save: dict = None,
             instance_tf_variables_to_save: Sequence[str] = (),
@@ -111,16 +112,20 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         tf.keras.Model.__init__(self, *model_args, **model_kwargs)
 
-        self.nets, self.num_nets = self.create_nets(
-            num_outputs_for_each_net,
-            num_hidden_layers,
-            num_neurons_per_hidden_layer,
-            first_layer_type_or_types,
-            hidden_layer_type_or_types,
-            output_layer_type_or_types,
-            layer_kwargs,
-            train_initial_weights,
-        )
+        if internal_nets is not None:
+            self.nets = internal_nets
+            self.num_nets = len(internal_nets)
+        else:
+            self.nets, self.num_nets = self.create_nets(
+                num_outputs_for_each_net,
+                num_hidden_layers,
+                num_neurons_per_hidden_layer,
+                first_layer_type_or_types,
+                hidden_layer_type_or_types,
+                output_layer_type_or_types,
+                layer_kwargs,
+                train_initial_weights,
+            )
 
         trainable_weights = [net.trainable_weights for net in self.nets]
         self.train_weights = [w for ws in trainable_weights for w in ws]
