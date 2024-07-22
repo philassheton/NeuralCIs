@@ -213,20 +213,9 @@ class _ZNet(_SimulatorNet):
             punitive_but_not_zero_jacobdets
         )
 
-        jacobian_diags = tf.linalg.diag_part(jacobians)
-        punitive_but_not_zero_diags = 1e-10 * tf.math.sigmoid(jacobian_diags)
-        jacobian_diags_floored = tf.math.maximum(
-            jacobian_diags,
-            punitive_but_not_zero_diags
-        )
+        return outputs, jacobdets_floored
 
-        # TODO: check whether this step is really necessary (or helpful?)
-        jacobdets_punished = tf.math.minimum(
-            jacobdets_floored,
-            tf.math.reduce_prod(jacobian_diags_floored, axis=1)
-        )
 
-        return outputs, jacobdets_punished
 
     @tf.function
     def sample_params(
