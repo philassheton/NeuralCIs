@@ -271,11 +271,13 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         else:
             callbacks = [lr_scheduler] + list(callbacks)
 
-        super().fit(x=self.dummy_dataset,
-                    steps_per_epoch=steps_per_epoch,
-                    epochs=epochs,
-                    verbose=verbose,
-                    callbacks=callbacks)
+        return super().fit(x=self.dummy_dataset,
+                           validation_data=self.dummy_dataset,
+                           steps_per_epoch=steps_per_epoch,
+                           validation_steps=1,
+                           epochs=epochs,
+                           verbose=verbose,
+                           callbacks=callbacks)
 
     def compile(self, optimizer='nadam', *args, **kwargs):
         super().compile(optimizer, *args, **kwargs)
@@ -293,6 +295,11 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         return {'loss': self.loss_tracker.result()}
 
     def test_step(self, _):
+        # TODO: At present will have to compile a different node for the
+        #    validation runs, as tries to run the whole validation in one go,
+        #    rather than breaking it into minibatches.  To break it into
+        #    minibatches will need to write a custom dataloader that generates
+        #    the data.
         return {'loss_val': self.validation_loss()}
 
     ###########################################################################
