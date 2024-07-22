@@ -23,7 +23,7 @@ cis = NeuralCIs(
     contrast_fn,
     mu=Uniform(-2., 2.),
     sigma=LogUniform(.1, 10.),
-    n=LogUniform(1.1, 300.)
+    n=LogUniform(1.1, 300.),
 )
 
 
@@ -33,6 +33,6 @@ cis.fit()
 # should be p = 0.05, lower bound going to zero
 print(cis.p_and_ci(
     {'mu': 0.139, 'sigma': 1.},
-    {'mu': 0., 'sigma': 1., 'n': 200.}
+    {'mu': 0., 'sigma': 1., 'n': 200.},
 ))
 

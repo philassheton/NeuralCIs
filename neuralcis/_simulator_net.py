@@ -147,7 +147,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             filename,
             instance_tf_variables_to_save=instance_tf_variables_to_save,
             nets_with_weights_to_save=self.nets,
-            subobjects_to_save=subobjects_to_save
+            subobjects_to_save=subobjects_to_save,
         )
 
         self.compile()
@@ -161,7 +161,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     @abstractmethod
     def simulate_training_data(
             self,
-            n: ttf.int32
+            n: ttf.int32,
     ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
 
         """Generate net input samples and output targets.
@@ -176,7 +176,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     @abstractmethod
     def get_validation_set(
-            self
+            self,
     ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
 
         """Return the validation set.
@@ -195,7 +195,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
-            target_outputs: Optional[NetTargetBlob] = None
+            target_outputs: Optional[NetTargetBlob] = None,
     ) -> ttf.float32:
 
         """Calculate the loss.
@@ -252,7 +252,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             learning_rate_half_life_epochs: int
                                        = common.LEARNING_RATE_HALF_LIFE_EPOCHS,
             callbacks: Sequence[tf.keras.callbacks.Callback] = None,
-            *args
+            *args,
     ) -> None:
 
         # TODO: this is rather ugly, effectively making any call from the
@@ -302,7 +302,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             self,
             optimizer=None,
             *args,
-            **kwargs
+            **kwargs,
     ) -> None:
 
         if optimizer is None:
@@ -315,7 +315,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     @tf.function
     def train_step(self, _):
         input_blob, targets = self.simulate_training_data(
-            common.MINIBATCH_SIZE
+            common.MINIBATCH_SIZE,
         )
         loss, grads = self.loss_and_gradient(input_blob, targets)
         self.optimizer.apply_gradients(zip(grads, self.train_weights))
@@ -375,7 +375,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         # Need to run some data through the nets to instantiate them.
         input_blob, targets = self.simulate_training_data(
-            common.MINIBATCH_SIZE
+            common.MINIBATCH_SIZE,
         )
         self.call_tf(input_blob)
         if train_initial_weights:
@@ -493,7 +493,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     def loss_and_gradient(
             self,
             input_blob: NetInputBlob,
-            targets: Optional[NetTargetBlob]
+            targets: Optional[NetTargetBlob],
     ) -> Tuple[ttf.float32, list]:
 
         with tf.GradientTape() as tape2:                                       # type: ignore
@@ -513,7 +513,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     @tf.function
     def get_layer_outputs_variance(
             self,
-            layer_out: Tensor2[tf32, Samples, NodesInLayer]
+            layer_out: Tensor2[tf32, Samples, NodesInLayer],
     ) -> Tensor1[tf32, NodesInLayer]:
         return tfp.stats.variance(layer_out, sample_axis=0)
 
@@ -533,7 +533,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     def set_validation_optimum_loss(
             self,
-            validation_optimum_loss: ttf.float32
+            validation_optimum_loss: ttf.float32,
     ) -> None:
 
         self.validation_optimum_loss.assign(validation_optimum_loss)

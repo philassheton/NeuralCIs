@@ -12,7 +12,7 @@ import tensor_annotations.tensorflow as ttf
 def samples_size_from_std_uniform(
         std_uniform: Tensor1[tf32, Samples],
         min_n: ttf.float32,
-        max_n: ttf.float32
+        max_n: ttf.float32,
 ) -> Tensor1[tf32, Samples]:
 
     """Transform a standard uniform variable into a sample size.
@@ -45,7 +45,7 @@ def samples_size_from_std_uniform(
 def samples_size_to_std_uniform(
         n: Tensor1[tf32, Samples],
         min_n: ttf.float32,
-        max_n: ttf.float32
+        max_n: ttf.float32,
 ) -> Tensor1[tf32, Samples]:
 
     """Inversion of the mapping in `samples_size_from_std_uniform`.
@@ -60,7 +60,7 @@ def samples_size_to_std_uniform(
     return uniform_to_std_uniform(
         tf.math.log(n),
         tf.math.log(min_n),
-        tf.math.log(max_n)
+        tf.math.log(max_n),
     )
 
 
@@ -68,7 +68,7 @@ def samples_size_to_std_uniform(
 def uniform_to_std_uniform(
         uniform: Union[Tensor1, Tensor2],
         min_u: ttf.float32,
-        max_u: ttf.float32
+        max_u: ttf.float32,
 ) -> Union[Tensor1, Tensor2]:
 
     """Transform any uniform distributed value into a standard uniform one.
@@ -86,7 +86,7 @@ def uniform_to_std_uniform(
 def uniform_from_std_uniform(
         std_uniform: Union[Tensor1, Tensor2],
         min_u: ttf.float32,
-        max_u: ttf.float32
+        max_u: ttf.float32,
 ) -> Union[Tensor1, Tensor2]:
 
     """Transform a standard uniform variable into a different uniform.
@@ -106,7 +106,7 @@ def uniform_from_std_uniform(
 def generate_group_statistics(
         n_in_group: Tensor1[tf32, Samples],
         mus: Tensor1[tf32, Samples],
-        sigmas: Tensor1[tf32, Samples]
+        sigmas: Tensor1[tf32, Samples],
 ) -> Tuple[Tensor1[tf32, Samples], Tensor1[tf32, Samples]]:
 
     """Sample means and variances for samples from normal distributions.

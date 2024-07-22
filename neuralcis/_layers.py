@@ -85,7 +85,7 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
     def inits(
             self,
             fan_in: int,
-            fan_out: int
+            fan_out: int,
     ) -> Tuple[float, float, float]:
 
         glorot_size = np.sqrt(6. / (fan_in + fan_out))
@@ -212,7 +212,7 @@ class _FiftyFiftyLayer(_SimNetLayer):
 
     def call(
             self,
-            inputs: Tensor2[tf32, Samples, LayerInputs]
+            inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
         W, b = self.weights()
@@ -221,7 +221,7 @@ class _FiftyFiftyLayer(_SimNetLayer):
         elu_outputs = potentials[:, self.num_outputs_per_activation:]
         activations = tf.concat([
             scaled_tanh(tanh_outputs),
-            tf.keras.activations.elu(elu_outputs)
+            tf.keras.activations.elu(elu_outputs),
         ], axis=1)
 
         return activations
@@ -232,7 +232,7 @@ class _MultiplyerLayer(_SimNetLayer):
 
     def call(
             self,
-            inputs: Tensor2[tf32, Samples, LayerInputs]
+            inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
         W, b = self.weights()
@@ -274,7 +274,7 @@ class _MonotonicLinearLayer(_SimNetLayer):
     def inits(
             self,
             fan_in: int,
-            fan_out: int
+            fan_out: int,
     ) -> Tuple[float, float, float]:
 
         neg, pos, b = super().inits(fan_in, fan_out)
@@ -297,7 +297,7 @@ class _MonotonicLeakyReluLayer(_MonotonicLinearLayer):
     def __init__(
             self,
             *args,
-            **kwargs
+            **kwargs,
     ) -> None:
 
         super().__init__(*args, **kwargs)
@@ -341,7 +341,7 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
 
     def build(
             self,
-            input_shape: List
+            input_shape: List,
     ) -> None:
 
         self.num_mono_in = input_shape[-1] - self.num_params
@@ -409,7 +409,7 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
         logkernel_bias_flat = tf.linalg.matmul(params, W) + b
         logkernel = tf.reshape(
             logkernel_bias_flat[:, 0:self.num_virtual_weights],
-            (batch_size, self.num_mono_in, self.num_mono_out)
+            (batch_size, self.num_mono_in, self.num_mono_out),
         )
         bias = logkernel_bias_flat[:, self.num_virtual_weights:]
 

@@ -76,21 +76,21 @@ class NeuralCIs(_DataSaver):
                 Tensor1[tf32, Samples]
             ],
             filename: str = "",
-            **param_distributions: Distribution
+            **param_distributions: Distribution,
     ) -> None:
 
         if isinstance(sampling_distribution_fn, TFFunction):
             self.sampling_distribution_fn = sampling_distribution_fn
         else:
             self.sampling_distribution_fn = tf.function(
-                sampling_distribution_fn
+                sampling_distribution_fn,
             )
 
         if isinstance(contrast_fn, TFFunction):
             self.contrast_fn = contrast_fn
         else:
             self.contrast_fn = tf.function(
-                contrast_fn
+                contrast_fn,
             )
 
         (
@@ -99,12 +99,12 @@ class NeuralCIs(_DataSaver):
             self.sim_to_net_order,
             self.net_to_sim_order,
             self.param_dists_in_sim_order,
-            self.estimate_dists_in_sim_order
+            self.estimate_dists_in_sim_order,
         ) = self._align_simulation_params(param_distributions)
 
         (
             self.param_dists_in_contrast_order,
-            self.net_to_contrast_order
+            self.net_to_contrast_order,
         ) = self._align_contrast_fn_params(param_distributions)
 
         self.num_param = len(self.param_dists_in_sim_order)
@@ -176,7 +176,7 @@ class NeuralCIs(_DataSaver):
             self,
             estimates: Dict,
             params: Dict,
-            return_also_axes=True
+            return_also_axes=True,
     ):
 
         """Calculate the p-value across a grid of estimates and/or params.
@@ -228,7 +228,7 @@ class NeuralCIs(_DataSaver):
             self,
             estimates: Dict[str, np.ndarray],
             params: Dict[str, np.ndarray],
-            conf_levels: Optional[np.ndarray] = None
+            conf_levels: Optional[np.ndarray] = None,
     ) -> Dict[str, np.ndarray]:
 
         """Calculate the p-values and confidence intervals for a series of
@@ -268,7 +268,7 @@ class NeuralCIs(_DataSaver):
             lower_transformed, upper_transformed = self.cinet.ci(
                 estimates_uniform,
                 known_params,
-                tf.constant(1. - conf_levels)
+                tf.constant(1. - conf_levels),
             )
 
             # TODO: improve this: it should be explicitly pulling the
@@ -294,7 +294,7 @@ class NeuralCIs(_DataSaver):
             self,
             estimates: Dict[str, float],
             params: Dict[str, float],
-            conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL
+            conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL,
     ) -> Dict[str, float]:
 
         """Calculate the p-value and confidence interval for a novel case.
@@ -340,7 +340,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _sampling_dist_net_interface(
             self,
-            params_transformed: Tensor2[tf32, Samples, Params]
+            params_transformed: Tensor2[tf32, Samples, Params],
     ) -> Tensor2[tf32, Samples, Estimates]:
 
         params = self._params_from_net(params_transformed)
@@ -352,7 +352,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _contrast_fn_net_interface(
             self,
-            params_transformed: Tensor2[tf32, Samples, Params]
+            params_transformed: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
         params = self._contrast_params_from_net(params_transformed)
@@ -382,7 +382,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _contrast_params_from_net(
             self,
-            transformed: Tensor2[tf32, Samples, Params]
+            transformed: Tensor2[tf32, Samples, Params],
     ) -> List[Tensor1[tf32, Samples]]:
 
         # TODO: it may be possible to factor this into _params_from_net
@@ -401,7 +401,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _params_from_net(
             self,
-            transformed: Tensor2[tf32, Samples, Params]
+            transformed: Tensor2[tf32, Samples, Params],
     ) -> List[Tensor1[tf32, Samples]]:
 
         uniform = self._std_uniform_from_net(transformed)
@@ -416,7 +416,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _params_to_net(
             self,
-            *params: Tensor1[tf32, Samples]
+            *params: Tensor1[tf32, Samples],
     ) -> Tensor2[tf32, Samples, Params]:
 
         dist_par = zip(self.param_dists_in_sim_order, params)
@@ -428,7 +428,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _estimates_to_net(
             self,
-            *estimates: Tensor1[tf32, Samples]
+            *estimates: Tensor1[tf32, Samples],
     ) -> Tensor2[tf32, Samples, Estimates]:
 
         # the net is organised in the same order as the estimates so no need
@@ -454,7 +454,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _std_uniform_to_net(
             self,
-            std_uniform: Tensor2[tf32, Samples, Union[Estimates, Params]]
+            std_uniform: Tensor2[tf32, Samples, Union[Estimates, Params]],
     ) -> Tensor2[tf32, Samples, Union[Estimates, Params]]:
 
         return sampling.uniform_from_std_uniform(
@@ -464,7 +464,7 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _std_uniform_from_net(
             self,
-            transformed: Tensor2[tf32, Samples, Union[Estimates, Params]]
+            transformed: Tensor2[tf32, Samples, Union[Estimates, Params]],
     ) -> Tensor2[tf32, Samples, Union[Estimates, Params]]:
 
         return sampling.uniform_to_std_uniform(
@@ -481,7 +481,7 @@ class NeuralCIs(_DataSaver):
 
     def _get_estimates_names(
             self,
-            param_distributions_named: Dict[str, Distribution]
+            param_distributions_named: Dict[str, Distribution],
     ) -> List[str]:
 
         test_params = self._generate_params_test_sample(
@@ -493,7 +493,7 @@ class NeuralCIs(_DataSaver):
     def _generate_params_test_sample(
             self,
             param_distributions_named: Dict[str, Distribution],
-            n: int
+            n: int,
     ) -> List[Tensor1[tf32, Samples]]:
 
         sim_params = self._get_tf_params(self.sampling_distribution_fn)
@@ -510,7 +510,7 @@ class NeuralCIs(_DataSaver):
 
     def _align_simulation_params(
             self,
-            param_distributions_named: dict
+            param_distributions_named: dict,
     ) -> Tuple[
         List[str],
         List[str],
@@ -559,7 +559,7 @@ class NeuralCIs(_DataSaver):
 
     def _align_contrast_fn_params(
             self,
-            param_distributions_named: dict
+            param_distributions_named: dict,
     ) -> Tuple[List[Distribution], List[int]]:
 
         # note that we only need transforms on the way in: since we look at
@@ -596,7 +596,7 @@ class NeuralCIs(_DataSaver):
         test_params = tf.random.uniform(
             (common.SAMPLES_TO_TEST_PARAM_MAPPINGS, self.num_param),
             common.PARAMS_MIN,
-            common.PARAMS_MAX
+            common.PARAMS_MAX,
         )
         as_params = self._params_from_net(test_params)
         as_uniform = self._params_to_net(*as_params)

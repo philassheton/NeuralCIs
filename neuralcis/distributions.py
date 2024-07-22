@@ -13,14 +13,14 @@ class Distribution(ABC):
     @abstractmethod
     def to_std_uniform(
             self,
-            params_tensor: Tensor1[tf32, Samples]
+            params_tensor: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
         pass
 
     @abstractmethod
     def from_std_uniform(
             self,
-            std_uniform_tensor: Tensor1[tf32, Samples]
+            std_uniform_tensor: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
         pass
 
@@ -45,7 +45,7 @@ class TransformUniformDistribution(Distribution):
     @tf.function
     def to_std_uniform(
             self,
-            params_tensor: Tensor1[tf32, Samples]
+            params_tensor: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
         umin = self.uniform_min
@@ -59,7 +59,7 @@ class TransformUniformDistribution(Distribution):
     @tf.function
     def from_std_uniform(
             self,
-            std_uniform_tensor: Tensor1[tf32, Samples]
+            std_uniform_tensor: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
         umin = self.uniform_min

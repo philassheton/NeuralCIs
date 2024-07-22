@@ -32,7 +32,7 @@ class _CINet(_SimulatorNet):
             ],
             num_param: int,
             filename: str = "",
-            **network_setup_args
+            **network_setup_args,
     ) -> None:
 
         self.pnet = pnet
@@ -40,7 +40,7 @@ class _CINet(_SimulatorNet):
         self.num_param = num_param
 
         self.validation_set = self.simulate_training_data(
-            common.VALIDATION_SET_SIZE
+            common.VALIDATION_SET_SIZE,
         )
 
         _SimulatorNet.__init__(self,
@@ -57,7 +57,7 @@ class _CINet(_SimulatorNet):
     @tf.function
     def simulate_training_data(
             self,
-            n: ttf.int32
+            n: ttf.int32,
     ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
         params = self.sample_params(n)
@@ -72,7 +72,7 @@ class _CINet(_SimulatorNet):
 
     @tf.function
     def get_validation_set(
-            self
+            self,
     ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
         return self.validation_set
@@ -81,7 +81,7 @@ class _CINet(_SimulatorNet):
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
-            target_outputs: NetTargetBlob
+            target_outputs: NetTargetBlob,
     ) -> ttf.float32:
 
         estimates, params, p = target_outputs
@@ -111,7 +111,7 @@ class _CINet(_SimulatorNet):
         return tf.random.uniform(
             (n, self.num_param),
             tf.constant(common.PARAMS_MIN),
-            tf.constant(common.PARAMS_MAX)
+            tf.constant(common.PARAMS_MAX),
         )
 
     @tf.function
@@ -130,7 +130,7 @@ class _CINet(_SimulatorNet):
     @tf.function
     def known_params(
             self,
-            params: Tensor2[tf32, Samples, Params]
+            params: Tensor2[tf32, Samples, Params],
     ) -> Tensor2[tf32, Samples, KnownParams]:
 
         # TODO: The heart of the bit that will need to change to accommodate
@@ -144,7 +144,7 @@ class _CINet(_SimulatorNet):
     def plugin_first_param(
             self,
             params: Tensor2[tf32, Samples, Params],
-            first_param: Tensor1[tf32, Samples]
+            first_param: Tensor1[tf32, Samples],
     ):
 
         # TODO: Also will need to change to accommodate more parameters.
@@ -152,7 +152,7 @@ class _CINet(_SimulatorNet):
         known_params = self.known_params(params)
         combined_params = tf.concat([
             tf.transpose([first_param]),
-            known_params
+            known_params,
         ], axis=1)
         return combined_params
 
@@ -161,7 +161,7 @@ class _CINet(_SimulatorNet):
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
             params: Tensor2[tf32, Samples, Params],
-            first_param: Tensor1[tf32, Samples]
+            first_param: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
         plugin_params = self.plugin_first_param(params, first_param)
@@ -171,10 +171,10 @@ class _CINet(_SimulatorNet):
     def output_activation(
             self,
             net_outputs: Tensor2[tf32, Samples, NetOutputs],
-            estimates: Tensor2[tf32, Samples, Estimates]
+            estimates: Tensor2[tf32, Samples, Estimates],
     ) -> Tuple[
         Tensor1[tf32, Samples],
-        Tensor1[tf32, Samples]
+        Tensor1[tf32, Samples],
     ]:
 
         lower = estimates[:, 0] - tf.math.exp(net_outputs[:, 0])
@@ -186,7 +186,7 @@ class _CINet(_SimulatorNet):
     def add_known_params(
             self,
             good_params: Tensor1[tf32, Samples],
-            known_params: Tensor2[tf32, Samples, KnownParams]
+            known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor2[tf32, Samples, Params]:
 
         return tf.concat([tf.transpose([good_params]), known_params], axis=1)  # type: ignore
@@ -196,7 +196,7 @@ class _CINet(_SimulatorNet):
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
             known_params: Tensor2[tf32, Samples, KnownParams],
-            conf_levels: Tensor1[tf32, Samples]
+            conf_levels: Tensor1[tf32, Samples],
     ) -> Tuple[Tensor2[tf32, Samples, Params], Tensor2[tf32, Samples, Params]]:
 
         net_inputs = self.net_inputs((estimates, known_params, conf_levels))

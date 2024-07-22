@@ -32,7 +32,7 @@ class _PNet(_DataSaver):
             num_unknown_param: int,
             num_known_param: int,
             filename: str = "",
-            **network_setup_args
+            **network_setup_args,
     ) -> None:
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_unknown_param = num_unknown_param
@@ -95,15 +95,15 @@ class _PNet(_DataSaver):
         return tf.random.uniform(
             (n, self.num_param()),
             minval=tf.constant(-1.),
-            maxval=tf.constant(1.)
+            maxval=tf.constant(1.),
         )
 
     @tf.function
     def validation_set(
-            self
+            self,
     ) -> Tuple[
         Tensor2[tf32, Samples, Estimates],
-        Tensor2[tf32, Samples, Params]
+        Tensor2[tf32, Samples, Params],
     ]:
 
         return self.validation_estimates, self.validation_params
@@ -112,7 +112,7 @@ class _PNet(_DataSaver):
     def p(
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
-            params_null: Tensor2[tf32, Samples, Params]
+            params_null: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
         zs = self.znet.call_tf((estimates, params_null))

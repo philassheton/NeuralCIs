@@ -30,7 +30,7 @@ class _CoordiNet(_SimulatorNet):
                 Tensor2[tf32, Samples, Params]                                 # -> params
             ],
             filename: str = "",
-            **network_setup_args
+            **network_setup_args,
     ):
 
         # TODO: Rethink how all this ties together as currently rather
@@ -42,7 +42,7 @@ class _CoordiNet(_SimulatorNet):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_fn = param_sampling_fn
         self.validation_ys, _ = self.simulate_training_data(
-            common.VALIDATION_SET_SIZE
+            common.VALIDATION_SET_SIZE,
         )
         self.num_y = self.validation_ys.shape[1]
         self.output_scaler = tf.Variable(tf.ones(self.num_y)[None, :])
@@ -56,7 +56,7 @@ class _CoordiNet(_SimulatorNet):
             output_layer_type_or_types=(_MonotonicLinearLayer, _DefaultOut),
             instance_tf_variables_to_save=("output_scaler", "output_biaser"),
             filename=filename,
-            **network_setup_args
+            **network_setup_args,
         )
 
     @tf.function
@@ -84,7 +84,7 @@ class _CoordiNet(_SimulatorNet):
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
-            target_outputs: Optional[NetTargetBlob] = None
+            target_outputs: Optional[NetTargetBlob] = None,
     ) -> ttf.float32:
 
         coords, jacobians = net_outputs
@@ -133,7 +133,7 @@ class _CoordiNet(_SimulatorNet):
     def _call_tf(
             self,
             net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]],
-            training: bool
+            training: bool,
     ) -> Tensor2[tf32, Samples, NetOutputs]:
 
         coords = super()._call_tf(net_ins, training=training)
@@ -147,7 +147,7 @@ class _CoordiNet(_SimulatorNet):
 
     @tf.function
     def estimate_scalers(
-            self
+            self,
     ) -> None:
 
         self.output_biaser.assign(self.output_biaser * 0.)                     # type: ignore

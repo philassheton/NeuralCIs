@@ -46,7 +46,7 @@ class _ZNet(_SimulatorNet):
             hidden_layer_type_or_types: LayerTypeOrTypes = _DefaultHid,
             output_layer_type_or_types: LayerTypeOrTypes = _DefaultOut,
             filename: str = "",
-            **network_setup_args
+            **network_setup_args,
     ) -> None:
 
         self.sampling_distribution_fn = sampling_distribution_fn
@@ -89,7 +89,7 @@ class _ZNet(_SimulatorNet):
             n: int,
     ) -> Tuple[
             NetInputBlob,
-            None
+            None,
     ]:
 
         return self.sample_ys_and_params(n), None
@@ -99,7 +99,7 @@ class _ZNet(_SimulatorNet):
             self
     ) -> Tuple[
             NetInputBlob,
-            None
+            None,
     ]:
 
         return self.validation_set_fn(), None
@@ -173,7 +173,7 @@ class _ZNet(_SimulatorNet):
     def neg_log_likelihoods(
             self,
             outputs: Tensor2[tf32, Samples, Zs],
-            sample_jacobdets: Tensor1[tf32, Samples]
+            sample_jacobdets: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
         normal_pd = tfp.distributions.Normal(0.0, 1.0).prob(outputs)
@@ -208,7 +208,7 @@ class _ZNet(_SimulatorNet):
         punitive_but_not_zero_jacobdets = 1e-10 * tf.math.sigmoid(jacobdets)
         jacobdets_floored = tf.math.maximum(
             jacobdets,
-            punitive_but_not_zero_jacobdets
+            punitive_but_not_zero_jacobdets,
         )
 
         return outputs, jacobdets_floored                                      # type: ignore
