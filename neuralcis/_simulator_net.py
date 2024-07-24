@@ -1,7 +1,7 @@
 from neuralcis._data_saver import _DataSaver
 from neuralcis._layers import _SimNetLayer
 from neuralcis._layers import _DefaultIn, _DefaultHid, _DefaultOut
-from neuralcis import common, _layers
+from neuralcis import common, _layers, _callbacks
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
@@ -275,7 +275,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             )
 
         elif use_plateau:
-            lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
+            lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
+                self.train_weights,
                 monitor="val_loss_val",
                 factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU,
                 patience=common.LEARNING_RATE_PLATEAU_PATIENCE,
