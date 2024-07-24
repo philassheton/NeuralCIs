@@ -61,6 +61,7 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
             "kernel_scaler",
             shape=(1, self.num_matmul_outputs()),
             initializer=tf.keras.initializers.Ones(),
+            trainable=False,
         )
         self.bias = self.add_weight(
             "bias",
@@ -369,11 +370,13 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
             "output_scaler",
             shape=(1, self.num_matmul_outputs()),
             initializer=tf.keras.initializers.Ones(),
+            trainable=False,
         )
         self.output_shifter = self.add_weight(
             "output_shifter",
             shape=(1, self.num_matmul_outputs()),
             initializer=tf.keras.initializers.Zeros(),
+            trainable=False,
         )
         self.bias = self.add_weight(
             "bias",

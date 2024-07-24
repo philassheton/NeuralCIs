@@ -59,13 +59,25 @@ class _ZNet(_SimulatorNet):
 
         num_y = tf.shape(ys).numpy()[1]
         self.num_z = [1, num_y - 1]
-        self.known_param_indices = known_param_indices
+
+        # TODO:  Having to assign None here is a hack, since otherwise it
+        #        insists on constructing the Model superclass first.  Under
+        #        the current design, however, the bottom level class needs
+        #        a few things in place before it can construct the
+        #        _SimulatorNet superclass, which then constructs the
+        #        Model superclass.  Needs a redesign to allow for construction
+        #        of _SimulatorNet first  (e.g. by making the "build" step a
+        #        second step).
+        if len(known_param_indices):
+            self.known_param_indices = known_param_indices
+        else:
+            self.known_param_indices = None
 
         # Allow MonotonicWithParams layers to be used on first net if needed.
         #  This counts all estimates except the first (num_y - 1) plus the
         #  contrast (1) plus all known params as "not needing to be monotone"
         layer_kwargs = [
-            {'num_params': (num_y-1) + 1 + len(self.known_param_indices)},
+            {'num_params': (num_y-1) + 1 + len(known_param_indices)},
             {},
         ]
 
@@ -161,10 +173,15 @@ class _ZNet(_SimulatorNet):
         # TODO: relate this to the contrast rather than "known param" naming
         ys, params = input_blob
         coords = self.coords_fn(ys)
-        known_params = tf.gather(params, self.known_param_indices, axis=1)
         contrast = self.contrast_fn(params)[:, None]
-        contrast_net_inputs = tf.concat([coords, contrast, known_params],
-                                        axis=1)
+
+        if self.known_param_indices is not None:
+            known_params = tf.gather(params, self.known_param_indices, axis=1)
+            contrast_net_inputs = tf.concat([coords, contrast, known_params],
+                                            axis=1)
+        else:
+            contrast_net_inputs = tf.concat([coords, contrast], axis=1)
+
         other_net_inputs = tf.concat([coords, params], axis=1)
         return contrast_net_inputs, other_net_inputs
 
