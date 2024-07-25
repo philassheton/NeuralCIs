@@ -18,6 +18,7 @@ NEURONS_PER_LAYER = 10
 # layers
 TANH_MULTIPLIER = 5.                                                           # we need to multiply the tanh up a bit if we want standard normal outputs
 LEAKY_RELU_SLOPE = .3
+NUM_RELU_IN_MULTIPLYER_LAYER = 5
 LAYER_LEARNING_BATCH_SIZE = 1024
 LAYER_LEARNING_RATE_INITIAL = .05
 LAYER_LEARNING_HALF_LIFE_EPOCHS = .5

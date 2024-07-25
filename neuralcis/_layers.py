@@ -249,6 +249,42 @@ class _MultiplyerLayer(_SimNetLayer):
         return outputs
 
 
+class _MultiplyerWithSomeRelusLayer(_MultiplyerLayer):
+
+    """_MultiplyerWithSomeRelusLayer multiplyer layer with a few ReLUs.
+
+    This layer type exists because applying ReLU to *all* outputs of a layer
+    leads very readily to a singular Jacobian matrix (for any data point that
+    hits the left-hand-side of all of the ReLUs).  So, instead, we apply here
+    the ReLU function to only the first `num_relu` outputs.  This allows us
+    to produce relatively steep jumps in the output using the ReLU, but also
+    get the benefits of the multiplyer layers."""
+
+    def __init__(
+            self,
+            *args,
+            num_relu: int = common.NUM_RELU_IN_MULTIPLYER_LAYER,
+            **kwargs,
+    ):
+
+        super().__init__(*args, **kwargs)
+        self.num_relu = num_relu
+
+    def call(
+            self,
+            inputs: Tensor2[tf32, Samples, LayerInputs],
+    ) -> Tensor2[tf32, Samples, LayerOutputs]:
+
+        num_relu = self.num_relu
+        potentials = super().call(inputs)
+        relu_activations = tf.keras.activations.relu(potentials[:, 0:num_relu])
+        linear_activations = potentials[:, num_relu:]
+
+        activations = tf.concat([relu_activations, linear_activations], axis=1)
+
+        return activations
+
+
 class _MonotonicLinearLayer(_SimNetLayer):
     initialization_step_size_multiplier = .1
 
