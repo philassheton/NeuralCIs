@@ -1,5 +1,6 @@
 numpy==1.20.2
 statsmodels==0.13.5
+matplotlib==3.8.3
 tensorflow==2.8.0
 tensorflow_probability==0.16.0
 tensor_annotations==2.0.2
