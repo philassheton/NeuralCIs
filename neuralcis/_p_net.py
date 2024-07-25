@@ -64,7 +64,6 @@ class _PNet(_DataSaver):
     def compile(self, *args, **kwargs) -> None:
         self.znet.compile(*args, **kwargs)
 
-
     @tf.function
     def sample_params(
             self,
@@ -95,11 +94,41 @@ class _PNet(_DataSaver):
     ) -> Tensor1[tf32, Samples]:
 
         zs = self.znet.call_tf((estimates, params_null))
+        return self.ps_from_zs(zs)
+
+    @tf.function
+    def ps_from_zs(
+            self,
+            zs: Tensor1[tf32, Samples],
+    ):
+
         cdf = tfp.distributions.Normal(0., 1.).cdf(zs[:, 0])
+        p = 1. - tf.math.abs(cdf * 2. - 1.)
 
-        p: Tensor1[tf32, Samples] = 1. - tf.math.abs(cdf*2. - 1.)              # type: ignore
+        return p                                                               # type: ignore
 
-        return p
+    @tf.function
+    def p_workings(
+            self,
+            estimates: Tensor2[tf32, Samples, Estimates],
+            params_null: Tensor2[tf32, Samples, Params],
+    ):
+
+        # TODO: Check this; have kept separate from p() rather than refactoring
+        #       as I *think* the graph will be more efficient for p() when
+        #       intermediate results are not maintained, and since p() is
+        #       used in training of CINet, this is important.  Not sure though
+        #       and should check.
+
+        zs = self.znet.call_tf((estimates, params_null))
+        ps = self.ps_from_zs(zs)
+
+        values = {}
+        for i in range(zs.shape[-1]):
+            values[f"z{i}"] = zs[:, i]
+        values["p"] = ps
+
+        return values
 
     @tf.function
     def num_param(self) -> int:

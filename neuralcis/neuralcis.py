@@ -9,7 +9,7 @@ from neuralcis._ci_net import _CINet
 from neuralcis._data_saver import _DataSaver
 
 # for typing
-from typing import Tuple, Union, Callable, List, Dict, Optional
+from typing import Tuple, Union, Callable, List, Sequence, Dict, Optional
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
 from neuralcis.common import Samples, Estimates, Params
@@ -172,12 +172,13 @@ class NeuralCIs(_DataSaver):
         self.pnet.compile(*args, **kwargs)
         self.cinet.compile(*args, **kwargs)
 
-    def ps_grid(
+    def values_grid(
             self,
             estimates: Dict,
             params: Dict,
-            return_also_axes=True,
-    ):
+            value_names: Sequence[str] = ("p",),
+            return_also_axes: bool = True,
+    ) -> Sequence[np.ndarray]:
 
         """Calculate the p-value across a grid of estimates and/or params.
 
@@ -190,6 +191,9 @@ class NeuralCIs(_DataSaver):
         range/sequence of values, or to a single fixed value.
         :param params: Dict mapping each param name to either a
         range/sequence of values, or to a single fixed value.
+        :param value_names: Sequence of strs (default contains only "p");
+        list of values to be returned.  Currently also supports "z0", "z1",
+        etc., as well as "{estimate_name}_lower" and "{estimate_name}_upper".
         :param return_also_axes: A bool (default True) that determines whether
         all the axes (estimates, params, etc) are returned.  If False, just
         one grid of p-values are returned.
@@ -214,21 +218,27 @@ class NeuralCIs(_DataSaver):
             k: v for k, v in zip(params.keys(),
                                  all_grids_flattened[num_estimates:])
         }
-        ps = self.ps_and_cis(estimates_grids_flattened, params_grids_flattened)
-        ps = np.squeeze(np.reshape(ps['p'], shape))
+        values_dict = self.ps_and_cis(
+            estimates_grids_flattened,
+            params_grids_flattened,
+            extra_values_names=value_names,
+        )
+        values_seq = [np.squeeze(np.reshape(values_dict[n], shape))
+                      for n in value_names]
 
         if return_also_axes:
             return [np.squeeze(gr)
                     for gr, inp in zip(all_grids, all_values)
-                    if inp.shape != ()] + [ps]
+                    if inp.shape != ()] + values_seq
         else:
-            return ps
+            return values_seq
 
     def ps_and_cis(
             self,
             estimates: Dict[str, np.ndarray],
             params: Dict[str, np.ndarray],
             conf_levels: Optional[np.ndarray] = None,
+            extra_values_names: Sequence[str] = (),
     ) -> Dict[str, np.ndarray]:
 
         """Calculate the p-values and confidence intervals for a series of
@@ -246,6 +256,9 @@ class NeuralCIs(_DataSaver):
             Confidence level for each respective  confidence interval.  If
             None, then no confidence interval is computed and only p-values
             are returned.
+        :param extra_values_names: An optional sequence of strs, giving
+            extra values to be returned from the p-net.  Currently supports
+            "z0", "z1", ...  up to the number of zs but may be expanded later.
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
@@ -260,11 +273,16 @@ class NeuralCIs(_DataSaver):
         params_uniform = self._params_to_net(*params_tf)
 
         known_params = self.cinet.known_params(params_uniform)
-        p = self.pnet.p(estimates_uniform, params_uniform)
-
-        if conf_levels is None:
-            return {'p': p.numpy()}
+        if len(extra_values_names) > 0:
+            values = self.pnet.p_workings(estimates_uniform,
+                                          params_uniform)
+            values = {"p": values["p"].numpy()} | \
+                     {k: values[k].numpy() for k in extra_values_names}
         else:
+            p = self.pnet.p(estimates_uniform, params_uniform)
+            values = {'p': p.numpy()}
+
+        if conf_levels is not None:
             lower_transformed, upper_transformed = self.cinet.ci(
                 estimates_uniform,
                 known_params,
@@ -279,16 +297,11 @@ class NeuralCIs(_DataSaver):
             lower = self._params_from_net(lower_transformed)[index_of_estimate]
             upper = self._params_from_net(upper_transformed)[index_of_estimate]
 
-            # TODO: currently only makes an interval for the first estimate
             estimate_name = self.estimate_names[0]
-            lower_name = estimate_name + "_lower"
-            upper_name = estimate_name + "_upper"
+            values[estimate_name + "_lower"] = lower.numpy()
+            values[estimate_name + "_upper"] = upper.numpy()
 
-            return {
-                "p": p.numpy(),
-                lower_name: lower.numpy(),
-                upper_name: upper.numpy()
-            }
+        return values
 
     def p_and_ci(
             self,
