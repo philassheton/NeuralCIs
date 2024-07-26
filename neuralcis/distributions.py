@@ -10,6 +10,8 @@ AnyTensor = Union[Tensor0, Tensor1]
 
 
 class Distribution(ABC):
+    axis_type = "linear"
+
     @abstractmethod
     def to_std_uniform(
             self,
@@ -72,6 +74,8 @@ class TransformUniformDistribution(Distribution):
 
 
 class LogUniform(TransformUniformDistribution):
+    axis_type = "log"
+
     def to_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
         return tf.math.log(x)
 
