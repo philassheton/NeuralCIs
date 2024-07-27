@@ -1,17 +1,26 @@
 import tensorflow as tf
+import numpy as np
+from tqdm import tqdm
+
+# Use matplotlib where possible
 import matplotlib.pyplot as plt
+
+# Use plotly when needed for advanced features
+import plotly
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from neuralcis import NeuralCIs
 
 from typing import Sequence, Dict, Optional
 
 
-def __param_names_and_defaults(
+def __param_names_and_medians(
         cis: NeuralCIs,
-        **default_overrides: float,
+        **value_overrides: float,
 ) -> Dict[str, float]:
 
-    param_values = default_overrides
+    param_values = value_overrides
     for name, dist in zip(cis.param_names_in_sim_order,
                           cis.param_dists_in_sim_order):
         if name not in param_values:
@@ -20,7 +29,32 @@ def __param_names_and_defaults(
     return param_values
 
 
-def __repeat_params(
+def __param_names_and_random_values(
+        cis: NeuralCIs,
+        **value_overrides: float,
+) -> Dict[str, float]:
+
+    param_values = value_overrides
+    for name, dist in zip(cis.param_names_in_sim_order,
+                          cis.param_dists_in_sim_order):
+        if name not in param_values:
+            param_values[name] = dist.from_std_uniform(np.random.rand())
+
+    return param_values
+
+
+def __repeat_params_np(
+        num_points: int,
+        **param_floats,
+) -> Dict[str, np.ndarray]:
+
+    params = {}
+    for name, value in param_floats.items():
+        params[name] = np.repeat(value, num_points)
+    return params
+
+
+def __repeat_params_tf(
         num_points: int,
         **param_floats,
 ) -> Dict[str, tf.Tensor]:
@@ -46,6 +80,31 @@ def __summarize_values(
     return title
 
 
+def __plot_p_value_distribution_once(
+        cis: NeuralCIs,
+        fig: plotly.graph_objs._figure.Figure,
+        row: int,
+        col: int,
+        num_samples: int = 10000,
+        randomize_unspecified_params: bool = True,
+        **param_values: float,
+) -> None:
+
+    if randomize_unspecified_params:
+        param_values = __param_names_and_random_values(cis, **param_values)
+    else:
+        param_values = __param_names_and_medians(cis, **param_values)
+    param_tensors = __repeat_params_np(num_samples, **param_values)
+    estimates = cis.sampling_distribution_fn(**param_tensors)
+    ps = cis.ps_and_cis(estimates, param_tensors)
+    title = __summarize_values(**param_values)
+    fig.add_trace(
+        go.Histogram(x=ps["p"], hovertext=title),
+        row=row + 1,
+        col=col + 1,
+    )
+
+
 def visualize_sampling_fn(
         cis: NeuralCIs,
         num_points: int = 100,
@@ -64,10 +123,10 @@ def visualize_sampling_fn(
         visualize_sampling_fn(cis, mu=0., n=4., num_points=10000)
     """
 
-    param_overrides = __param_names_and_defaults(cis, **param_overrides)
-    params = __repeat_params(num_points, **param_overrides)
+    param_overrides = __param_names_and_medians(cis, **param_overrides)
+    params_tensors = __repeat_params_tf(num_points, **param_overrides)
 
-    estimates = cis.sampling_distribution_fn(**params)
+    estimates = cis.sampling_distribution_fn(**params_tensors)
     num_estimates = len(estimates)
     fig, ax = plt.subplots(num_estimates, num_estimates)
     for i_x, name_x in enumerate(estimates):
@@ -129,8 +188,8 @@ def plot_params_vs_estimates(
     if estimate_names is None:
         estimate_names = cis.estimate_names
 
-    param_values = __param_names_and_defaults(cis, **param_values)
-    param_defaults = __repeat_params(num_points, **param_values)
+    param_values = __param_names_and_medians(cis, **param_values)
+    param_defaults = __repeat_params_tf(num_points, **param_values)
     param_samples = cis._params_from_net(cis.pnet.sample_params(num_points))
     param_samples = {name: value for name, value in
                      zip(cis.param_names_in_sim_order, param_samples)}
@@ -154,4 +213,57 @@ def plot_params_vs_estimates(
     title = __summarize_values("Params vs estimates, with default params: ",
                                **param_values)
     fig.suptitle(title, wrap=True)
+    fig.show()
+
+
+def plot_p_value_distributions(
+        cis: NeuralCIs,
+        num_rows: int = 10,
+        num_cols: int = 20,
+        num_samples: int = 10000,
+        randomize_unspecified_params: bool = True,
+        **param_values: float,
+) -> None:
+
+    """Plot distribution of p-values at randomly selected parameter values.
+
+    Will generate p-value distributions for `num_rows * num_cols` different
+    randomly generated parameter values, and displays these as a grid of
+    histograms.  Individual parameters can also be overridden by passing
+    their fixed value as a float to the function, and/or all parameters
+    can also be set to their median values by setting
+    `randomize_unspecified_params=False`.
+
+    :param cis:  A NeuralCIs object to interrogate.
+    :param num_rows:  An int, default 10; number of rows in the histogram grid.
+    :param num_cols:  An int, default 20; number of cols in the histogram grid.
+    :param num_samples:  An int, default 10000; number of samples per dist'n.
+    :param randomize_unspecified_params:  A bool, default True; if set to True,
+        then any param values not overridden in **param_values will be chosen
+        randomly according to the param sampling distribution.  If set to
+        False, the median will be used instead.
+    :param **param_values:  A set of float overrides used to set a given
+        parameter to a given fixed value in all histograms.
+
+    Examples:
+
+        plot_p_value_distributions(cis)
+        plot_p_value_distributions(cis, n=20.)
+    """
+
+    print("Generating plots; this may take a few seconds")
+    fig = make_subplots(num_rows, num_cols)
+    for row in tqdm(range(num_rows)):
+        for col in range(num_cols):
+            __plot_p_value_distribution_once(cis,
+                                             fig, row, col,
+                                             num_samples,
+                                             randomize_unspecified_params,
+                                             **param_values)
+    title = ("P-values distribution at different parameter values.  "
+             "(Hover over a graph to see the parameter values)")
+    fig.update_layout(showlegend=False, title=title)
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    print("Done!  Showing graph.")
     fig.show()
