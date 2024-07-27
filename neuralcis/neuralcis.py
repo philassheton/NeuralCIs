@@ -32,6 +32,11 @@ class NeuralCIs(_DataSaver):
          in the function signature).  See example below.
     :param filename: Optional string; will load network weights from a
         previous training session.
+    :param train_initial_weights:  A bool (default True) that controls whether
+        the layers of the underlying nets are optimized to maintain standard
+        deviations of input and output.  This is particularly useful when using
+        e.g. monotonic layers, whose values can easily blow up without careful
+        initialisation.
     :param **param_distributions: For each parameter to the
         sampling_distribution_fn a parameter sampling distribution object
         needs to be passed in by name (same name as in the sampling function).
@@ -76,8 +81,12 @@ class NeuralCIs(_DataSaver):
                 Tensor1[tf32, Samples]
             ],
             filename: str = "",
+            train_initial_weights: bool = True,
             **param_distributions: Distribution,
     ) -> None:
+
+        if len(filename):
+            train_initial_weights = False
 
         if isinstance(sampling_distribution_fn, TFFunction):
             self.sampling_distribution_fn = sampling_distribution_fn
@@ -118,12 +127,12 @@ class NeuralCIs(_DataSaver):
             self._contrast_fn_net_interface,
             num_unknown_param=self.num_estimate,
             num_known_param=self.num_param - self.num_estimate,
-            train_initial_weights=not len(filename),
+            train_initial_weights=train_initial_weights,
         )
         self.cinet = _CINet(self.pnet,
                             self._sampling_dist_net_interface,
                             self.num_param,
-                            train_initial_weights=not len(filename))
+                            train_initial_weights=train_initial_weights)
 
         _DataSaver.__init__(
             self,

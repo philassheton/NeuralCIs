@@ -21,6 +21,7 @@ def scaled_tanh(x):
 class _SimNetLayer(tf.keras.layers.Layer, ABC):
     must_have_same_inputs_as_outputs = False
     initialization_step_size_multiplier = 1.
+    can_be_initialization_trained = True
 
     def __init__(self, num_outputs: int, **layer_kwargs) -> None:
         super().__init__()
@@ -180,6 +181,11 @@ def initialise_layers(layers: List[_SimNetLayer]) -> None:
     num_inputs = layers[0].num_inputs
     test_values = tf.random.uniform((1000, num_inputs)) * 2. - 1
     for i, layer in enumerate(layers):
+        if not layer.can_be_initialization_trained:
+            print(f"    Not rescaling {layer.__class__.__name__} at layer {i} "
+                  "(layer type is not rescalable).")
+            continue
+
         previous_layers = layers[0:i]
 
         print(f"    Rescaling {layer.__class__.__name__} weights:")
@@ -229,6 +235,9 @@ class _FiftyFiftyLayer(_SimNetLayer):
 
 
 class _MultiplyerLayer(_SimNetLayer):
+    # Since there is a layernorm embedded in this layer, the initialisation
+    #     training will only distort the weights.
+    can_be_initialization_trained = False
     must_have_same_inputs_as_outputs = True
 
     def call(
