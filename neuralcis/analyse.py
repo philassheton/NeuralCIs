@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from neuralcis import NeuralCIs
+from neuralcis.distributions import Distribution
 
 from typing import Sequence, Dict, Optional
 
@@ -41,6 +42,14 @@ def __param_names_and_random_values(
             param_values[name] = dist.from_std_uniform(np.random.rand())
 
     return param_values
+
+
+def __param_names_and_distributions(
+        cis: NeuralCIs,
+) -> Dict[str, Distribution]:
+
+    return {name: dist for name, dist in zip(cis.param_names_in_sim_order,
+                                             cis.param_dists_in_sim_order)}
 
 
 def __repeat_params_np(
