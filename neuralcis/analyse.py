@@ -103,9 +103,10 @@ def __plot_p_value_distribution_once(
         param_values = __param_names_and_random_values(cis, **param_values)
     else:
         param_values = __param_names_and_medians(cis, **param_values)
-    param_tensors = __repeat_params_np(num_samples, **param_values)
+    param_tensors = __repeat_params_tf(num_samples, **param_values)
+    param_arrays = __repeat_params_np(num_samples, **param_values)
     estimates = cis.sampling_distribution_fn(**param_tensors)
-    ps = cis.ps_and_cis(estimates, param_tensors)
+    ps = cis.ps_and_cis(estimates, param_arrays)
     title = __summarize_values(**param_values)
     fig.add_trace(
         go.Histogram(x=ps["p"], hovertext=title),
@@ -275,4 +276,72 @@ def plot_p_value_distributions(
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False)
     print("Done!  Showing graph.")
+    fig.show()
+
+
+def cis_surface(
+        cis: NeuralCIs,
+        x_name: str,
+        y_name: str,
+        z_name: str = "p",
+        x_is_param: bool = False,
+        y_is_param: bool = False,
+        param_overrides: Optional[Dict] = None,
+        estimate_overrides: Optional[Dict] = None,
+        num_grid: int = 100,
+) -> None:
+
+    """Plot surface of p, z0, z1, etc against any two other variables.
+
+    :param cis:  A NeuralCIs object to plot.
+    :param x_name:  A str, name of the variable to be plotted on x-axis.
+    :param y_name:  A str, name of the variable to be plotted on y-axis.
+    :param z_name:  A str, default value "p", name of variable to be on
+        z-axis.  This can currently be any of "p" or "z0", "z1", ...
+    :param x_is_param:  A bool, default False.  Set to True if the x_name
+        should be interpreted as the name of a param, rather than an estimate.
+    :param y_is_param:  A bool, default False.  See x_is_param.
+    :param param_overrides:  An optional dict of "other" params (i.e. not
+        x or y) which should NOT be set to their median values but rather to
+        the values in this dict.
+    :param estimate_overrides:  An optional dict; see param_overrides.
+    :param num_grid:  An int, default 100; number of grid points on each axis.
+
+    Examples
+
+        cis_surface(cis, "mu", "sigma")
+        cis_surface(cis, "mu", "mu", x_is_param=True)
+        cis_surface(cis, "mu", "sigma", "z0")
+        cis_surface(cis, "mu", "sigma", param_overrides={"n": 10.})
+    """
+
+    if param_overrides is None:
+        param_values = __param_names_and_medians(cis)
+    else:
+        param_values = __param_names_and_medians(cis, **param_overrides)
+
+    estimate_values = {name: param_values[name] for name in cis.estimate_names}
+    if estimate_overrides is not None:
+        for name, override in estimate_overrides.items():
+            estimate_values[name] = override
+
+    param_dists = __param_names_and_distributions(cis)
+    std_unif_linspace = tf.constant(np.linspace(0., 1., num_grid), tf.float32)
+    x_linspace = param_dists[x_name].from_std_uniform(std_unif_linspace)
+    y_linspace = param_dists[y_name].from_std_uniform(std_unif_linspace)
+
+    if x_is_param:
+        param_values[x_name] = x_linspace
+    else:
+        estimate_values[x_name] = x_linspace
+
+    if y_is_param:
+        param_values[y_name] = y_linspace
+    else:
+        estimate_values[y_name] = y_linspace
+
+    xs, ys, zs = cis.values_grid(estimate_values, param_values, (z_name,))
+
+    fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
+    ax.plot_surface(xs, ys, zs)
     fig.show()
