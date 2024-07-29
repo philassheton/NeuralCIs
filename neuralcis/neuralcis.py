@@ -274,10 +274,12 @@ class NeuralCIs(_DataSaver):
         """
 
         estimates_tf = [
-            tf.constant(estimates[n]) for n in self.estimate_names
+            tf.constant(estimates[n], tf.float32)
+            for n in self.estimate_names
         ]
         params_tf = [
-            tf.constant(params[n]) for n in self.param_names_in_sim_order
+            tf.constant(params[n], tf.float32)
+            for n in self.param_names_in_sim_order
         ]
 
         estimates_uniform = self._estimates_to_net(*estimates_tf)
@@ -393,7 +395,6 @@ class NeuralCIs(_DataSaver):
                             " when saving.")
 
         super().save(foldername, common.CIS_FILE_START)
-
 
     ###########################################################################
     #

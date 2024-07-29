@@ -263,6 +263,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             )
 
         elif use_plateau:
+            self.optimizer.learning_rate = learning_rate_initial
             lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
                 self.trainable_weights(),
                 monitor="val_loss_val",
