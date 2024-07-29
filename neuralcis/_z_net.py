@@ -14,7 +14,8 @@ NetInputBlob = Tuple[Tensor2[tf32, Samples, Ys],                    # -> ys
                      Tensor2[tf32, Samples, Params]]                # -> params
 
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
-                      Tensor1[tf32, Samples]]          # Jacobian determinants
+                      Tensor1[tf32, Samples],          # Jacobian determinants
+                      Tensor1[tf32, Samples]]          # dz0 / dcontrast
 
 
 class _ZNet(_SimulatorNet):
@@ -114,10 +115,10 @@ class _ZNet(_SimulatorNet):
             target_outputs: None = None,
     ) -> ttf.float32:
 
-        outputs, jacobians_floored = net_outputs
-        neg_log_likelihoods = self.neg_log_likelihoods(outputs,
-                                                       jacobians_floored)
-        loss = tf.math.reduce_mean(neg_log_likelihoods)
+        outputs, jacobians, dz0_dcontrast = net_outputs
+        neg_log_likelihoods = self.neg_log_likelihoods(outputs, jacobians)
+        dz0_dcontrast_is_neg = 100. * tf.keras.activations.relu(dz0_dcontrast)
+        loss = tf.math.reduce_mean(neg_log_likelihoods + dz0_dcontrast_is_neg)
 
         tf.debugging.check_numerics(loss,
                                     "Na or inf in loss in multiple Z Net opt")
@@ -130,11 +131,11 @@ class _ZNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> NetOutputBlob:
 
-        out, det = self.net_outputs_and_transformation_jacobdets(
+        out, det, dz0_dcon = self.net_outputs_and_transformation_jacobdets(
             input_blob,
             training=True,
         )
-        return out, det
+        return out, det, dz0_dcon
 
     def compute_optimum_loss(self) -> ttf.float32:
         # TODO: the individual losses here are not currently saved.  Need to
@@ -156,16 +157,15 @@ class _ZNet(_SimulatorNet):
         return sum(self.num_z)
 
     @tf.function
-    def net_inputs(
+    def net_inputs_from_contrast(
             self,
-            input_blob: NetInputBlob,
+            contrast: Tensor1[tf32, Samples],
+            ys: Tensor2[tf32, Samples, Ys],
+            params: Tensor2[tf32, Samples, Params],
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        # TODO: relate this to the contrast rather than "known param" naming
-        ys, params = input_blob
         coords = self.coords_fn(ys)
-        contrast = self.contrast_fn(params)[:, None]
-
+        contrast = contrast[:, None]
         if self.known_param_indices is not None:
             known_params = tf.gather(params, self.known_param_indices, axis=1)
             contrast_net_inputs = tf.concat([coords, contrast, known_params],
@@ -176,7 +176,33 @@ class _ZNet(_SimulatorNet):
         other_net_inputs = tf.concat([coords, params], axis=1)
         return contrast_net_inputs, other_net_inputs
 
-    # work first additively in log space to avoid overflows
+    @tf.function
+    def net_inputs(
+            self,
+            input_blob: NetInputBlob,
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
+
+        # TODO: relate this to the contrast rather than "known param" naming
+        ys, params = input_blob
+        contrast = self.contrast_fn(params)
+        return self.net_inputs_from_contrast(contrast, ys, params)
+
+    @tf.function
+    def soft_floor_at_zero(
+            self,
+            values: tf.Tensor,
+    ) -> tf.Tensor:
+
+        # TODO: Consider whether this needs to adapt the scale of the variables
+        #       used (I think not, now that all variables are in [-1, 1].)
+        punitive_but_not_zero_values = 1e-10 * tf.math.sigmoid(values)
+        values_floored = tf.math.maximum(
+            values,
+            punitive_but_not_zero_values,
+        )
+
+        return values_floored
+
     @tf.function
     def neg_log_likelihoods(
             self,
@@ -184,10 +210,14 @@ class _ZNet(_SimulatorNet):
             sample_jacobdets: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
+        jacobdets_floored = self.soft_floor_at_zero(sample_jacobdets)
+
         normal_pd = tfp.distributions.Normal(0.0, 1.0).prob(outputs)
         normal_pd_joint = tf.math.reduce_prod(normal_pd, axis=1) + 1e-37
+
+        # work first additively in log space to avoid overflows
         neg_log_likelihoods = (-tf.math.log(normal_pd_joint)
-                               - tf.math.log(sample_jacobdets + 1e-37))
+                               - tf.math.log(jacobdets_floored + 1e-37))
 
         return neg_log_likelihoods
 
@@ -198,28 +228,27 @@ class _ZNet(_SimulatorNet):
             training=False,
     ) -> Tuple[
         Tensor2[tf32, Samples, Zs],                                            # Net outputs
-        Tensor1[tf32, Samples],                                                # Jacobian determinants punished for being negative
+        Tensor1[tf32, Samples],                                                # Jacobian determinants
+        Tensor1[tf32, Samples],                                                # dz0 / dcontrast
     ]:
 
         ys, params = input_blob
 
-        with tf.GradientTape() as tape:                                        # type: ignore
+        with tf.GradientTape(persistent=True) as tape:                         # type: ignore
             tape.watch(ys)
-            inputs = self.net_inputs((ys, params))
-            outputs = self._call_tf(inputs, training=training)
+            contrast = self.contrast_fn(params)
+            tape.watch(contrast)
 
-        jacobians = tape.batch_jacobian(outputs, ys)
+            inputs = self.net_inputs_from_contrast(contrast, ys, params)
+            zs = self._call_tf(inputs, training=training)
+            z0 = zs[:, 0]
+
+        dz0_dcontrast = tape.gradient(z0, contrast)
+        jacobians = tape.batch_jacobian(zs, ys)
         jacobdets = tf.linalg.det(jacobians)
+        del tape
 
-        # TODO: Consider whether this needs to adapt the scale of the variables
-        #       used (I think not, now that all variables are in [-1, 1].)
-        punitive_but_not_zero_jacobdets = 1e-10 * tf.math.sigmoid(jacobdets)
-        jacobdets_floored = tf.math.maximum(
-            jacobdets,
-            punitive_but_not_zero_jacobdets,
-        )
-
-        return outputs, jacobdets_floored                                      # type: ignore
+        return zs, jacobdets, dz0_dcontrast                                    # type: ignore
 
     @tf.function
     def sample_params(
