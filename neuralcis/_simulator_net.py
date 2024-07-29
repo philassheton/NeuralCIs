@@ -1,28 +1,21 @@
 from neuralcis._data_saver import _DataSaver
-from neuralcis._layers import _SimNetLayer
-from neuralcis._layers import _DefaultIn, _DefaultHid, _DefaultOut
+from neuralcis._sequential_net import _SequentialNet
 from neuralcis import common, _layers, _callbacks
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 import numpy as np
 import collections
-import inspect
 
 from abc import ABC, abstractmethod
 
 # typing imports
-from typing import Optional, Tuple, Sequence, List, Dict, Union, Type
+from typing import Optional, Tuple, Sequence, List, Dict, Union
 from neuralcis.common import Samples, NetInputs, NetOutputs, NodesInLayer
 from neuralcis.common import NetInputBlob, NetOutputBlob, NetTargetBlob
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
-
-LayerTypeOrTypes = Union[
-    Type[_SimNetLayer],
-    Sequence[Type[_SimNetLayer]],
-]
 
 
 class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
@@ -85,21 +78,20 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     :param output_layer_types: A type of a subclass of _SimNetLayer, or an
         array of such types.  If just a single type, this type will be
         applied for all underlying nets.
-    :param filename: A string (optional), if the network has been fit
-        previously, and weights were saved, they can be loaded in the
-        constructor by passing in the filename here.
     """
     def __init__(
             self,
             num_outputs_for_each_net: Sequence[int] = (1,),
             num_hidden_layers: int = common.NUM_HIDDEN_LAYERS,
             num_neurons_per_hidden_layer: int = common.NEURONS_PER_LAYER,
-            first_layer_type_or_types: LayerTypeOrTypes = _DefaultIn,
-            hidden_layer_type_or_types: LayerTypeOrTypes = _DefaultHid,
-            output_layer_type_or_types: LayerTypeOrTypes = _DefaultOut,
+            input_layer_type_or_types: Union[str, Sequence[str]] =
+                                                    common.LAYER_DEFAULT_IN,
+            hidden_layer_type_or_types: Union[str, Sequence[str]] =
+                                                    common.LAYER_DEFAULT_HID,
+            output_layer_type_or_types: Union[str, Sequence[str]] =
+                                                    common.LAYER_DEFAULT_OUT,
             layer_kwargs: Optional[Sequence[Dict]] = None,
             train_initial_weights: bool = False,
-            filename: str = "",
             subobjects_to_save: dict = None,
             instance_tf_variables_to_save: Sequence[str] = (),
             *model_args,
@@ -115,15 +107,12 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             num_outputs_for_each_net,
             num_hidden_layers,
             num_neurons_per_hidden_layer,
-            first_layer_type_or_types,
+            input_layer_type_or_types,
             hidden_layer_type_or_types,
             output_layer_type_or_types,
             layer_kwargs,
             train_initial_weights,
         )
-
-        trainable_weights = [net.trainable_weights for net in self.nets]
-        self.train_weights = [w for ws in trainable_weights for w in ws]
 
         # not filled in at init because it is slow / not always needed, so it
         #   needs to be explicitly filled by calling precompute_optimum_loss
@@ -144,7 +133,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         instance_tf_variables_to_save.append('validation_optimum_loss')
         _DataSaver.__init__(
             self,
-            filename,
             instance_tf_variables_to_save=instance_tf_variables_to_save,
             nets_with_weights_to_save=self.nets,
             subobjects_to_save=subobjects_to_save,
@@ -276,7 +264,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         elif use_plateau:
             lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
-                self.train_weights,
+                self.trainable_weights(),
                 monitor="val_loss_val",
                 factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU,
                 patience=common.LEARNING_RATE_PLATEAU_PATIENCE,
@@ -319,7 +307,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             common.MINIBATCH_SIZE,
         )
         loss, grads = self.loss_and_gradient(input_blob, targets)
-        self.optimizer.apply_gradients(zip(grads, self.train_weights))
+        self.optimizer.apply_gradients(zip(grads, self.trainable_weights()))
 
         self.loss_tracker.update_state(loss)
 
@@ -333,6 +321,10 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         #    the data.
         return {'loss_val': self.validation_loss()}
 
+    def trainable_weights(self) -> List[tf.Tensor]:
+        trainable_weights = [net.trainable_weights() for net in self.nets]
+        return [w for ws in trainable_weights for w in ws]
+
     ###########################################################################
     #
     #  Non-Tensorflow members
@@ -344,41 +336,47 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             num_outputs_for_each_net: Sequence[int],
             num_hidden_layers: int,
             num_neurons_per_hidden_layer: int,
-            first_layer_type_or_types: LayerTypeOrTypes,
-            hidden_layer_type_or_types: LayerTypeOrTypes,
-            output_layer_type_or_types: LayerTypeOrTypes,
+            input_layer_type_or_types: Union[str, Sequence[str]],
+            hidden_layer_type_or_types: Union[str, Sequence[str]],
+            output_layer_type_or_types: Union[str, Sequence[str]],
             layer_kwargs: Sequence[Dict],
             train_initial_weights: bool,
     ) -> Tuple[
-        List[tf.keras.Model],
+        List[_SequentialNet],
         int,
     ]:
 
         self.num_nets = len(num_outputs_for_each_net)
-        first_layer_types = self.repeat_layer_type_if_singleton(
-            first_layer_type_or_types, self.num_nets,
+        input_layer_type_names = self.repeat_layer_type_if_singleton(
+            input_layer_type_or_types, self.num_nets,
         )
-        hidden_layer_types = self.repeat_layer_type_if_singleton(
+        hidden_layer_type_names = self.repeat_layer_type_if_singleton(
             hidden_layer_type_or_types, self.num_nets,
         )
-        output_layer_types = self.repeat_layer_type_if_singleton(
+        output_layer_type_names = self.repeat_layer_type_if_singleton(
             output_layer_type_or_types, self.num_nets,
         )
 
-        self.nets = [self.create_net(n_out,
-                                     num_hidden_layers,
-                                     num_neurons_per_hidden_layer,
-                                     first_layer_types[i],
-                                     hidden_layer_types[i],
-                                     output_layer_types[i],
-                                     layer_kwargs[i])
-                     for i, n_out in enumerate(num_outputs_for_each_net)]
-
         # Need to run some data through the nets to instantiate them.
-        input_blob, targets = self.simulate_training_data(
+        input_blob, _ = self.simulate_training_data(
             common.MINIBATCH_SIZE,
         )
-        self.call_tf(input_blob)
+        net_inputs = self.net_inputs(input_blob)
+
+        self.nets = [
+            self.create_net(
+                num_outputs=n_out,
+                num_inputs=net_inputs[i].shape[-1],
+                num_hidden_layers=num_hidden_layers,
+                num_neurons_per_hidden_layer=num_neurons_per_hidden_layer,
+                input_layer_type_name=input_layer_type_names[i],
+                hidden_layer_type_name=hidden_layer_type_names[i],
+                output_layer_type_name=output_layer_type_names[i],
+                layer_kwargs=layer_kwargs[i]
+            )
+            for i, n_out in enumerate(num_outputs_for_each_net)
+        ]
+
         if train_initial_weights:
             self.rescale_layer_weights()
 
@@ -388,46 +386,52 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         my_class_name = self.__class__.__name__
         for i, net in enumerate(self.nets):
             print(f"\n\nRescaling weights in net {i} of {my_class_name}:")
-            _layers.initialise_layers(net.layers)
+            _layers.initialise_layers(net.layers())
 
     @staticmethod
     def create_net(
             num_outputs: int,
+            num_inputs: int,
             num_hidden_layers: int,
             num_neurons_per_hidden_layer: int,
-            input_layer_type: Type[_SimNetLayer],
-            hidden_layer_type: Type[_SimNetLayer],
-            output_layer_type: Type[_SimNetLayer],
+            input_layer_type_name: str,
+            hidden_layer_type_name: str,
+            output_layer_type_name: str,
             layer_kwargs: Dict,
-    ) -> tf.keras.Sequential:
+    ) -> _SequentialNet:
 
-        net = tf.keras.models.Sequential()
-        net.add(input_layer_type(num_neurons_per_hidden_layer, **layer_kwargs))
+        num_outputs_per_layer = [num_neurons_per_hidden_layer]
+        layer_type_name_per_layer = [input_layer_type_name]
+        layer_kwargs_per_layer = [layer_kwargs]
+
         for i in range(num_hidden_layers):
-            net.add(hidden_layer_type(num_neurons_per_hidden_layer,
-                                      **layer_kwargs))
-        net.add(output_layer_type(num_outputs, **layer_kwargs))
+            num_outputs_per_layer.append(num_neurons_per_hidden_layer)
+            layer_type_name_per_layer.append(hidden_layer_type_name)
+            layer_kwargs_per_layer.append(layer_kwargs)
 
-        return net
+        num_outputs_per_layer.append(num_outputs)
+        layer_type_name_per_layer.append(output_layer_type_name)
+        layer_kwargs_per_layer.append(layer_kwargs)
+
+        return _SequentialNet(
+            num_inputs=num_inputs,
+            num_outputs_per_layer=num_outputs_per_layer,
+            layer_type_name_per_layer=layer_type_name_per_layer,
+            layer_kwargs_per_layer=layer_kwargs_per_layer,
+        )
 
     @staticmethod
     def repeat_layer_type_if_singleton(
-            type_or_types: LayerTypeOrTypes,
+            type_or_types: Union[str, Sequence[str]],
             n: int,
-    ) -> Sequence[Type[_SimNetLayer]]:
+    ) -> Sequence[str]:
 
-        if inspect.isclass(type_or_types):
-            if issubclass(type_or_types, _SimNetLayer):
-                return [type_or_types for _ in range(n)]
-            else:
-                raise Exception(
-                    f'Layer type {type_or_types} is not a _SimNetLayer!!'
-                )
+        if isinstance(type_or_types, str):
+            return [type_or_types for _ in range(n)]
         else:
             assert isinstance(type_or_types, collections.abc.Sequence)
             for t in type_or_types:
-                assert inspect.isclass(t)
-                assert issubclass(t, _SimNetLayer)
+                assert isinstance(t, str)
             assert len(type_or_types) == n
             return type_or_types
 
@@ -498,10 +502,10 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     ) -> Tuple[ttf.float32, list]:
 
         with tf.GradientTape() as tape2:                                       # type: ignore
-            tape2.watch(self.train_weights)
+            tape2.watch(self.trainable_weights())
             net_outs = self.call_tf_training(input_blob)
             loss = self.get_loss(net_outs, targets)
-        gradient = tape2.gradient(loss, self.train_weights)
+        gradient = tape2.gradient(loss, self.trainable_weights())
 
         return loss, gradient
 
@@ -520,8 +524,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     def get_neuron_variances_for_validation_set(self, net_index) -> list:
         extractor = tf.keras.models.Model(
-            inputs=self.nets[net_index].input,
-            outputs=[layer.output for layer in self.nets[net_index].layers]
+            inputs=self.nets[net_index].sequential.input,
+            outputs=[layer.output for layer in self.nets[net_index].layers()]
         )
         validation_input_blob, validation_outs = self.get_validation_set()
         validation_ins = self.net_inputs(validation_input_blob)[net_index]

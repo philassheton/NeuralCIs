@@ -1,7 +1,10 @@
+import os
 import tensorflow as tf
 
-from typing import Optional, List, Dict, Sequence
-from neuralcis.common import INSTANCE_VARS, WEIGHTS, FILE_PATH
+from neuralcis._sequential_net import _SequentialNet
+
+from typing import Optional, List, Sequence, Dict
+from neuralcis.common import INSTANCE_VARS, SEQUENTIAL
 
 
 class _DataSaver:
@@ -9,11 +12,10 @@ class _DataSaver:
     # OR an array of objects
     def __init__(
             self,
-            filename: str,
             subobjects_to_save: Optional[Dict] = None,
             instance_tf_variables_to_save: Optional[List] = None,
-            net_with_weights_to_save: tf.keras.Sequential = None,
-            nets_with_weights_to_save: Sequence[tf.keras.Sequential] = (),
+            net_with_weights_to_save: Optional[_SequentialNet] = None,
+            nets_with_weights_to_save: Sequence[_SequentialNet] = (),
     ) -> None:
 
         if subobjects_to_save is None:
@@ -31,53 +33,59 @@ class _DataSaver:
         self.subobjects_to_save = \
             self.preprocess_arrays_into_multiple_dict_elems(subobjects_to_save)
 
-        if filename == "":
-            return
-        else:
-            self.load(filename)
+    @staticmethod
+    def fullname(
+            foldername: str,
+            filename: str,
+    ) -> str:
 
-    def save(self, filename: str) -> None:
-        if filename == "":
-            return
+        return os.path.join(foldername, filename)
 
-        if len(self.nets_with_weights_to_save) == 1:
-            weights_filename = self.weights_filename(filename)
-            self.nets_with_weights_to_save[0].save_weights(weights_filename)
-        elif len(self.nets_with_weights_to_save) > 1:
-            for i, net in enumerate(self.nets_with_weights_to_save):
-                net.save_weights(self.weights_filename(filename, i))
+    def save(
+            self,
+            foldername: str,
+            filename_start_internal: str,
+    ) -> None:
+
+        fullname_start = self.fullname(foldername, filename_start_internal)
+        os.makedirs(foldername, exist_ok=True)
+
+        for i, net in enumerate(self.nets_with_weights_to_save):
+            net.save(self.sequential_filename(fullname_start, i))
 
         for suffix, obj in self.subobjects_to_save.items():
-            object_filename = self.construct_filename(filename, suffix)
+            object_filename = self.construct_filename(filename_start_internal,
+                                                      suffix)
             print(f'saving {object_filename}')
-            obj.save(object_filename)
+            obj.save(foldername, object_filename)
 
         if len(self.instance_tf_variables_to_save):
             tf.raw_ops.Save(
-                filename=self.instance_variables_filename(filename),
+                filename=self.instance_variables_filename(fullname_start),
                 tensor_names=self.instance_tf_variables_to_save,
                 data=[getattr(self, var) for var in
                       self.instance_tf_variables_to_save]
             )
 
-    def load(self, filename: str) -> None:
-        if filename == "":
-            return
+    def load(
+            self,
+            foldername: str,
+            filename_start_internal: str,
+    ) -> None:
 
-        if len(self.nets_with_weights_to_save) == 1:
-            weights_filename = self.weights_filename(filename)
-            self.nets_with_weights_to_save[0].load_weights(weights_filename)
-        elif len(self.nets_with_weights_to_save) > 1:
-            for i, net in enumerate(self.nets_with_weights_to_save):
-                net.load_weights(self.weights_filename(filename, i))
+        fullname_start = self.fullname(foldername, filename_start_internal)
+
+        for i, net in enumerate(self.nets_with_weights_to_save):
+            net.load(self.sequential_filename(fullname_start, i))
 
         for suffix, obj in self.subobjects_to_save.items():
-            object_filename = self.construct_filename(filename, suffix)
-            obj.load(object_filename)
+            object_filename = self.construct_filename(filename_start_internal,
+                                                      suffix)
+            obj.load(foldername, object_filename)
 
         for var in self.instance_tf_variables_to_save:
             value = tf.raw_ops.Restore(
-                file_pattern=self.instance_variables_filename(filename),
+                file_pattern=self.instance_variables_filename(fullname_start),
                 tensor_name=var,
                 dt=tf.float32
             )
@@ -89,21 +97,12 @@ class _DataSaver:
 
     @staticmethod
     def instance_variables_filename(filename: str) -> str:
-        filename = _DataSaver.construct_filename(filename, INSTANCE_VARS)
-        return _DataSaver.add_path(filename)
+        return _DataSaver.construct_filename(filename, INSTANCE_VARS)
 
     @staticmethod
-    def weights_filename(filename: str, index: Optional[int] = None) -> str:
-        if index is None:
-            weights_name = WEIGHTS
-        else:
-            weights_name = f'{WEIGHTS} {index}'
-        filename = _DataSaver.construct_filename(filename, weights_name)
-        return _DataSaver.add_path(filename)
-
-    @staticmethod
-    def add_path(filename: str) -> str:
-        return "%s/%s" % (FILE_PATH, filename)
+    def sequential_filename(filename: str, index: int) -> str:
+        sequential_name = f'{SEQUENTIAL} {index}'
+        return _DataSaver.construct_filename(filename, sequential_name)
 
     @staticmethod
     def preprocess_arrays_into_multiple_dict_elems(dictionary: Dict) -> Dict:

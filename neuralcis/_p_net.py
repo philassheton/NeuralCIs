@@ -29,7 +29,6 @@ class _PNet(_DataSaver):
             ],
             num_unknown_param: int,
             num_known_param: int,
-            filename: str = "",
             **network_setup_args,
     ) -> None:
         self.sampling_distribution_fn = sampling_distribution_fn
@@ -54,7 +53,6 @@ class _PNet(_DataSaver):
         )
 
         super().__init__(
-            filename=filename,
             subobjects_to_save={"znet": self.znet}
         )
 

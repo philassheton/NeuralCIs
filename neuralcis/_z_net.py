@@ -1,5 +1,4 @@
-from neuralcis._simulator_net import _SimulatorNet, LayerTypeOrTypes
-from neuralcis._layers import _DefaultIn, _DefaultHid, _DefaultOut
+from neuralcis._simulator_net import _SimulatorNet
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
@@ -42,10 +41,6 @@ class _ZNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Ys]],                                  #   -- transformation Jacobians will then reach through this transform
                 Tensor2[tf32, Samples, Ys]                                     #      to give the distribution of the *inputs* to this function.
             ] = tf.identity,
-            first_layer_type_or_types: LayerTypeOrTypes = _DefaultIn,
-            hidden_layer_type_or_types: LayerTypeOrTypes = _DefaultHid,
-            output_layer_type_or_types: LayerTypeOrTypes = _DefaultOut,
-            filename: str = "",
             **network_setup_args,
     ) -> None:
 
@@ -82,11 +77,7 @@ class _ZNet(_SimulatorNet):
         ]
 
         super().__init__(num_outputs_for_each_net=self.num_z,
-                         first_layer_type_or_types=first_layer_type_or_types,
-                         hidden_layer_type_or_types=hidden_layer_type_or_types,
-                         output_layer_type_or_types=output_layer_type_or_types,
                          layer_kwargs=layer_kwargs,
-                         filename=filename,
                          **network_setup_args)
 
     ###########################################################################

@@ -31,7 +31,6 @@ class _CINet(_SimulatorNet):
                 Tensor2[tf32, Samples, Estimates]
             ],
             num_param: int,
-            filename: str = "",
             **network_setup_args,
     ) -> None:
 
@@ -45,7 +44,6 @@ class _CINet(_SimulatorNet):
 
         _SimulatorNet.__init__(self,
                                num_outputs_for_each_net=[2],
-                               filename=filename,
                                **network_setup_args)
 
     ###########################################################################

@@ -6,9 +6,10 @@ from tensor_annotations import axes
 
 
 # file naming
+CIS_FILE_START = "cis"
 INSTANCE_VARS = "instancevars"
 WEIGHTS = "weights"
-FILE_PATH = "savedmodels"
+SEQUENTIAL = "seq"
 
 # model construction
 VALIDATION_SET_SIZE = 10000
@@ -24,6 +25,9 @@ LAYER_LEARNING_RATE_INITIAL = .05
 LAYER_LEARNING_HALF_LIFE_EPOCHS = .5
 LAYER_LEARNING_STEPS_PER_EPOCH = 500
 LAYER_LEARNING_EPOCHS = 4
+LAYER_DEFAULT_IN = "linear"
+LAYER_DEFAULT_HID = "multiplyer"
+LAYER_DEFAULT_OUT = "linear"
 
 # training
 EPOCHS = 100

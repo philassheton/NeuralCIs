@@ -3,14 +3,18 @@ import neuralcis.common as common
 import numpy as np
 import tensorflow as tf
 from abc import ABC, abstractmethod
+import inspect
 
 # Typing
-from typing import List, Tuple
+from typing import List, Tuple, Type
 from neuralcis.common import Samples, LayerInputs, LayerOutputs, Ys, Params
 from tensor_annotations.tensorflow import Tensor2
 import tensor_annotations.tensorflow as ttf
 
 tf32 = ttf.float32
+
+
+__layer_names = {}
 
 
 @tf.function
@@ -22,6 +26,7 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
     must_have_same_inputs_as_outputs = False
     initialization_step_size_multiplier = 1.
     can_be_initialization_trained = True
+    layer_type_name = None
 
     def __init__(self, num_outputs: int, **layer_kwargs) -> None:
         super().__init__()
@@ -202,6 +207,8 @@ def initialise_layers(layers: List[_SimNetLayer]) -> None:
 
 
 class _LinearLayer(_SimNetLayer):
+    layer_type_name = "linear"
+
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
@@ -212,6 +219,8 @@ class _LinearLayer(_SimNetLayer):
 
 
 class _FiftyFiftyLayer(_SimNetLayer):
+    layer_type_name = "5050"
+
     def __init__(self, num_outputs: int) -> None:
         _SimNetLayer.__init__(self, num_outputs)
         assert num_outputs % 2 == 0
@@ -239,6 +248,7 @@ class _MultiplyerLayer(_SimNetLayer):
     #     training will only distort the weights.
     can_be_initialization_trained = False
     must_have_same_inputs_as_outputs = True
+    layer_type_name = "multiplyer"
 
     def call(
             self,
@@ -269,6 +279,8 @@ class _MultiplyerWithSomeRelusLayer(_MultiplyerLayer):
     to produce relatively steep jumps in the output using the ReLU, but also
     get the benefits of the multiplyer layers."""
 
+    layer_type_name = "multiplyer some relu"
+
     def __init__(
             self,
             *args,
@@ -295,6 +307,7 @@ class _MultiplyerWithSomeRelusLayer(_MultiplyerLayer):
 
 
 class _MonotonicLinearLayer(_SimNetLayer):
+    layer_type_name = "monotonic linear"
     initialization_step_size_multiplier = .1
 
     @tf.function
@@ -328,6 +341,7 @@ class _MonotonicLinearLayer(_SimNetLayer):
 
 
 class _MonotonicTanhLayer(_MonotonicLinearLayer):
+    layer_type_name = "monotonic tanh"
     initialization_step_size_multiplier = 1.
 
     def activation_function(
@@ -339,6 +353,7 @@ class _MonotonicTanhLayer(_MonotonicLinearLayer):
 
 
 class _MonotonicLeakyReluLayer(_MonotonicLinearLayer):
+    layer_type_name = "monotonic leaky relu"
 
     def __init__(
             self,
@@ -358,6 +373,7 @@ class _MonotonicLeakyReluLayer(_MonotonicLinearLayer):
 
 
 class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
+    layer_type_name = "monotonic with params tanh"
 
     def __init__(
             self,
@@ -492,6 +508,31 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
         return tf.concat([activations, params], axis=1)
 
 
-_DefaultIn = _LinearLayer
-_DefaultHid = _MultiplyerLayer
-_DefaultOut = _LinearLayer
+def register_layer_type(
+        layertype: Type[_SimNetLayer],
+) -> None:
+    if not issubclass(layertype, _SimNetLayer):
+        raise Exception(f"Layers used in NeuralCIs must subclass _SimNetLayer")
+
+    if layertype.layer_type_name not in __layer_names:
+        __layer_names[layertype.layer_type_name] = layertype
+    else:
+        raise Exception(f"There are two layer types called "
+                        f"{layertype.layer_type_name}!")
+
+
+def layer_type_from_name(
+        layer_type_name: str
+) -> Type[_SimNetLayer]:
+    if layer_type_name in __layer_names:
+        return __layer_names[layer_type_name]
+    else:
+        raise Exception(f"You requested an unknown layer type: "
+                        f"{layer_type_name}.")
+
+
+for obj in globals().copy().values():
+    if inspect.isclass(obj):
+        if issubclass(obj, _SimNetLayer):
+            if obj.layer_type_name is not None:
+                register_layer_type(obj)

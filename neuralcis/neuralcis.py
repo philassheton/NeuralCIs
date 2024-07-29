@@ -30,7 +30,7 @@ class NeuralCIs(_DataSaver):
          any parameters that are known *a priori*), and whose keys are the
          names of those parameters (and exactly the same as the names used
          in the function signature).  See example below.
-    :param filename: Optional string; will load network weights from a
+    :param foldername: Optional string; will load network weights from a
         previous training session.
     :param train_initial_weights:  A bool (default True) that controls whether
         the layers of the underlying nets are optimized to maintain standard
@@ -80,12 +80,12 @@ class NeuralCIs(_DataSaver):
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Tensor1[tf32, Samples]
             ],
-            filename: str = "",
+            foldername: Optional[str] = None,
             train_initial_weights: bool = True,
             **param_distributions: Distribution,
     ) -> None:
 
-        if len(filename):
+        if foldername is not None:
             train_initial_weights = False
 
         if isinstance(sampling_distribution_fn, TFFunction):
@@ -136,9 +136,11 @@ class NeuralCIs(_DataSaver):
 
         _DataSaver.__init__(
             self,
-            filename,
             {"pnet": self.pnet,
              "cinet": self.cinet})
+
+        if foldername is not None:
+            self.load(foldername)
 
     def fit(self, *args, **kwargs):
 
@@ -349,6 +351,49 @@ class NeuralCIs(_DataSaver):
         p_and_ci = {k: v[0].tolist() for k, v in ps_and_cis.items()}
 
         return p_and_ci
+
+    def load(
+            self,
+            foldername: str,
+            *args
+    ) -> None:
+
+        """Load weights and neural architectures stored to disk into self.
+
+        NB this does NOT currently load the sampling or contrast functions,
+        and these must still be supplied before loading the network weights.
+
+        :param foldername: A str, the folder in which the weights and
+            configurations are stored.
+        """
+
+        if len(args):
+            raise Exception("NeuralCIs only allows you to provide a foldername"
+                            " when loading.")
+
+        super().load(foldername, common.CIS_FILE_START)
+
+    def save(
+            self,
+            foldername: str,
+            *args
+    ) -> None:
+
+        """Save weights and neural architectures stored to disk into self.
+
+        NB this does NOT currently save the sampling or contrast functions,
+        and these must still be supplied before reloading the network weights.
+
+        :param foldername: A str, the folder in which the weights and
+            configurations are to be stored.
+        """
+
+        if len(args):
+            raise Exception("NeuralCIs only allows you to provide a foldername"
+                            " when saving.")
+
+        super().save(foldername, common.CIS_FILE_START)
+
 
     ###########################################################################
     #
