@@ -3,6 +3,7 @@ import numpy as np
 from tqdm import tqdm
 
 # Use matplotlib where possible
+import matplotlib
 import matplotlib.pyplot as plt
 
 # Use plotly when needed for advanced features
@@ -13,7 +14,7 @@ from plotly.subplots import make_subplots
 from neuralcis import NeuralCIs
 from neuralcis.distributions import Distribution
 
-from typing import Sequence, Dict, Optional
+from typing import Sequence, Dict, Optional, Callable
 
 
 def __param_names_and_medians(
@@ -115,6 +116,56 @@ def __plot_p_value_distribution_once(
     )
 
 
+def __get_axis_types(cis: NeuralCIs) -> Dict[str, str]:
+    return {name: dist.axis_type for name, dist in zip(
+                        cis.param_names_in_sim_order,
+                        cis.param_dists_in_sim_order)}
+
+
+# Because set_xscale does not work in 3d (grrr)
+def __plot_3d_with_axis_types(
+        plot_fn: Callable,  # e.g. ax.plot_surface
+        ax: matplotlib.axes.Axes,
+        x: np.ndarray,
+        y: np.ndarray,
+        z: np.ndarray,
+        x_axis_type: str,   # currently either "log" or "linear"
+        y_axis_type: str,
+):
+
+    def round_log_scale_ticks(v: np.ndarray, sf=1):
+        orders_of_magnitude = np.floor(np.log10(v))
+        rounding_factor = 10 ** (sf - orders_of_magnitude - 1)
+        rounded = np.round(v * rounding_factor) / rounding_factor
+        return rounded
+
+    def transform_axis(v: np.ndarray, axis_type: str):
+        if axis_type == "linear":
+            locator = matplotlib.ticker.AutoLocator()
+            tick_labels = locator.tick_values(v.min(), v.max())
+            tick_points = tick_labels
+        elif axis_type == "log":
+            v = np.log(v)
+            tick_labels = np.exp(np.linspace(v.min(), v.max(), 5))             # TODO: This approach produced more pleasing results than matplotlib.ticker.LogLocator, but will produce odd results if we ever want a log parameter that starts high and only goes up a bit.
+            tick_labels = round_log_scale_ticks(tick_labels)
+            tick_points = np.log(tick_labels)
+        else:
+            raise Exception(("Currently can only handle log and linear "
+                             "axis_type"))
+
+        return v, tick_points, tick_labels
+
+    x, x_ticks, x_tick_labels = transform_axis(x, x_axis_type)
+    y, y_ticks, y_tick_labels = transform_axis(y, y_axis_type)
+
+    plot_fn(x, y, z)
+
+    ax.set_xticks(x_ticks)
+    ax.set_xticklabels(x_tick_labels)
+    ax.set_yticks(y_ticks)
+    ax.set_yticklabels(y_tick_labels)
+
+
 def visualize_sampling_fn(
         cis: NeuralCIs,
         num_points: int = 100,
@@ -203,9 +254,7 @@ def plot_params_vs_estimates(
     param_samples = cis._params_from_net(cis.pnet.sample_params(num_points))
     param_samples = {name: value for name, value in
                      zip(cis.param_names_in_sim_order, param_samples)}
-    axis_types = {name: dist.axis_type for name, dist in zip(
-                                                cis.param_names_in_sim_order,
-                                                cis.param_dists_in_sim_order)}
+    axis_types = __get_axis_types(cis)
 
     fig, ax = plt.subplots(len(estimate_names), len(param_names))
     for col, param in enumerate(param_names):
@@ -320,6 +369,8 @@ def cis_surface(
     else:
         param_values = __param_names_and_medians(cis, **param_overrides)
 
+    axis_types = __get_axis_types(cis)
+
     estimate_values = {name: param_values[name] for name in cis.estimate_names}
     if estimate_overrides is not None:
         for name, override in estimate_overrides.items():
@@ -343,5 +394,10 @@ def cis_surface(
     xs, ys, zs = cis.values_grid(estimate_values, param_values, (z_name,))
 
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
-    ax.plot_surface(xs, ys, zs)
+    __plot_3d_with_axis_types(ax.plot_surface, ax,
+                              xs, ys, zs,
+                              axis_types[x_name], axis_types[y_name])
+    ax.set_xlabel(x_name)
+    ax.set_ylabel(y_name)
+    ax.set_zlabel(z_name)
     fig.show()
