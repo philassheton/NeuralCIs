@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 import tensorflow as tf
 
-from typing import Optional, Union, Tuple
-from neuralcis.common import Samples, MinAndMax
+from typing import Optional, Union
+from neuralcis.common import Samples
 from tensor_annotations.tensorflow import Tensor0, Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
 
@@ -101,10 +101,10 @@ class LogUniform(TransformUniformDistribution):
     axis_type = "log"
 
     def to_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
-        return tf.math.log(x)
+        return tf.math.log(x)                                                  # type: ignore
 
     def from_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
-        return tf.math.exp(x)
+        return tf.math.exp(x)                                                  # type: ignore
 
 
 class Uniform(TransformUniformDistribution):

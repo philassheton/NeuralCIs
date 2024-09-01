@@ -9,7 +9,7 @@ from neuralcis import common
 from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Params, Estimates, MinAndMax
+from neuralcis.common import Samples, Params, Estimates, Zs, MinAndMax
 
 NetInputBlob = Tuple[
     Tensor2[tf32, Samples, Estimates],
@@ -56,7 +56,7 @@ class _PNet(_DataSaver):
             self.sampling_distribution_fn,                                     # type: ignore
             self.sample_params,
             contrast_fn,
-            self.validation_set,
+            self.validation_set,                                               # type: ignore
             known_param_indices,
             **network_setup_args,
         )
@@ -101,12 +101,12 @@ class _PNet(_DataSaver):
     ) -> Tensor1[tf32, Samples]:
 
         zs = self.znet.call_tf((estimates, params_null))
-        return self.ps_from_zs(zs)
+        return self.ps_from_zs(zs)                                             # type: ignore
 
     @tf.function
     def ps_from_zs(
             self,
-            zs: Tensor1[tf32, Samples],
+            zs: Tensor2[tf32, Samples, Zs],
     ):
 
         cdf = tfp.distributions.Normal(0., 1.).cdf(zs[:, 0])
@@ -128,7 +128,7 @@ class _PNet(_DataSaver):
         #       and should check.
 
         zs = self.znet.call_tf((estimates, params_null))
-        ps = self.ps_from_zs(zs)
+        ps = self.ps_from_zs(zs)                                               # type: ignore
         feeler_outputs = self.feeler_net.call_tf(params_null)
 
         values = {}

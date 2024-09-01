@@ -92,7 +92,7 @@ def __summarize_values(
 
 def __plot_p_value_distribution_once(
         cis: NeuralCIs,
-        fig: plotly.graph_objs._figure.Figure,
+        fig: plotly.graph_objs.Figure,
         row: int,
         col: int,
         num_samples: int = 10000,

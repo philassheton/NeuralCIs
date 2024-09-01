@@ -14,7 +14,7 @@ tf32 = ttf.float32
 
 
 NetInputBlob = Tuple[Tensor2[tf32, Samples, Estimates],
-                     Tensor2[tf32, Samples, Params],
+                     Tensor2[tf32, Samples, KnownParams],
                      Tensor1[tf32, Samples]]                         # p-values
 NetOutputBlob = Tensor2[tf32, Samples, NetOutputs]
 NetTargetBlob = Tuple[Tensor2[tf32, Samples, Estimates],
