@@ -49,14 +49,31 @@ MAX_PROPORTION_MISSING_VALUES_TO_TOLERATE = .1
 NUM_SAMPLES_FOR_IDEAL_ERROR_ESTIMATION = 5000
 GAP_BETWEEN_SAMPLES_FOR_PDF_ESTIMATION = 20
 
-# other
+# Param sampling
+FEELER_NET_MARKOV_CHAIN_LENGTH = 1000
+FEELER_NET_NUM_CHAINS = 50
+FEELER_NET_NUM_PERIPHERAL_POINTS = 50000
+PARAM_MARKOV_CHAIN_STEP_SIZE = 1.
+KNOWN_PARAM_MARKOV_CHAIN_SD = .1  # Will combine with step size
+SAMPLES_PER_TEST_PARAM = 100
+SAMPLE_PARAM_IF_SAMPLE_PERCENTILE = 99.
+# TODO: These will soon no longer apply, once params are properly sampled
 PARAMS_MIN = -1.
 PARAMS_MAX = 1.
+# Feeler net validation set
+FEELER_NET_VALIDATION_SET_MARKOV_CHAIN_LENGTH = 1000
+FEELER_NET_VALIDATION_SET_NUM_CHAINS = 5
+FELLER_NET_VALIDATION_SET_NUM_PERIPHERAL_SAMPLES = 5000
+
+
+
+# other
 DEFAULT_CONFIDENCE_LEVEL = .95
 ZNET_ANALYSER_NUM_SAMPLES = 1000
 SAMPLES_TO_TEST_PARAM_MAPPINGS = 1000
 ERROR_ALLOWED_FOR_PARAM_MAPPINGS = 1e-5
 MIN_ALLOWED_JACOBDET_IN_COORDINET = -50.
+SMALLEST_LOGABLE_NUMBER = 1e-37
 
 
 # axis labels for TensorFlow typing
@@ -69,6 +86,7 @@ KnownParams = typing.NewType("KnownParams", axes.Axis)
 FocalParam = typing.NewType("FocalParam", axes.Axis)
 NuisanceParams = typing.NewType("NuisanceParams", axes.Axis)
 Estimates = typing.NewType("Estimates", axes.Axis)
+Us = typing.NewType("Us", axes.Axis)
 Ys = typing.NewType("Ys", axes.Axis)
 Zs = typing.NewType("Zs", axes.Axis)
 NetOutputs = typing.NewType("NetOutputs", axes.Axis)
@@ -78,12 +96,14 @@ LayerOutputs = typing.NewType("LayerOutputs", axes.Axis)
 NodesInLayer = typing.NewType("NodesInLayer", axes.Axis)
 NumApproximations = typing.NewType("NumApproximations", axes.Axis)
 MinAndMax = typing.NewType("MinAndMax", axes.Axis)
+ImportanceIngredients = typing.NewType("ImportanceIngredients", axes.Axis)
 TrainingBatches = typing.NewType("TrainingBatches", axes.Axis)
 FixedParams = typing.NewType("FixedParams", axes.Axis)
 ParamsAndKS = typing.NewType("ParamsAndKS", axes.Axis)
 One = typing.NewType("One", axes.Axis)
 Contrast = typing.NewType("Contrast", axes.Axis)
 J = typing.NewType("J", axes.Axis)
+Indices = typing.NewType("Indices", axes.Axis)
 
 # Again for typing, represents a blob of output from a network that can be
 #   passed into a loss function.

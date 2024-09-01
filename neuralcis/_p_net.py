@@ -1,6 +1,7 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 from neuralcis._z_net import _ZNet
+from neuralcis._sampling_feeler_net import _SamplingFeelerNet
 from neuralcis._data_saver import _DataSaver
 from neuralcis import common
 
@@ -8,7 +9,7 @@ from neuralcis import common
 from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Params, Estimates
+from neuralcis.common import Samples, Params, Estimates, MinAndMax
 
 NetInputBlob = Tuple[
     Tensor2[tf32, Samples, Estimates],
@@ -27,6 +28,7 @@ class _PNet(_DataSaver):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
+            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
             num_unknown_param: int,
             num_known_param: int,
             **network_setup_args,
@@ -43,6 +45,13 @@ class _PNet(_DataSaver):
         known_param_indices = [
             i + num_unknown_param for i in range(num_known_param)
         ]
+        self.feeler_net = _SamplingFeelerNet(
+            estimates_min_and_max,
+            self.sampling_distribution_fn,
+            num_unknown_param,
+            num_known_param,
+            **network_setup_args,
+        )
         self.znet = _ZNet(
             self.sampling_distribution_fn,                                     # type: ignore
             self.sample_params,
@@ -120,11 +129,14 @@ class _PNet(_DataSaver):
 
         zs = self.znet.call_tf((estimates, params_null))
         ps = self.ps_from_zs(zs)
+        feeler_outputs = self.feeler_net.call_tf(params_null)
 
         values = {}
         for i in range(zs.shape[-1]):
             values[f"z{i}"] = zs[:, i]
         values["p"] = ps
+        values["feeler_log_vol"] = feeler_outputs[:, 0]
+        values["feeler_p_intersect"] = feeler_outputs[:, 1]
 
         return values
 

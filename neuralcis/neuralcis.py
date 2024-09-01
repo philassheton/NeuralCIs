@@ -119,12 +119,22 @@ class NeuralCIs(_DataSaver):
         self.num_param = len(self.param_dists_in_sim_order)
         self.num_estimate = len(self.estimate_dists_in_sim_order)
 
+        estimates_min_and_max_std_uniform = tf.stack([
+            dist.min_and_max_std_uniform
+            for dist in self.estimate_dists_in_sim_order
+        ], axis=0)
+        estimates_min_and_max = sampling.uniform_from_std_uniform(
+            estimates_min_and_max_std_uniform,
+            common.PARAMS_MIN, common.PARAMS_MAX
+        )
+
         assert (self._max_error_of_reverse_mapping().numpy() <
                 common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
 
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
+            estimates_min_and_max,
             num_unknown_param=self.num_estimate,
             num_known_param=self.num_param - self.num_estimate,
             train_initial_weights=train_initial_weights,

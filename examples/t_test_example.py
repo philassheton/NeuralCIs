@@ -21,9 +21,9 @@ def contrast_fn(mu, sigma, n):
 cis = NeuralCIs(
     normal_sampling_fn,
     contrast_fn,
-    mu=Uniform(-2., 2.),
-    sigma=LogUniform(.1, 10.),
-    n=LogUniform(1.1, 300.),
+    mu=Uniform(-4., 4., -2., 2.),
+    sigma=LogUniform(.1, 10., 1., 1.),
+    n=LogUniform(3., 300.),
 )
 
 
