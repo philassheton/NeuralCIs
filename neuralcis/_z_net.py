@@ -1,4 +1,6 @@
 from neuralcis._simulator_net import _SimulatorNet
+from neuralcis import _utils
+from neuralcis import common
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
@@ -188,36 +190,22 @@ class _ZNet(_SimulatorNet):
         return self.net_inputs_from_contrast(contrast, ys, params)
 
     @tf.function
-    def soft_floor_at_zero(
-            self,
-            values: tf.Tensor,
-    ) -> tf.Tensor:
-
-        # TODO: Consider whether this needs to adapt the scale of the variables
-        #       used (I think not, now that all variables are in [-1, 1].)
-        punitive_but_not_zero_values = 1e-10 * tf.math.sigmoid(values)
-        values_floored = tf.math.maximum(
-            values,
-            punitive_but_not_zero_values,
-        )
-
-        return values_floored
-
-    @tf.function
     def neg_log_likelihoods(
             self,
             outputs: Tensor2[tf32, Samples, Zs],
             sample_jacobdets: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        jacobdets_floored = self.soft_floor_at_zero(sample_jacobdets)
+        eps = common.SMALLEST_LOGABLE_NUMBER
+
+        jacobdets_floored = _utils._soft_floor_at_zero(sample_jacobdets)
 
         normal_pd = tfp.distributions.Normal(0.0, 1.0).prob(outputs)
-        normal_pd_joint = tf.math.reduce_prod(normal_pd, axis=1) + 1e-37
+        normal_pd_joint = tf.math.reduce_prod(normal_pd, axis=1) + eps
 
         # work first additively in log space to avoid overflows
         neg_log_likelihoods = (-tf.math.log(normal_pd_joint)
-                               - tf.math.log(jacobdets_floored + 1e-37))
+                               - tf.math.log(jacobdets_floored + eps))
 
         return neg_log_likelihoods
 

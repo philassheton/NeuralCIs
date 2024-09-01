@@ -1,0 +1,103 @@
+from neuralcis._simulator_net import _SimulatorNet
+from neuralcis._sampling_feeler_net import _SamplingFeelerNet
+from neuralcis import _utils
+from neuralcis import common
+import tensorflow as tf
+
+# Typing
+from typing import Sequence, Tuple, Callable, Optional
+from neuralcis.common import Samples, Params, Us, Ys, NetTargetBlob, NetInputs
+from tensor_annotations import tensorflow as ttf
+from tensor_annotations.tensorflow import Tensor1, Tensor2
+tf32 = ttf.float32
+
+NetInputBlob = Tensor2[tf32, Samples, Us]
+NetOutputBlob = Tuple[Tensor2[tf32, Samples, Params],  # net outputs (params)
+                      Tensor1[tf32, Samples]]          # Jacobian determinants
+
+class _ParamSamplingNet(_SimulatorNet):
+    def __init__(
+            self,
+            num_param: int,
+            sampling_distribution_fn: Callable[
+                [Tensor2[tf32, Samples, Params]],                 # params
+                Tensor2[tf32, Samples, Ys],                       # -> ys
+            ],
+            feeler_net: _SamplingFeelerNet,
+            **network_setup_args,
+    ) -> None:
+
+        # TODO: Refactor so this isn't necessary
+        tf.keras.models.Model.__init__(self)
+
+        self.num_param = num_param
+        self.feeler_net = feeler_net
+        self.sampling_distribution_fn = sampling_distribution_fn
+        self.validation_uniforms, _ = self.simulate_training_data(
+            common.VALIDATION_SET_SIZE
+        )
+
+        super().__init__(
+            num_outputs_for_each_net=(num_param,),
+            **network_setup_args,
+        )
+
+    def simulate_training_data(
+            self,
+            n: ttf.int32,
+    ) -> Tuple[NetInputBlob, None]:
+
+        us = tf.random.uniform((n, self.num_param),
+                               minval=common.PARAMS_MIN,
+                               maxval=common.PARAMS_MAX)
+        return us, None
+
+    def get_validation_set(
+            self,
+    ) -> Tuple[NetInputBlob, None]:
+
+        return self.validation_uniforms, None
+
+    def get_loss(
+            self,
+            net_outputs: NetOutputBlob,
+            target_outputs: Optional[NetTargetBlob] = None,
+    ) -> ttf.float32:
+
+        eps = common.SMALLEST_LOGABLE_NUMBER
+        params, jacobdets = net_outputs
+
+        importance_ingredients = self.feeler_net.call_tf(params)
+        importance_log = tf.reduce_sum(importance_ingredients, axis=1)
+
+        jacobdets_floored = _utils._soft_floor_at_zero(jacobdets)
+        jacobdets_log = tf.math.log(jacobdets_floored + eps)
+
+        neg_log_likelihoods = -importance_log - jacobdets_log
+
+        return tf.math.reduce_mean(neg_log_likelihoods)
+
+    def net_inputs(
+            self,
+            inputs: NetInputBlob
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
+
+        # TODO: This should be pushed up to the _SimulatorNet I think.
+        return [inputs]
+
+    def call_tf_training(
+            self,
+            input_blob: NetInputBlob
+            ) -> NetOutputBlob:
+
+        us = input_blob
+
+        with tf.GradientTape() as tape:  # type: ignore
+            tape.watch(us)
+            net_inputs = self.net_inputs(us)
+            params = self._call_tf(net_inputs, training=True)
+
+        jacobians = tape.batch_jacobian(params, us)
+        jacobdets = tf.linalg.det(jacobians)
+
+        return params, jacobdets                                               # type: ignore

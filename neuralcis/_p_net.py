@@ -2,6 +2,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 from neuralcis._z_net import _ZNet
 from neuralcis._sampling_feeler_net import _SamplingFeelerNet
+from neuralcis._param_sampling_net import _ParamSamplingNet
 from neuralcis._data_saver import _DataSaver
 from neuralcis import common
 
@@ -37,14 +38,12 @@ class _PNet(_DataSaver):
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
 
-        self.validation_params = self.sample_params(common.VALIDATION_SET_SIZE)
-        self.validation_estimates = self.sampling_distribution_fn(
-            self.validation_params
-        )
-
         known_param_indices = [
             i + num_unknown_param for i in range(num_known_param)
         ]
+        # TODO: These should live a layer higher, so they can also be used
+        #       by the CINet.  Will need a wrapper object that includes these
+        #       and p-net and CInet.  (Doesn't belong in NeuralCIs object).
         self.feeler_net = _SamplingFeelerNet(
             estimates_min_and_max,
             self.sampling_distribution_fn,
@@ -52,6 +51,18 @@ class _PNet(_DataSaver):
             num_known_param,
             **network_setup_args,
         )
+        self.param_sampling_net = _ParamSamplingNet(
+            num_unknown_param + num_known_param,
+            self.sampling_distribution_fn,                                     # type: ignore
+            self.feeler_net,
+            **network_setup_args,
+        )
+
+        self.validation_params = self.sample_params(common.VALIDATION_SET_SIZE)
+        self.validation_estimates = self.sampling_distribution_fn(
+            self.validation_params
+        )
+
         self.znet = _ZNet(
             self.sampling_distribution_fn,                                     # type: ignore
             self.sample_params,
@@ -66,9 +77,13 @@ class _PNet(_DataSaver):
         )
 
     def fit(self, *args, **kwargs) -> None:
+        self.feeler_net.fit(*args, **kwargs)
+        self.param_sampling_net.fit(*args, **kwargs)
         self.znet.fit(*args, **kwargs)
 
     def compile(self, *args, **kwargs) -> None:
+        self.feeler_net.compile(*args, **kwargs)
+        self.param_sampling_net.compile(*args, **kwargs)
         self.znet.compile(*args, **kwargs)
 
     @tf.function
@@ -77,11 +92,11 @@ class _PNet(_DataSaver):
             n: int,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        return tf.random.uniform(
-            (n, self.num_param()),
-            minval=tf.constant(-1.),
-            maxval=tf.constant(1.),
-        )
+        us = tf.random.uniform((n, self.num_param()),
+                               minval=tf.constant(common.PARAMS_MIN),
+                               maxval=tf.constant(common.PARAMS_MAX))
+        params = self.param_sampling_net.call_tf(us)
+        return params                                                          # type: ignore
 
     @tf.function
     def validation_set(

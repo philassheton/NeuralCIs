@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 # typing
 from typing import Callable, Tuple, Optional
-from neuralcis.common import Samples, Params, Estimates, NetOutputs, Indices
+from neuralcis.common import Samples, Params, Estimates, Indices
 from neuralcis.common import MinAndMax, ImportanceIngredients
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations import tensorflow as ttf
@@ -17,8 +17,8 @@ from neuralcis.common import NetInputs
 tf32 = ttf.float32
 
 NetInputBlob = Tensor2[tf32, Samples, Params]
-NetOutputBlob = Tensor2[tf32, Samples, NetOutputs]
-NetTargetBlob = Tensor2[tf32, Samples, NetOutputs]
+NetOutputBlob = Tensor2[tf32, Samples, ImportanceIngredients]
+NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 
 ###############################################################################
 #
