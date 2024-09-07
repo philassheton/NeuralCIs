@@ -346,7 +346,7 @@ def cis_surface(
     :param y_name:  A str, name of the variable to be plotted on y-axis.
     :param z_name:  A str, default value "p", name of variable to be on
         z-axis.  This can currently be any of "p" or "z0", "z1", ..., or
-        "feeler_log_vol", "feeler_p_intersect"
+        "feeler", "feeler_log_vol", or "feeler_p_intersect".
     :param x_is_param:  A bool, default False.  Set to True if the x_name
         should be interpreted as the name of a param, rather than an estimate.
     :param y_is_param:  A bool, default False.  See x_is_param.

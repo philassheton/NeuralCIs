@@ -78,8 +78,7 @@ class _ParamSamplingNet(_SimulatorNet):
         eps = common.SMALLEST_LOGABLE_NUMBER
         params, jacobdets = net_outputs
 
-        importance_ingredients = self.feeler_net.call_tf(params)
-        importance_log = tf.reduce_sum(importance_ingredients, axis=1)
+        importance_log = self.feeler_net.get_log_importance_from_net(params)
 
         jacobdets_floored = _utils._soft_floor_at_zero(jacobdets)
         jacobdets_log = tf.math.log(jacobdets_floored + eps)

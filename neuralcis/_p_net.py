@@ -117,6 +117,7 @@ class _PNet(_DataSaver):
         ps = self.ps_from_zs(zs)
         feeler_net = self.param_sampling_net.feeler_net
         feeler_outputs = feeler_net.call_tf(params_null)                       # type: ignore
+        feeler_final = feeler_net.get_log_importance_from_net(params_null)
 
         values = {}
         for i in range(zs.shape[-1]):
@@ -124,6 +125,7 @@ class _PNet(_DataSaver):
         values["p"] = ps
         values["feeler_log_vol"] = feeler_outputs[:, 0]
         values["feeler_p_intersect"] = feeler_outputs[:, 1]
+        values["feeler"] = feeler_final
 
         return values
 

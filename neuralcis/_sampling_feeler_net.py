@@ -3,11 +3,12 @@ from neuralcis import common
 
 import tensorflow as tf
 import tensorflow_probability as tfp
+import numpy as np
 from tqdm import tqdm
 
 # typing
 from typing import Callable, Tuple, Optional
-from neuralcis.common import Samples, Params, Estimates, Indices
+from neuralcis.common import Samples, Params, Estimates, Indices, NetOutputs
 from neuralcis.common import MinAndMax, ImportanceIngredients
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations import tensorflow as ttf
@@ -84,6 +85,8 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             **network_setup_args,
     ) -> None:
 
+        tf.keras.models.Model.__init__(self)
+
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_estimate = estimates_min_and_max.shape[0]
         self.estimates_min = estimates_min_and_max[:, 0]
@@ -103,6 +106,10 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             self.estimates_max - self.estimates_min,
             tf.repeat(common.PARAMS_MAX - common.PARAMS_MIN, num_known_param),
         ], axis=0)
+
+        param_nans = tf.fill(self.num_param, np.nan)
+        self.min_params_simulated = tf.Variable(param_nans)
+        self.max_params_simulated = tf.Variable(param_nans)
 
         self.sample_size = sample_size
         self.sd_known = common.KNOWN_PARAM_MARKOV_CHAIN_SD
@@ -126,9 +133,9 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         super().__init__(
             cache_size=self.cache_size,
             num_outputs_for_each_net=(NUM_IMPORTANCE_INGREDIENTS,),
-            **network_setup_args
-        )
-        self.validation_set = None
+            instance_tf_variables_to_save=('min_params_simulated',
+                                           'max_params_simulated'),
+            **network_setup_args)
 
     def simulate_training_data_cache(
             self,
@@ -138,7 +145,8 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         assert n == self.cache_size
         return self.simulate_param_samples(self.num_chains,
                                            self.chain_length,
-                                           self.num_peripheral_samples)
+                                           self.num_peripheral_samples,
+                                           store_min_and_max=True)
 
     def simulate_validation_data_cache(
             self,
@@ -164,6 +172,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             num_chains: int,
             chain_length: int,
             num_peripheral_samples: int,
+            store_min_and_max: bool = False,
     ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
         params_sampled = []
@@ -183,8 +192,11 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         # TODO: Make this fit more snugly to the countours of the original
         #       sample.
         print(f"Generating {num_peripheral_samples} peripheral samples.")
-        mins = tf.reduce_min(params_sampled, axis=0)
-        maxs = tf.reduce_max(params_sampled, axis=0)
+
+        valid_rows = tf.where(targets[:, 1] >= 0.)[:, 0]
+        params_sampled_valid = tf.gather(params_sampled, valid_rows, axis=0)
+        mins = tf.reduce_min(params_sampled_valid, axis=0)
+        maxs = tf.reduce_max(params_sampled_valid, axis=0)
         diffs = maxs - mins
         u = tf.random.uniform((num_peripheral_samples, self.num_param))
         params_sampled_peripheral = u * diffs[None, :] + mins[None, :]
@@ -197,6 +209,10 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         params_sampled = tf.concat([params_sampled, params_sampled_peripheral],
                                    axis=0)
         targets = tf.concat([targets, targets_peripheral], axis=0)
+
+        if store_min_and_max:
+            self.min_params_simulated.assign(mins)
+            self.max_params_simulated.assign(maxs)
 
         return params_sampled, targets
 
@@ -393,15 +409,14 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         #       cases that do not even produce samples within our region of
         #       interest).
 
-        # Since we might want to look at any given param on its own, and since
-        #   each param relates directly to one estimate, for now we will just
-        #   cut off each estimate SEPARATELY at the percentile (i.e. pull the
-        #   cutoff from a one-dimensional z-distribution.
+        # Very crude Bonferroni adjusted bounding box for now.  Should be
+        #   fine for small number of parameters.
         # TODO: Again, we need to look more carefully at this.  How do we make
         #   sure we are sampling enough but not too much, to make sure we have
         #   sufficient info?
         tails_probability = 1. - common.SAMPLE_PARAM_IF_SAMPLE_PERCENTILE / 100
-        quantile = 1 - tails_probability / 2.
+        tails_probability_bonferroni = tails_probability / self.num_param
+        quantile = 1 - tails_probability_bonferroni / 2.
         cutoff = tfp.distributions.Normal(0., 1.).quantile(quantile)
         cutoff = cutoff * self.sd_sampling_error_adjust                        # See comment number 2. at top of page
         sds = tf.sqrt(tf.reduce_sum(tf.square(cov_chol), axis=1))
@@ -496,3 +511,31 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         # TODO: can we just push this up to the _SimulatorNet?
         return inputs,                                                         # type: ignore
+
+    @tf.function
+    def get_log_importance_from_net(
+            self,
+            params: Tensor2[tf32, Samples, Params],
+    ) -> Tensor1[tf32, Samples]:
+
+        importance_ingredients = self.call_tf(params)
+        importance_log = tf.reduce_sum(importance_ingredients, axis=1)
+
+        # Add a punitive amount for being outside the region sampled from
+        param_too_low_by = tf.maximum(
+            self.min_params_simulated[None, :] - params, 0.
+        )
+        param_too_high_by = tf.maximum(
+            params - self.max_params_simulated[None, :], 0.
+        )
+        param_out_of_bound_by = tf.maximum(param_too_low_by, param_too_high_by)
+        greatest_out_of_bound = tf.reduce_max(param_out_of_bound_by, axis=1)
+
+        # oob = out of bounds
+        oob = tf.sign(greatest_out_of_bound)
+        not_oob = 1. - oob
+
+        log_eps = tf.math.log(common.SMALLEST_LOGABLE_NUMBER)
+        out_of_bounds_val = log_eps - greatest_out_of_bound
+
+        return not_oob*importance_log + oob*out_of_bounds_val
