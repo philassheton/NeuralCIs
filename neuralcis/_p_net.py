@@ -43,18 +43,10 @@ class _PNet(_DataSaver):
 
         self.param_sampling_net = param_sampling_net
 
-        self.validation_params = param_sampling_net.sample_params(
-            common.VALIDATION_SET_SIZE
-        )
-        self.validation_estimates = self.sampling_distribution_fn(
-            self.validation_params
-        )
-
         self.znet = _ZNet(
             self.sampling_distribution_fn,                                     # type: ignore
             self.param_sampling_net.sample_params,
             contrast_fn,
-            self.validation_set,                                               # type: ignore
             known_param_indices,
             **network_setup_args,
         )
@@ -68,16 +60,6 @@ class _PNet(_DataSaver):
 
     def compile(self, *args, **kwargs) -> None:
         self.znet.compile(*args, **kwargs)
-
-    @tf.function
-    def validation_set(
-            self,
-    ) -> Tuple[
-        Tensor2[tf32, Samples, Estimates],
-        Tensor2[tf32, Samples, Params],
-    ]:
-
-        return self.validation_estimates, self.validation_params
 
     @tf.function
     def p(

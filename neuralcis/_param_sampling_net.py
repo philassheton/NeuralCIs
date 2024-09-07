@@ -43,9 +43,6 @@ class _ParamSamplingNet(_SimulatorNet):
 
         self.num_param = num_unknown_param + num_known_param
         self.sampling_distribution_fn = sampling_distribution_fn
-        self.validation_uniforms, _ = self.simulate_training_data(
-            common.VALIDATION_SET_SIZE
-        )
 
         super().__init__(
             num_outputs_for_each_net=(self.num_param,),
@@ -62,12 +59,6 @@ class _ParamSamplingNet(_SimulatorNet):
                                minval=common.PARAMS_MIN,
                                maxval=common.PARAMS_MAX)
         return us, None
-
-    def get_validation_set(
-            self,
-    ) -> Tuple[NetInputBlob, None]:
-
-        return self.validation_uniforms, None
 
     def get_loss(
             self,

@@ -35,10 +35,6 @@ class _ZNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
-            validation_set_fn: Callable[
-                [],
-                NetInputBlob
-            ],
             known_param_indices: Sequence[int],
             coords_fn: Callable[                                               # coords_fn allows us to remap the ys before they are fed into the znet
                 [Tensor2[tf32, Samples, Ys]],                                  #   -- transformation Jacobians will then reach through this transform
@@ -48,12 +44,11 @@ class _ZNet(_SimulatorNet):
     ) -> None:
 
         self.sampling_distribution_fn = sampling_distribution_fn
-        self.validation_set_fn = validation_set_fn
         self.param_sampling_fn = param_sampling_fn
         self.contrast_fn = contrast_fn
         self.coords_fn = coords_fn
 
-        ys, params = self.validation_set_fn()
+        ys, params = self.sample_ys_and_params(1)
 
         num_y = tf.shape(ys).numpy()[1]
         self.num_z = [1, num_y - 1]
@@ -99,16 +94,6 @@ class _ZNet(_SimulatorNet):
     ]:
 
         return self.sample_ys_and_params(n), None
-
-    @tf.function
-    def get_validation_set(
-            self
-    ) -> Tuple[
-            NetInputBlob,
-            None,
-    ]:
-
-        return self.validation_set_fn(), None
 
     @tf.function
     def get_loss(

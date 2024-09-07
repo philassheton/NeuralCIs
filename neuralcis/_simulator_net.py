@@ -103,6 +103,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         tf.keras.Model.__init__(self, *model_args, **model_kwargs)
 
+        self.validation_set = None
         self.nets, self.num_nets = self.create_nets(
             num_outputs_for_each_net,
             num_hidden_layers,
@@ -163,23 +164,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         """
 
     @abstractmethod
-    def get_validation_set(
-            self,
-    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
-
-        """Return the validation set.
-
-        Must be a `tf.function`.
-
-        Should return simulations in the same format as
-        `sampling_distribution_fn`.
-
-        :return: A tuple containing two elements: (1) A list of 2D `Tensor`s
-        of samples x network inputs (one for each net) and (2) whatever target
-        values are needed by the loss function (or None).
-        """
-
-    @abstractmethod
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
@@ -211,6 +195,39 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
         return inputs
+
+    def get_ready_for_training(self) -> None:
+
+        """Populate self.validation_set.  Called at start of training.
+
+        Since it may not be possible to select an appropriate validation set
+        until the start of training, this function is called by the fit()
+        function, and populates the value `self.validation_set` at that point.
+
+        :return: None
+        """
+
+        self.validation_set = self.simulate_training_data(
+            common.VALIDATION_SET_SIZE
+        )
+
+    @tf.function
+    def get_validation_set(
+            self,
+    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
+
+        """Return the validation set.
+
+        Must be a `tf.function`.
+
+        Returns simulations in the same format as `sampling_distribution_fn`.
+
+        :return: A tuple containing two elements: (1) A list of 2D `Tensor`s
+        of samples x network inputs (one for each net) and (2) whatever target
+        values are needed by the loss function (or None).
+        """
+
+        return self.validation_set
 
     @tf.function
     def compute_optimum_loss(self) -> ttf.float32:
@@ -246,6 +263,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         # TODO: this is rather ugly, effectively making any call from the
         #       superclass to this function break.  Rethink!
         assert len(args) == 0   # Cannot use the usual fit args here!!
+
+        self.get_ready_for_training()
 
         use_decay = common.USE_DECAYING_LEARNING_RATE
         use_plateau = common.USE_DECREASE_LEARNING_RATE_ON_PLATEAU

@@ -43,10 +43,6 @@ class _CINet(_SimulatorNet):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_param = num_param
 
-        self.validation_set = self.simulate_training_data(
-            common.VALIDATION_SET_SIZE,
-        )
-
         _SimulatorNet.__init__(self,
                                num_outputs_for_each_net=[2],
                                **network_setup_args)
@@ -72,13 +68,6 @@ class _CINet(_SimulatorNet):
         outputs = (estimates, params, target_p)
 
         return inputs, outputs
-
-    @tf.function
-    def get_validation_set(
-            self,
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
-
-        return self.validation_set
 
     @tf.function
     def get_loss(
