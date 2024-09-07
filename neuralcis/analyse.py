@@ -33,15 +33,10 @@ def __param_names_and_medians(
 
 def __param_names_and_random_values(
         cis: NeuralCIs,
-        **value_overrides: float,
 ) -> Dict[str, float]:
 
-    param_values = value_overrides
-    for name, dist in zip(cis.param_names_in_sim_order,
-                          cis.param_dists_in_sim_order):
-        if name not in param_values:
-            param_values[name] = dist.from_std_uniform(np.random.rand())
-
+    random_params = cis.sample_params(1)
+    param_values = {n: float(p.numpy()) for n, p in random_params.items()}
     return param_values
 
 
@@ -96,12 +91,16 @@ def __plot_p_value_distribution_once(
         row: int,
         col: int,
         num_samples: int = 10000,
-        randomize_unspecified_params: bool = True,
+        randomize_params: bool = True,
         **param_values: float,
 ) -> None:
 
-    if randomize_unspecified_params:
-        param_values = __param_names_and_random_values(cis, **param_values)
+    if randomize_params:
+        if len(param_values) > 0:
+            raise ValueError('Can only randomize ALL parameters, not just '
+                             'some.  You set randomize_params=True, so cannot '
+                             'then enter any param overrides.')
+        param_values = __param_names_and_random_values(cis)
     else:
         param_values = __param_names_and_medians(cis, **param_values)
     param_tensors = __repeat_params_tf(num_samples, **param_values)

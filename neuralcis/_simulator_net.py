@@ -359,7 +359,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         )
 
         # Need to run some data through the nets to instantiate them.
-        input_blob, _ = self.simulate_training_data(
+        input_blob, _ = self.simulate_fake_training_data(
             common.MINIBATCH_SIZE,
         )
         net_inputs = self.net_inputs(input_blob)
@@ -442,6 +442,14 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         print("Calculated optimum loss")
 
         self.set_validation_optimum_loss(optimum_loss)
+
+    def simulate_fake_training_data(
+            self,
+            n: ttf.int32,
+    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
+
+        # Override this function if simulation of training data is expensive
+        return self.simulate_training_data(n)
 
     ###########################################################################
     #

@@ -19,6 +19,7 @@ tf32 = ttf.float32
 NetInputBlob = Tensor2[tf32, Samples, Params]
 NetOutputBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
+NUM_IMPORTANCE_INGREDIENTS = 2
 
 ###############################################################################
 #
@@ -122,15 +123,12 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         )
 
         # TODO: Redesign so this lives somewhere more comfortable
-        super().__init__(cache_size=self.cache_size,
-                         num_outputs_for_each_net=(2,),
-                         **network_setup_args)
-
-        self.validation_set = self.simulate_param_samples(
-            common.FEELER_NET_VALIDATION_SET_NUM_CHAINS,
-            common.FEELER_NET_VALIDATION_SET_MARKOV_CHAIN_LENGTH,
-            common.FELLER_NET_VALIDATION_SET_NUM_PERIPHERAL_SAMPLES
+        super().__init__(
+            cache_size=self.cache_size,
+            num_outputs_for_each_net=(NUM_IMPORTANCE_INGREDIENTS,),
+            **network_setup_args
         )
+        self.validation_set = None
 
     def simulate_training_data_cache(
             self,
@@ -141,6 +139,25 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         return self.simulate_param_samples(self.num_chains,
                                            self.chain_length,
                                            self.num_peripheral_samples)
+
+    def simulate_validation_data_cache(
+            self,
+    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
+
+        return self.simulate_param_samples(
+            common.FEELER_NET_VALIDATION_SET_NUM_CHAINS,
+            common.FEELER_NET_VALIDATION_SET_MARKOV_CHAIN_LENGTH,
+            common.FELLER_NET_VALIDATION_SET_NUM_PERIPHERAL_SAMPLES
+        )
+
+    def simulate_fake_training_data(
+            self,
+            n: ttf.int32,
+    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
+
+        net_input_blob = tf.zeros((n, self.num_param))
+        net_target_blob = tf.zeros((n, NUM_IMPORTANCE_INGREDIENTS))
+        return net_input_blob, net_target_blob
 
     def simulate_param_samples(
             self,
@@ -203,7 +220,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
                                        element_shape=(self.num_param,))
         targets = tf.TensorArray(tf.float32,
                                  size=chain_length,
-                                 element_shape=(2,))
+                                 element_shape=(NUM_IMPORTANCE_INGREDIENTS,))
         param_samples = param_samples.write(0, old_params)
         targets = targets.write(0, importance_ingredients)
 
@@ -460,13 +477,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         det_unknown = sigma_chol_det
         det_known = tf.math.pow(self.sd_known, self.num_known_param)
         return tf.math.exp(-0.5 * z_norm_sq) / (det_unknown * det_known)       # NB: We do *not* need sqrt on the determinant because it is the sqrt of the Cholesky factor (already sqrted)
-
-    @tf.function
-    def get_validation_set(
-            self
-    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
-
-        return self.validation_set
 
     def get_loss(
             self,

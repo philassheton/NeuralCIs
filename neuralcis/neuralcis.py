@@ -4,6 +4,7 @@ import numpy as np
 
 from neuralcis import common
 from neuralcis import sampling
+from neuralcis._param_sampling_net import _ParamSamplingNet
 from neuralcis._p_net import _PNet
 from neuralcis._ci_net import _CINet
 from neuralcis._data_saver import _DataSaver
@@ -82,6 +83,7 @@ class NeuralCIs(_DataSaver):
             ],
             foldername: Optional[str] = None,
             train_initial_weights: bool = True,
+            network_setup_args: Optional[Dict] = None,
             **param_distributions: Distribution,
     ) -> None:
 
@@ -131,23 +133,42 @@ class NeuralCIs(_DataSaver):
         assert (self._max_error_of_reverse_mapping().numpy() <
                 common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
 
+        if network_setup_args is None:
+            network_setup_args = {}
+        num_unknown_param = self.num_estimate
+        num_known_param = self.num_param - num_unknown_param
+        self.param_sampling_net = _ParamSamplingNet(
+            num_unknown_param,
+            num_known_param,
+            self._sampling_dist_net_interface,
+            estimates_min_and_max,
+            train_initial_weights=train_initial_weights,
+            **network_setup_args,
+        )
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
-            estimates_min_and_max,
-            num_unknown_param=self.num_estimate,
-            num_known_param=self.num_param - self.num_estimate,
+            num_unknown_param,
+            num_known_param,
+            self.param_sampling_net,
             train_initial_weights=train_initial_weights,
+            **network_setup_args,
         )
-        self.cinet = _CINet(self.pnet,
-                            self._sampling_dist_net_interface,
-                            self.num_param,
-                            train_initial_weights=train_initial_weights)
+        self.cinet = _CINet(
+            self.pnet,
+            self._sampling_dist_net_interface,
+            self.param_sampling_net.sample_params,
+            self.num_param,
+            train_initial_weights=train_initial_weights,
+            **network_setup_args,
+        )
 
         _DataSaver.__init__(
             self,
-            {"pnet": self.pnet,
-             "cinet": self.cinet})
+            {"paramsampnet": self.param_sampling_net,
+             "pnet": self.pnet,
+             "cinet": self.cinet},
+        )
 
         if foldername is not None:
             self.load(foldername)
@@ -186,10 +207,12 @@ class NeuralCIs(_DataSaver):
         :param callbacks: An array of callbacks to be used during training.
         """
 
+        self.param_sampling_net.fit(*args, **kwargs)
         self.pnet.fit(*args, **kwargs)
         self.cinet.fit(*args, **kwargs)
 
     def compile(self, *args, **kwargs):
+        self.param_sampling_net.compile(*args, **kwargs)
         self.pnet.compile(*args, **kwargs)
         self.cinet.compile(*args, **kwargs)
 
@@ -681,3 +704,21 @@ class NeuralCIs(_DataSaver):
         errors = tf.math.abs(as_uniform - test_params)                         # type: ignore
 
         return tf.math.reduce_max(errors)
+
+    ###########################################################################
+    #
+    #  Extra helper functions
+    #
+    ###########################################################################
+
+    def sample_params(
+            self,
+            n: int,
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
+
+        params_tensor_in_net_form = self.param_sampling_net.sample_params(n)
+        params_in_sim_form = self._params_from_net(params_tensor_in_net_form)
+        param_values = {n: p for n, p in zip(self.param_names_in_sim_order,
+                                             params_in_sim_form)}
+
+        return param_values

@@ -30,10 +30,15 @@ class _CINet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Estimates]
             ],
+            sample_params_fn: Callable[
+                [int],
+                Tensor2[tf32, Samples, Params],
+            ],
             num_param: int,
             **network_setup_args,
     ) -> None:
 
+        self.sample_params = sample_params_fn
         self.pnet = pnet
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_param = num_param
@@ -103,14 +108,6 @@ class _CINet(_SimulatorNet):
     #  Tensorflow members
     #
     ###########################################################################
-
-    @tf.function
-    def sample_params(self, n: ttf.int32) -> Tensor2[tf32, Samples, Params]:
-        return tf.random.uniform(
-            (n, self.num_param),
-            tf.constant(common.PARAMS_MIN),
-            tf.constant(common.PARAMS_MAX),
-        )
 
     @tf.function
     def net_inputs(

@@ -5,8 +5,9 @@ from neuralcis import common
 import tensorflow as tf
 
 # Typing
-from typing import Sequence, Tuple, Callable, Optional
-from neuralcis.common import Samples, Params, Us, Ys, NetTargetBlob, NetInputs
+from typing import Tuple, Callable, Optional
+from neuralcis.common import Samples, Params, Us, Estimates, MinAndMax
+from neuralcis.common import NetTargetBlob, NetInputs
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 tf32 = ttf.float32
@@ -15,30 +16,40 @@ NetInputBlob = Tensor2[tf32, Samples, Us]
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Params],  # net outputs (params)
                       Tensor1[tf32, Samples]]          # Jacobian determinants
 
+
 class _ParamSamplingNet(_SimulatorNet):
     def __init__(
             self,
-            num_param: int,
+            num_unknown_param: int,
+            num_known_param: int,
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],                 # params
-                Tensor2[tf32, Samples, Ys],                       # -> ys
+                Tensor2[tf32, Samples, Estimates],                # -> ys
             ],
-            feeler_net: _SamplingFeelerNet,
+            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
             **network_setup_args,
     ) -> None:
 
         # TODO: Refactor so this isn't necessary
         tf.keras.models.Model.__init__(self)
 
-        self.num_param = num_param
-        self.feeler_net = feeler_net
+        self.feeler_net = _SamplingFeelerNet(
+            estimates_min_and_max,
+            sampling_distribution_fn,
+            num_unknown_param,
+            num_known_param,
+            **network_setup_args,
+        )
+
+        self.num_param = num_unknown_param + num_known_param
         self.sampling_distribution_fn = sampling_distribution_fn
         self.validation_uniforms, _ = self.simulate_training_data(
             common.VALIDATION_SET_SIZE
         )
 
         super().__init__(
-            num_outputs_for_each_net=(num_param,),
+            num_outputs_for_each_net=(self.num_param,),
+            subobjects_to_save={'feelernet': self.feeler_net},
             **network_setup_args,
         )
 
@@ -101,3 +112,23 @@ class _ParamSamplingNet(_SimulatorNet):
         jacobdets = tf.linalg.det(jacobians)
 
         return params, jacobdets                                               # type: ignore
+
+    def fit(self, *args, **kwargs):
+        self.feeler_net.fit(*args, **kwargs)
+        super().fit(*args, **kwargs)
+
+    def compile(self, *args, **kwargs):
+        self.feeler_net.compile(*args, **kwargs)
+        super().compile(*args, **kwargs)
+
+    @tf.function
+    def sample_params(
+            self,
+            n: int,
+    ) -> Tensor2[tf32, Samples, Params]:
+
+        us = tf.random.uniform((n, self.num_param),
+                               minval=tf.constant(common.PARAMS_MIN),
+                               maxval=tf.constant(common.PARAMS_MAX))
+        params = self.call_tf(us)
+        return params                                                          # type: ignore
