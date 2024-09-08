@@ -1,6 +1,7 @@
 import tensorflow as tf
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 import numpy as np
+import os
 
 from neuralcis import common
 from neuralcis import sampling
@@ -197,7 +198,7 @@ class NeuralCIs(_DataSaver):
         if foldername is not None:
             self.load(foldername)
 
-    def fit(self, *args, **kwargs):
+    def fit(self, turn_off_gpu: bool = True, *args, **kwargs) -> None:
 
         """Fit the networks to the simulation.
 
@@ -229,8 +230,14 @@ class NeuralCIs(_DataSaver):
         :param learning_rate_half_life_epochs: An int (default 4).  Learning
             rate will halve each time this number of epochs has passed.
         :param callbacks: An array of callbacks to be used during training.
+        :param turn_off_gpu: A bool (default True).  Since we are training
+            very small networks, it is generally much much faster to train
+            on the CPU.  Setting this true will make any GPUs invisible to
+            Tensorflow so that they will not be used.
         """
 
+        if turn_off_gpu:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
         self.param_sampling_net.fit(*args, **kwargs)
         self.pnet.fit(*args, **kwargs)
         self.cinet.fit(*args, **kwargs)
