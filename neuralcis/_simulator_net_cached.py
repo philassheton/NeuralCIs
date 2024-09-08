@@ -11,6 +11,11 @@ from neuralcis.common import NetInputBlob, NetTargetBlob, Indices
 
 
 class _SimulatorNetCached(_SimulatorNet, ABC):
+
+    # In a _SimulatorNetCached we have limited data, so we want to monitor
+    # the validation loss, to make sure to avoid overfitting.
+    loss_to_watch = "val_loss_val"
+
     def __init__(
             self,
             cache_size: int,

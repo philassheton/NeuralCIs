@@ -23,6 +23,7 @@ NetTargetBlob = Tuple[Tensor2[tf32, Samples, Estimates],
 
 
 class _CINet(_SimulatorNet):
+    relative_loss_increase_tol = common.REL_LOSS_INCREASE_TOL_CI_NET
     def __init__(
             self,
             pnet: _PNet,               # TODO: make a protocol for PNets

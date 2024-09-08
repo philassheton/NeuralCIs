@@ -21,6 +21,7 @@ NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
 
 
 class _ZNet(_SimulatorNet):
+    absolute_loss_increase_tol = common.ABS_LOSS_INCREASE_TOL_Z_NET
     def __init__(
             self,
             sampling_distribution_fn: Callable[

@@ -72,6 +72,7 @@ NUM_IMPORTANCE_INGREDIENTS = 2
 
 
 class _SamplingFeelerNet(_SimulatorNetCached):
+    absolute_loss_increase_tol = common.ABS_LOSS_INCREASE_TOL_FEELER_NET
     def __init__(
             self,
             estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],

@@ -80,6 +80,13 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         array of such types.  If just a single type, this type will be
         applied for all underlying nets.
     """
+
+    # In a _SimulatorNet, each datapoint is fresh, so it makes more sense to
+    # monitor our training based on the raw loss.
+    loss_to_watch = "loss"
+    absolute_loss_increase_tol = None
+    relative_loss_increase_tol = None
+
     def __init__(
             self,
             num_outputs_for_each_net: Sequence[int] = (1,),
@@ -255,11 +262,9 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             epochs: int = common.EPOCHS,
             verbose: Union[int, str] = 'auto',
             learning_rate_initial: int = common.LEARNING_RATE_INITIAL,
-            learning_rate_half_life_epochs: int
-                                       = common.LEARNING_RATE_HALF_LIFE_EPOCHS,
             callbacks: Sequence[tf.keras.callbacks.Callback] = None,
             *args,
-    ) -> None:
+    ):
 
         # TODO: this is rather ugly, effectively making any call from the
         #       superclass to this function break.  Rethink!
@@ -267,59 +272,51 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         self.get_ready_for_training()
 
-        use_decay = common.USE_DECAYING_LEARNING_RATE
-        use_plateau = common.USE_DECREASE_LEARNING_RATE_ON_PLATEAU
-        assert use_decay or use_plateau
-        assert not (use_decay and use_plateau)
-
         print(f"Training {self.__class__.__name__}")
 
-        if use_decay:
-            def learning_rate(epoch):
-                return learning_rate_initial * 2**(-epoch /
-                                                learning_rate_half_life_epochs)
-            lr_scheduler = tf.keras.callbacks.LearningRateScheduler(
-                learning_rate
-            )
-
-        elif use_plateau:
-            self.optimizer.learning_rate = learning_rate_initial
-            lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
-                self.trainable_weights(),
-                monitor="val_loss_val",
-                factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU,
-                patience=common.LEARNING_RATE_PLATEAU_PATIENCE,
-                min_lr=common.LEARNING_RATE_MINIMUM,
-            )
-
-        else:
-            raise Exception("Should not even be possible to reach this!")
+        lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
+            self.trainable_weights(),
+            monitor=self.loss_to_watch,
+            learning_rate_initial=learning_rate_initial,
+            factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU,
+            patience=common.LEARNING_RATE_PLATEAU_PATIENCE,
+            min_lr=common.LEARNING_RATE_MINIMUM,
+            absolute_loss_increase_tol=self.absolute_loss_increase_tol,
+            relative_loss_increase_tol=self.relative_loss_increase_tol,
+        )
 
         if callbacks is None:
             callbacks = [lr_scheduler]
         else:
             callbacks = [lr_scheduler] + list(callbacks)
 
-        return super().fit(x=self.dummy_dataset,
-                           validation_data=self.dummy_dataset,
-                           steps_per_epoch=steps_per_epoch,
-                           validation_steps=1,
-                           epochs=epochs,
-                           verbose=verbose,
-                           callbacks=callbacks)
+        history = super().fit(x=self.dummy_dataset,
+                              validation_data=self.dummy_dataset,
+                              steps_per_epoch=steps_per_epoch,
+                              validation_steps=1,
+                              epochs=epochs,
+                              verbose=verbose,
+                              callbacks=callbacks)
+
+        print("Restoring best")
+        lr_scheduler.restore_best()
+
+        return history
 
     def compile(
             self,
             optimizer=None,
+            default_use_ams_grad=common.AMS_GRAD,
             *args,
             **kwargs,
     ) -> None:
 
         if optimizer is None:
-            optimizer = tf.keras.optimizers.Adam(
-                amsgrad=common.AMS_GRAD,
-                learning_rate=common.LEARNING_RATE_INITIAL,
-            )
+            if default_use_ams_grad:
+                optimizer = tf.keras.optimizers.Adam(amsgrad=True)
+            else:
+                optimizer = tf.keras.optimizers.Nadam()
+
         super().compile(optimizer, loss=None, *args, **kwargs)
 
     @tf.function

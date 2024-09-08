@@ -18,6 +18,7 @@ NetOutputBlob = Tuple[Tensor2[tf32, Samples, Params],  # net outputs (params)
 
 
 class _ParamSamplingNet(_SimulatorNet):
+    absolute_loss_increase_tol = common.ABS_LOSS_INCREASE_TOL_PARAM_SAMP_NET
     def __init__(
             self,
             num_unknown_param: int,
