@@ -13,7 +13,7 @@ class _DataSaver:
     def __init__(
             self,
             subobjects_to_save: Optional[Dict] = None,
-            instance_tf_variables_to_save: Optional[List] = None,
+            instance_tf_variables_to_save: Optional[Sequence[str]] = None,
             net_with_weights_to_save: Optional[_SequentialNet] = None,
             nets_with_weights_to_save: Sequence[_SequentialNet] = (),
     ) -> None:

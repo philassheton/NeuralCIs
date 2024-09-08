@@ -192,7 +192,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         # TODO: Make this fit more snugly to the countours of the original
         #       sample.
         print(f"Generating {num_peripheral_samples} peripheral samples.")
-
         valid_rows = tf.where(targets[:, 1] >= 0.)[:, 0]
         params_sampled_valid = tf.gather(params_sampled, valid_rows, axis=0)
         mins = tf.reduce_min(params_sampled_valid, axis=0)
@@ -200,6 +199,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         diffs = maxs - mins
         u = tf.random.uniform((num_peripheral_samples, self.num_param))
         params_sampled_peripheral = u * diffs[None, :] + mins[None, :]
+
         print("... generating target values")
         targets_peripheral = self.importance_ingredients_sample_batch(
             params_sampled_peripheral
