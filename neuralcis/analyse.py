@@ -1,5 +1,7 @@
 import tensorflow as tf
 import numpy as np
+
+from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 from tqdm import tqdm
 
 # Use matplotlib where possible
@@ -14,7 +16,9 @@ from plotly.subplots import make_subplots
 from neuralcis import NeuralCIs
 from neuralcis.distributions import Distribution
 
-from typing import Sequence, Dict, Optional, Callable
+from typing import Sequence, Dict, Optional, Callable, Tuple
+from tensor_annotations.tensorflow import Tensor1, float32 as tf32
+from neuralcis.common import Samples
 
 
 def __param_names_and_medians(
@@ -411,3 +415,43 @@ def cis_surface(
     ax.set_ylabel(y_name)
     ax.set_zlabel(z_name)
     fig.show()
+
+def compare_power_at_h1(
+        cis: NeuralCIs,
+        accurate_p_fn: Callable[
+            [Dict[str, Tensor1[tf32, Samples]],    # Dict of estimates
+             Tuple[Tensor1[tf32, Samples], ...]],  # **params
+            Tensor1[tf32, Samples]                 # p-value
+        ],
+        h0_params: Dict,
+        h1_params: Dict,
+        num_samples: int = 5000,
+):
+
+    """Compare the """
+
+    if not isinstance(accurate_p_fn, TFFunction):
+        accurate_p_fn = tf.function(accurate_p_fn)
+
+    h0_params = __repeat_params_tf(num_samples, **h0_params)
+    h1_params = __repeat_params_tf(num_samples, **h1_params)
+    estimates = cis.sampling_distribution_fn(**h1_params)
+    ps_neural = cis.ps_and_cis(estimates, h0_params)["p"]
+    ps_accurate = accurate_p_fn(estimates=estimates, **h0_params)
+
+    fig, ax = plt.subplots(1, 2)
+    ax[0].plot([0, 1], [0, 1], 'r-')
+    ax[0].scatter(ps_accurate, ps_neural, alpha=.01)
+    ax[0].set_xlabel("Accurate p-Value")
+    ax[0].set_ylabel("NeuralCIs p-Value")
+    ax[1].hist(ps_accurate, np.arange(0., 1.00001, .05),
+               label="Accurate test")
+    ax[1].hist(ps_neural, np.arange(0., 1.00001, .05), alpha=.5,
+               label="NeuralCIs")
+    ax[1].set_xlabel("p-Value")
+    ax[1].legend(loc="upper right")
+
+    fig.show()
+
+    tf.print(f"Power of traditional approach: {np.mean(ps_accurate < .05)};")
+    tf.print(f"Power of NeuralCIs:            {np.mean(ps_neural < .05)}.")
