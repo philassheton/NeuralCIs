@@ -17,6 +17,10 @@ from neuralcis.common import Samples, Estimates, Params
 from neuralcis.distributions import Distribution
 
 
+def no_transform(estimates, params):
+    return estimates, params
+
+
 class NeuralCIs(_DataSaver):
     """Train neural networks that compute *p*-values and confidence intervals.
 
@@ -31,6 +35,15 @@ class NeuralCIs(_DataSaver):
          any parameters that are known *a priori*), and whose keys are the
          names of those parameters (and exactly the same as the names used
          in the function signature).  See example below.
+    :param transform_fn: An optional function that maps a dict of estimate
+        and param tensors to transformed values that are expected to give the
+        same p-value.
+        For example, for a t-test, we could divide all values by our estimate
+        of sigma and end up with the same geometry, just rescaled.  This then
+        allows the net to be trained to only accept estimated sigma of 1, and
+        all other cases will be rescaled to match this.
+        IMPORTANT: This is only used AFTER training, when calling ps_and_cis
+        and its derivative functions (such as p_and_ci).
     :param foldername: Optional string; will load network weights from a
         previous training session.
     :param train_initial_weights:  A bool (default True) that controls whether
@@ -81,6 +94,10 @@ class NeuralCIs(_DataSaver):
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Tensor1[tf32, Samples]
             ],
+            transform_fn: Callable[
+                [Tuple[Tensor1[tf32, Samples], ...]],
+                Dict["str", Tensor1[tf32, Samples]]
+            ] = no_transform,
             foldername: Optional[str] = None,
             train_initial_weights: bool = True,
             network_setup_args: Optional[Dict] = None,
@@ -102,6 +119,13 @@ class NeuralCIs(_DataSaver):
         else:
             self.contrast_fn = tf.function(
                 contrast_fn,
+            )
+
+        if isinstance(transform_fn, TFFunction):
+            self.transform_fn = transform_fn
+        else:
+            self.transform_fn = tf.function(
+                transform_fn
             )
 
         (
@@ -306,14 +330,18 @@ class NeuralCIs(_DataSaver):
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        estimates_tf = [
-            tf.constant(estimates[n], tf.float32)
-            for n in self.estimate_names
-        ]
-        params_tf = [
-            tf.constant(params[n], tf.float32)
-            for n in self.param_names_in_sim_order
-        ]
+        estimates_tf_dict = {k: tf.constant(v, tf.float32)
+                             for k, v in estimates.items()}
+        params_tf_dict = {k: tf.constant(v, tf.float32)
+                          for k, v in params.items()}
+
+        estimates_trans, params_trans = self.transform_fn(
+            estimates_tf_dict,
+            params_tf_dict
+        )
+
+        estimates_tf = [estimates_trans[n] for n in self.estimate_names]
+        params_tf = [params_trans[n] for n in self.param_names_in_sim_order]
 
         estimates_uniform = self._estimates_to_net(*estimates_tf)
         params_uniform = self._params_to_net(*params_tf)
