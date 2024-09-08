@@ -37,6 +37,18 @@ class Distribution(ABC):
     ) -> Tensor1[tf32, Samples]:
         pass
 
+    def from_std_uniform_valid_estimates(
+            self,
+            std_uniform_tensor: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        estimate_min_std_unif = self.to_std_uniform(self.estimate_min)
+        estimate_max_std_unif = self.to_std_uniform(self.estimate_max)
+        estimate_range_std_unif = estimate_max_std_unif - estimate_min_std_unif
+        std_uniform_tensor = (std_uniform_tensor * estimate_range_std_unif
+                                + estimate_min_std_unif)
+        return self.from_std_uniform(std_uniform_tensor)
+
 
 class TransformUniformDistribution(Distribution):
     uniform_min: Tensor0

@@ -66,7 +66,7 @@ def __repeat_params_tf(
 
     params = {}
     for name, value in param_floats.items():
-        params[name] = tf.repeat(value, num_points)
+        params[name] = tf.cast(tf.repeat(value, num_points), tf.float32)
     return params
 
 
@@ -250,9 +250,10 @@ def plot_params_vs_estimates(
 
     param_values = __param_names_and_medians(cis, **param_values)
     param_defaults = __repeat_params_tf(num_points, **param_values)
-    param_samples = cis._params_from_net(cis.pnet.sample_params(num_points))
-    param_samples = {name: value for name, value in
-                     zip(cis.param_names_in_sim_order, param_samples)}
+
+    # TODO: With new sampling approach, some of these will be out of range
+    #       at the default values.
+    param_samples = cis.sample_params(num_points)
     axis_types = __get_axis_types(cis)
 
     fig, ax = plt.subplots(len(estimate_names), len(param_names))
@@ -336,6 +337,7 @@ def cis_surface(
         y_is_param: bool = False,
         param_overrides: Optional[Dict] = None,
         estimate_overrides: Optional[Dict] = None,
+        within_valid_estimate_range_only: bool = True,
         num_grid: int = 100,
 ) -> None:
 
@@ -378,8 +380,16 @@ def cis_surface(
 
     param_dists = __param_names_and_distributions(cis)
     std_unif_linspace = tf.constant(np.linspace(0., 1., num_grid), tf.float32)
-    x_linspace = param_dists[x_name].from_std_uniform(std_unif_linspace)
-    y_linspace = param_dists[y_name].from_std_uniform(std_unif_linspace)
+    if within_valid_estimate_range_only:
+        x_linspace = param_dists[x_name].from_std_uniform_valid_estimates(
+            std_unif_linspace
+        )
+        y_linspace = param_dists[y_name].from_std_uniform_valid_estimates(
+            std_unif_linspace
+        )
+    else:
+        x_linspace = param_dists[x_name].from_std_uniform(std_unif_linspace)
+        y_linspace = param_dists[y_name].from_std_uniform(std_unif_linspace)
 
     if x_is_param:
         param_values[x_name] = x_linspace
