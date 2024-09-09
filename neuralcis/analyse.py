@@ -1,3 +1,5 @@
+import copy
+
 import tensorflow as tf
 import numpy as np
 from scipy import stats
@@ -495,6 +497,12 @@ def cis_surface(
         x or y) which should NOT be set to their median values but rather to
         the values in this dict.
     :param estimate_overrides:  An optional dict; see param_overrides.
+    :param within_valid_estimate_range_only:  A bool, default True.  If True,
+        will plot the params over the box defined as valid for estimates at
+        construction of the object.  If False, will currently plot a region
+        that might make little sense to a user unfamiliar with the software
+        (but which is based on the range over which each param is actually
+        sampled).
     :param num_grid:  An int, default 100; number of grid points on each axis.
 
     Examples
@@ -551,6 +559,7 @@ def cis_surface(
     ax.set_zlabel(z_name)
     fig.show()
 
+
 def compare_power_at_h1(
         cis: NeuralCIs,
         accurate_p_fn: Callable[
@@ -558,9 +567,9 @@ def compare_power_at_h1(
              Tuple[Tensor1[tf32, Samples], ...]],  # **params
             Tensor1[tf32, Samples]                 # p-value
         ],
-        h0_params: Dict,
-        h1_params: Dict,
+        h0_params: Dict[str, float],
         num_samples: int = 5000,
+        **h1_params_different_from_h0_params: float,
 ):
 
     """Compare the """
@@ -568,7 +577,9 @@ def compare_power_at_h1(
     if not isinstance(accurate_p_fn, TFFunction):
         accurate_p_fn = tf.function(accurate_p_fn)
 
-    h0_params = __repeat_params_tf(num_samples, **h0_params)
+    h1_params = copy.deepcopy(h0_params) | h1_params_different_from_h0_params
+
+    h0_params = __repeat_params_np(num_samples, **h0_params)
     h1_params = __repeat_params_tf(num_samples, **h1_params)
     estimates = cis.sampling_distribution_fn(**h1_params)
     ps_neural = cis.ps_and_cis(estimates, h0_params)["p"]
