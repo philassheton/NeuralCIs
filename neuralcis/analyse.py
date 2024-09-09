@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+from scipy import stats
 
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 from tqdm import tqdm
@@ -37,10 +38,35 @@ def __param_names_and_medians(
 
 def __param_names_and_random_values(
         cis: NeuralCIs,
+        from_estimates_box_only: bool = False,
+        **value_overrides,
 ) -> Dict[str, float]:
 
-    random_params = cis.sample_params(1)
-    param_values = {n: float(p.numpy()) for n, p in random_params.items()}
+    if len(value_overrides) and not from_estimates_box_only:
+        raise ValueError('If drawing parameters randomly from the '
+                         'param sampling distribution, it is only '
+                         'possible to draw all parameters at once, '
+                         'since I do not currently have a way to '
+                         'compute a conditional distribution on this '
+                         'at present.  You can still randomize '
+                         'parameters within the estimates box AND '
+                         'have parameter overrides, by setting '
+                         'from_estimates_box_only=True.  This '
+                         'will only generate params within the valid '
+                         'estimates box, but will allow you to fix '
+                         'any number of the parameters.')
+
+    if from_estimates_box_only:
+        param_values = value_overrides
+        for name, dist in zip(cis.param_names_in_sim_order,
+                              cis.param_dists_in_sim_order):
+            if name not in param_values:
+                r = np.random.rand()
+                param_values[name] = dist.from_std_uniform_valid_estimates(r)
+    else:
+        random_params = cis.sample_params(1)
+        param_values = {n: float(p.numpy()) for n, p in random_params.items()}
+
     return param_values
 
 
@@ -89,31 +115,48 @@ def __summarize_values(
     return title
 
 
+def __get_one_p_value_distribution(
+        cis: NeuralCIs,
+        num_samples: int,
+        randomize_unspecified_params: bool,
+        from_estimates_box_only: bool,
+        **param_values: float,
+) -> np.ndarray:
+
+    if randomize_unspecified_params:
+        param_values = __param_names_and_random_values(cis,
+                                                       from_estimates_box_only,
+                                                       **param_values)
+    else:
+        param_values = __param_names_and_medians(cis, **param_values)
+
+    param_tensors = __repeat_params_tf(num_samples, **param_values)
+    param_arrays = __repeat_params_np(num_samples, **param_values)
+    estimates = cis.sampling_distribution_fn(**param_tensors)
+    ps_and_cis = cis.ps_and_cis(estimates, param_arrays)
+    ps = ps_and_cis["p"]
+
+    return ps
+
+
 def __plot_p_value_distribution_once(
         cis: NeuralCIs,
         fig: plotly.graph_objs.Figure,
         row: int,
         col: int,
-        num_samples: int = 10000,
-        randomize_params: bool = True,
+        num_samples: int,
+        randomize_unspecified_params: bool,
+        from_estimates_box_only: bool,
         **param_values: float,
 ) -> None:
 
-    if randomize_params:
-        if len(param_values) > 0:
-            raise ValueError('Can only randomize ALL parameters, not just '
-                             'some.  You set randomize_params=True, so cannot '
-                             'then enter any param overrides.')
-        param_values = __param_names_and_random_values(cis)
-    else:
-        param_values = __param_names_and_medians(cis, **param_values)
-    param_tensors = __repeat_params_tf(num_samples, **param_values)
-    param_arrays = __repeat_params_np(num_samples, **param_values)
-    estimates = cis.sampling_distribution_fn(**param_tensors)
-    ps = cis.ps_and_cis(estimates, param_arrays)
+    ps = __get_one_p_value_distribution(cis, num_samples,
+                                        randomize_unspecified_params,
+                                        from_estimates_box_only,
+                                        **param_values)
     title = __summarize_values(**param_values)
     fig.add_trace(
-        go.Histogram(x=ps["p"], hovertext=title),
+        go.Histogram(x=ps, hovertext=title),
         row=row + 1,
         col=col + 1,
     )
@@ -279,12 +322,97 @@ def plot_params_vs_estimates(
     fig.show()
 
 
+def plot_p_value_cdfs(
+        cis: NeuralCIs,
+        num_cdfs: int = 200,
+        num_samples: int = 10000,
+        randomize_unspecified_params: bool = True,
+        from_estimates_box_only: bool = True,
+        sampling_dist_percent: float = 99,
+        **param_values: float,
+) -> None:
+
+    """Overlay CDFs of p-values at randomly selected parameter values.
+
+    Will generate p-value distributions for `num_cdfs` different
+    randomly generated parameter values, and overlay these CDFs on top of
+    each other on a single plot.  Individual parameters can also be overridden
+    by passing their fixed value as a float to the function, and/or all
+    parameters can also be set to their median values by setting
+    `randomize_unspecified_params=False`.
+
+    :param cis:  A NeuralCIs object to interrogate.
+    :param num_cdfs:  An int, default 200; number of CDFs in the plot.
+    :param num_samples:  An int, default 10000; number of samples per dist'n.
+    :param randomize_unspecified_params:  A bool, default True; if set to True,
+        then any param values not overridden in **param_values will be chosen
+        randomly according to the param sampling distribution.  If set to
+        False, the median will be used instead.
+    :param from_estimates_box_only:  A bool, default True; constrain randomly
+        selected parameters to be inside the "valid estimates" box, to
+        avoid testing points that are on the very boundary.  If this is set to
+        False, then params are drawn from the full sampling distribution of
+        parameters and **param_values must be empty, as it is not at this time
+        possible to model conditional distributions within this distribution.
+    :param sampling_dist_percent:  A float, default 99; in this case two
+        dashed lines will enclose the theoretical inner 99% of the sampling
+        distribution of these empirical CDFs, on the null that they come from
+        a uniform distribution.
+    :param **param_values:  A set of float overrides used to set a given
+        parameter to a given fixed value in all histograms.
+
+    Examples:
+
+        plot_p_value_distributions(cis)
+        plot_p_value_distributions(cis, n=20.)
+    """
+
+    print("Generating CDFs; this may take a few seconds")
+    alpha = 1. / np.sqrt(num_cdfs)
+    fig, axes = plt.subplots(1, 2)
+    y = np.linspace(0., 1., num_samples)
+    for _ in tqdm(range(num_cdfs)):
+        cdf = __get_one_p_value_distribution(cis,
+                                             num_samples,
+                                             randomize_unspecified_params,
+                                             from_estimates_box_only,
+                                             **param_values)
+        cdf.sort()
+        for ax in axes:
+            ax.plot(cdf, y, alpha=alpha, c="black")
+
+    for ax in axes:
+        ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Uniform")
+
+        ax.set_xlabel("p-Value")
+        ax.set_ylabel("CDF")
+        ax.set_aspect("equal")
+
+    axes[1].plot([.01, 1], [0, .99], c="cyan", linestyle="--", label="+/- .01")
+    axes[1].plot([0, .99], [.01, 1], c="cyan", linestyle="--")
+
+    x_pop = y
+    se = np.sqrt((x_pop * (1. - x_pop)) / num_samples)
+    tail_prob = (1 - sampling_dist_percent / 100.) / 2.
+    z = stats.norm.ppf(tail_prob)
+    lower = y - se*z
+    upper = y + se*z
+    dist_name = f"{sampling_dist_percent}% expected"
+    axes[1].plot(x_pop, lower, c="blue", linestyle="--", label=dist_name)
+    axes[1].plot(x_pop, upper, c="blue", linestyle="--")
+    axes[1].set_xlim(0., 0.1)
+    axes[1].set_ylim(0., 0.1)
+    axes[1].legend(loc="upper left")
+    fig.show()
+
+
 def plot_p_value_distributions(
         cis: NeuralCIs,
         num_rows: int = 10,
         num_cols: int = 20,
         num_samples: int = 10000,
         randomize_unspecified_params: bool = True,
+        from_estimates_box_only: bool = True,
         **param_values: float,
 ) -> None:
 
@@ -305,6 +433,12 @@ def plot_p_value_distributions(
         then any param values not overridden in **param_values will be chosen
         randomly according to the param sampling distribution.  If set to
         False, the median will be used instead.
+    :param from_estimates_box_only:  A bool, default True; constrain randomly
+        selected parameters to be inside the "valid estimates" box, to
+        avoid testing points that are on the very boundary.  If this is set to
+        False, then params are drawn from the full sampling distribution of
+        parameters and **param_values must be empty, as it is not at this time
+        possible to model conditional distributions within this distribution.
     :param **param_values:  A set of float overrides used to set a given
         parameter to a given fixed value in all histograms.
 
@@ -322,6 +456,7 @@ def plot_p_value_distributions(
                                              fig, row, col,
                                              num_samples,
                                              randomize_unspecified_params,
+                                             from_estimates_box_only,
                                              **param_values)
     title = ("P-values distribution at different parameter values.  "
              "(Hover over a graph to see the parameter values)")
