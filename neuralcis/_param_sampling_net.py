@@ -7,18 +7,20 @@ import tensorflow as tf
 # Typing
 from typing import Tuple, Callable, Optional
 from neuralcis.common import Samples, Params, Us, Estimates, MinAndMax
-from neuralcis.common import NetTargetBlob, NetInputs
+from neuralcis.common import NetTargetBlob, NetInputs, NetOutputs
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 tf32 = ttf.float32
 
-NetInputBlob = Tensor2[tf32, Samples, Us]
+NetInputBlob = Tuple[Tensor2[tf32, Samples, Us],       # unknown param uniforms
+                     Tensor2[tf32, Samples, Us]]       # known param uniforms
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Params],  # net outputs (params)
                       Tensor1[tf32, Samples]]          # Jacobian determinants
 
 
 class _ParamSamplingNet(_SimulatorNet):
     absolute_loss_increase_tol = common.ABS_LOSS_INCREASE_TOL_PARAM_SAMP_NET
+
     def __init__(
             self,
             num_unknown_param: int,
@@ -42,11 +44,12 @@ class _ParamSamplingNet(_SimulatorNet):
             **network_setup_args,
         )
 
-        self.num_param = num_unknown_param + num_known_param
+        self.num_unknown_param = num_unknown_param
+        self.num_known_param = num_known_param
         self.sampling_distribution_fn = sampling_distribution_fn
 
         super().__init__(
-            num_outputs_for_each_net=(self.num_param,),
+            num_outputs_for_each_net=(self.num_unknown_param,),
             subobjects_to_save={'feelernet': self.feeler_net},
             **network_setup_args,
         )
@@ -56,10 +59,13 @@ class _ParamSamplingNet(_SimulatorNet):
             n: ttf.int32,
     ) -> Tuple[NetInputBlob, None]:
 
-        us = tf.random.uniform((n, self.num_param),
-                               minval=common.PARAMS_MIN,
-                               maxval=common.PARAMS_MAX)
-        return us, None
+        us_unknown = tf.random.uniform((n, self.num_unknown_param),
+                                       minval=common.PARAMS_MIN,
+                                       maxval=common.PARAMS_MAX)
+        us_known = tf.random.uniform((n, self.num_known_param),
+                                     minval=common.PARAMS_MIN,
+                                     maxval=common.PARAMS_MAX)
+        return (us_unknown, us_known), None
 
     def get_loss(
             self,
@@ -84,23 +90,38 @@ class _ParamSamplingNet(_SimulatorNet):
             inputs: NetInputBlob
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        # TODO: This should be pushed up to the _SimulatorNet I think.
-        return [inputs]
+        us_unknown, us_known = inputs
+        net_inputs = tf.concat([us_unknown, us_known], axis=1)
+        return (net_inputs,)
+
+    def call_tf(
+            self,
+            input_blob: NetInputBlob
+    ) -> Tensor2[tf32, Samples, NetOutputs]:
+
+        us_unknown, us_known = input_blob
+        net_inputs = self.net_inputs((us_unknown, us_known))
+        params_unknown = self._call_tf(net_inputs, training=False)
+        params = tf.concat([params_unknown, us_known], axis=1)
+
+        return params
 
     def call_tf_training(
             self,
             input_blob: NetInputBlob
-            ) -> NetOutputBlob:
+    ) -> NetOutputBlob:
 
-        us = input_blob
+        us_unknown, us_known = input_blob
 
         with tf.GradientTape() as tape:  # type: ignore
-            tape.watch(us)
-            net_inputs = self.net_inputs(us)
-            params = self._call_tf(net_inputs, training=True)
+            tape.watch(us_unknown)
+            net_inputs = self.net_inputs((us_unknown,  us_known))
+            params_unknown = self._call_tf(net_inputs, training=True)
 
-        jacobians = tape.batch_jacobian(params, us)
+        jacobians = tape.batch_jacobian(params_unknown, us_unknown)
         jacobdets = tf.linalg.det(jacobians)
+
+        params = tf.concat([params_unknown, us_known], axis=1)
 
         return params, jacobdets                                               # type: ignore
 
@@ -113,13 +134,15 @@ class _ParamSamplingNet(_SimulatorNet):
         super().compile(*args, **kwargs)
 
     @tf.function
+    def num_param(self) -> int:
+        return self.num_unknown_param + self.num_known_param
+
+    @tf.function
     def sample_params(
             self,
             n: int,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        us = tf.random.uniform((n, self.num_param),
-                               minval=tf.constant(common.PARAMS_MIN),
-                               maxval=tf.constant(common.PARAMS_MAX))
+        us, _ = self.simulate_training_data(n)
         params = self.call_tf(us)
         return params                                                          # type: ignore
