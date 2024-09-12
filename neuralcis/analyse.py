@@ -102,6 +102,27 @@ def __repeat_params_tf(
     return params
 
 
+def __axis_linspace(
+        cis: NeuralCIs,
+        name: str,
+        lims: Optional[Sequence[float]] = None,                                # If None, use valid estimates range
+        num_grid: int = 100,
+):
+    std_unif_linspace = tf.constant(np.linspace(0., 1., num_grid), tf.float32)
+    param_dists = __param_names_and_distributions(cis)
+    if lims is None:
+        u = std_unif_linspace
+        linspace = param_dists[name].from_std_uniform_valid_estimates(u)
+    else:
+        lims_uniform = param_dists[name].to_std_uniform(tf.constant(lims))
+        low_uniform = lims_uniform[0]
+        width_uniform = lims_uniform[1] - lims_uniform[0]
+        linspace_uniform = std_unif_linspace * width_uniform + low_uniform
+        linspace = param_dists[name].from_std_uniform(linspace_uniform)
+
+    return linspace
+
+
 def __summarize_values(
         preamble: str = "",
         **values,
@@ -476,9 +497,10 @@ def cis_surface(
         z_name: str = "p",
         x_is_param: bool = False,
         y_is_param: bool = False,
+        x_lims: Optional[Sequence[int]] = None,
+        y_lims: Optional[Sequence[int]] = None,
         param_overrides: Optional[Dict] = None,
         estimate_overrides: Optional[Dict] = None,
-        within_valid_estimate_range_only: bool = True,
         num_grid: int = 100,
 ) -> None:
 
@@ -496,13 +518,11 @@ def cis_surface(
     :param param_overrides:  An optional dict of "other" params (i.e. not
         x or y) which should NOT be set to their median values but rather to
         the values in this dict.
+    :param x_lims:  An optional sequence [low, high] of floats.  Sets the
+        limits that the x-axis will be plotted between.  If the axis is a log
+        variable, make sure not to include zero or less than zero in this.
+    :param y_lims:  See x_lims.
     :param estimate_overrides:  An optional dict; see param_overrides.
-    :param within_valid_estimate_range_only:  A bool, default True.  If True,
-        will plot the params over the box defined as valid for estimates at
-        construction of the object.  If False, will currently plot a region
-        that might make little sense to a user unfamiliar with the software
-        (but which is based on the range over which each param is actually
-        sampled).
     :param num_grid:  An int, default 100; number of grid points on each axis.
 
     Examples
@@ -525,18 +545,8 @@ def cis_surface(
         for name, override in estimate_overrides.items():
             estimate_values[name] = override
 
-    param_dists = __param_names_and_distributions(cis)
-    std_unif_linspace = tf.constant(np.linspace(0., 1., num_grid), tf.float32)
-    if within_valid_estimate_range_only:
-        x_linspace = param_dists[x_name].from_std_uniform_valid_estimates(
-            std_unif_linspace
-        )
-        y_linspace = param_dists[y_name].from_std_uniform_valid_estimates(
-            std_unif_linspace
-        )
-    else:
-        x_linspace = param_dists[x_name].from_std_uniform(std_unif_linspace)
-        y_linspace = param_dists[y_name].from_std_uniform(std_unif_linspace)
+    x_linspace = __axis_linspace(cis, x_name, x_lims, num_grid)
+    y_linspace = __axis_linspace(cis, y_name, y_lims, num_grid)
 
     if x_is_param:
         param_values[x_name] = x_linspace
