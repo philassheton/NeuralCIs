@@ -42,7 +42,7 @@ LEARNING_RATE_MINIMUM = 1e-6
 
 # training loss increase tolerances per net type
 # TODO: Remove this and make it automated based on movement of losses
-ABS_LOSS_INCREASE_TOL_FEELER_NET = 0.
+REL_LOSS_INCREASE_TOL_FEELER_NET = 1.1
 ABS_LOSS_INCREASE_TOL_PARAM_SAMP_NET = .5
 ABS_LOSS_INCREASE_TOL_Z_NET = .3
 REL_LOSS_INCREASE_TOL_CI_NET = 1.3
