@@ -7,7 +7,8 @@ from abc import ABC, abstractmethod
 from typing import Tuple, Optional
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1
-from neuralcis.common import NetInputBlob, NetTargetBlob, Indices
+from neuralcis.common import NetInputBlob, NetTargetBlob
+from neuralcis.common import NetInputSimulationBlob, Indices
 
 
 class _SimulatorNetCached(_SimulatorNet, ABC):
@@ -48,13 +49,21 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
 
         indices = (tf.range(n) + self.current_index) % self.cache_size
         self.current_index.assign(indices[-1] + 1)
-        return self.pick_indices_from_cache(self.cache, indices)
+        simulation_blob, target_blob =  self.pick_indices_from_cache(
+            self.cache,
+            indices
+        )
+        net_input_blob, target_blob = self.simulate_data_from_cache_chunk(
+            simulation_blob,
+            target_blob
+        )
+        return net_input_blob, target_blob
 
     @abstractmethod
     def simulate_training_data_cache(
             self,
             n: ttf.int32,
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         pass
 
@@ -76,8 +85,17 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
     @abstractmethod
     def pick_indices_from_cache(
             self,
-            cache: Tuple[NetInputBlob, NetTargetBlob],
+            cache: Tuple[NetInputSimulationBlob, NetTargetBlob],
             indices: Tensor1[ttf.int16, Indices],
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         pass
+
+    @tf.function
+    def simulate_data_from_cache_chunk(
+            self,
+            input_simulation_blob: NetInputSimulationBlob,
+            target_blob: NetTargetBlob,
+    ) -> NetInputBlob:
+
+        return input_simulation_blob, target_blob

@@ -114,6 +114,7 @@ Indices = typing.NewType("Indices", axes.Axis)
 NetInputBlob = typing.TypeVar("NetInputBlob")
 NetOutputBlob = typing.TypeVar("NetOutputBlob")
 NetTargetBlob = typing.TypeVar("NetTargetBlob")
+NetInputSimulationBlob = typing.TypeVar("NetInputSimulationBlob")
 
 
 def combine_input_args_into_tensor(*argv):

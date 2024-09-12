@@ -8,15 +8,19 @@ from tqdm import tqdm
 
 # typing
 from typing import Callable, Tuple, Optional
-from neuralcis.common import Samples, Params, Estimates, Indices, NetOutputs
+from neuralcis.common import Samples, Estimates, Indices, Params, UnknownParams
 from neuralcis.common import MinAndMax, ImportanceIngredients
-from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
 
 from neuralcis.common import NetInputs
 
 tf32 = ttf.float32
 
+NetInputSimulationBlob = Tuple[
+    Tensor2[tf32, Samples, Params],                           # Centroid
+    Tensor3[tf32, Samples, UnknownParams, UnknownParams],     # Cholesky factor
+]
 NetInputBlob = Tensor2[tf32, Samples, Params]
 NetOutputBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
@@ -141,7 +145,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
     def simulate_training_data_cache(
             self,
             n: int,
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         assert n == self.cache_size
         return self.simulate_param_samples(self.num_chains,
@@ -153,11 +157,12 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             self,
     ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
 
-        return self.simulate_param_samples(
+        (params_sampled, chols), targets = self.simulate_param_samples(
             common.FEELER_NET_VALIDATION_SET_NUM_CHAINS,
             common.FEELER_NET_VALIDATION_SET_MARKOV_CHAIN_LENGTH,
             common.FELLER_NET_VALIDATION_SET_NUM_PERIPHERAL_SAMPLES
         )
+        return params_sampled, targets
 
     def simulate_fake_training_data(
             self,
@@ -174,17 +179,20 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             chain_length: int,
             num_peripheral_samples: int,
             store_min_and_max: bool = False,
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         params_sampled = []
+        chols_sampled = []
         targets = []
         print("Generating chains:")
         for _ in tqdm(range(num_chains)):
-            p, t = self.simulate_single_chain(chain_length)
+            (p, c), t = self.simulate_single_chain(chain_length)
             params_sampled.append(p)
+            chols_sampled.append(c)
             targets.append(t)
 
         params_sampled = tf.concat(params_sampled, axis=0)
+        chols_sampled = tf.concat(chols_sampled, axis=0)
         targets = tf.concat(targets, axis=0)
 
         # Generate extra samples around the edges that force the
@@ -193,7 +201,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         # TODO: Make this fit more snugly to the countours of the original
         #       sample.
         print(f"Generating {num_peripheral_samples} peripheral samples.")
-        valid_rows = tf.where(targets[:, 1] >= 0.)[:, 0]
+        valid_rows = tf.where(self.is_inside_support_region(targets))[:, 0]
         params_sampled_valid = tf.gather(params_sampled, valid_rows, axis=0)
         mins = tf.reduce_min(params_sampled_valid, axis=0)
         maxs = tf.reduce_max(params_sampled_valid, axis=0)
@@ -202,25 +210,34 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         params_sampled_peripheral = u * diffs[None, :] + mins[None, :]
 
         print("... generating target values")
-        targets_peripheral = self.importance_ingredients_sample_batch(
+        targets_peripheral, chols_peripheral = self.sample_ingredients_batch(
             params_sampled_peripheral
         )
         print("... done.")
 
+        # Compute for each sample a region around the sample that can be
+        # substituted for that sample in order to smooth the surface
+        chols_sampled, chols_peripheral = self.compute_smoothing_regions(
+            targets, chols_sampled,
+            targets_peripheral, chols_peripheral,
+            mins, maxs,
+        )
+
         params_sampled = tf.concat([params_sampled, params_sampled_peripheral],
                                    axis=0)
+        chols = tf.concat([chols_sampled, chols_peripheral], axis=0)
         targets = tf.concat([targets, targets_peripheral], axis=0)
 
         if store_min_and_max:
             self.min_params_simulated.assign(mins)
             self.max_params_simulated.assign(maxs)
 
-        return params_sampled, targets
+        return (params_sampled, chols), targets
 
     def simulate_single_chain(
             self,
             chain_length: int,
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         u = tf.random.uniform((self.num_param,))
         old_params = u * self.first_params_widths + self.first_params_min
@@ -235,26 +252,32 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         param_samples = tf.TensorArray(tf.float32,
                                        size=chain_length,
                                        element_shape=(self.num_param,))
+        chols = tf.TensorArray(tf.float32,
+                               size=chain_length,
+                               element_shape=(self.num_estimate,
+                                              self.num_estimate))
         targets = tf.TensorArray(tf.float32,
                                  size=chain_length,
                                  element_shape=(NUM_IMPORTANCE_INGREDIENTS,))
         param_samples = param_samples.write(0, old_params)
+        chols = chols.write(0, old_cov_chol)
         targets = targets.write(0, importance_ingredients)
 
         for i in range(chain_length - 1):
             (
-                new_params, importance_ingredients, old_params,
-                old_mean, old_cov_chol, old_inv_chol, old_chol_det,
-                old_importance
+                new_params, new_cov_chol, importance_ingredients,
+                old_params, old_mean, old_cov_chol, old_inv_chol,
+                old_chol_det, old_importance,
             ) = self.sampling_iteration(
                 old_params,
                 old_mean, old_cov_chol, old_inv_chol, old_chol_det,
                 old_importance,
             )
             param_samples = param_samples.write(i+1, new_params)
+            chols = chols.write(i+1, new_cov_chol)
             targets = targets.write(i+1, importance_ingredients)
 
-        return param_samples.stack(), targets.stack()
+        return (param_samples.stack(), chols.stack()), targets.stack()
 
     @tf.function
     def sampling_iteration(
@@ -300,6 +323,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return (
             new_params,
+            new_cov_chol,
             new_importance_ingredients,
             old_params,
             old_mean,
@@ -312,14 +336,37 @@ class _SamplingFeelerNet(_SimulatorNetCached):
     @tf.function
     def pick_indices_from_cache(
             self,
-            cache: Tuple[NetInputBlob, NetTargetBlob],
+            cache: Tuple[NetInputSimulationBlob, NetTargetBlob],
             indices: Tensor1[ttf.int16, Indices],
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
-        param_samples_cache, targets_cache = cache
+        (param_samples_cache, chols_cache), targets_cache = cache
         param_samples = tf.gather(param_samples_cache, indices)
+        chols = tf.gather(chols_cache, indices)
         targets = tf.gather(targets_cache, indices)
-        return param_samples, targets
+
+        return (param_samples, chols), targets
+
+    @tf.function
+    def simulate_data_from_cache_chunk(
+            self,
+            input_simulation_blob: NetInputSimulationBlob,
+            target_blob: NetTargetBlob,
+    ) -> NetInputBlob:
+
+        # TODO: I think it makes the most sense not to smooth the known_params,
+        #       now that we condition on it, and since we have no info about
+        #       sensible covariances.  (Hence using tf.zeros below).
+        #       Look further into this later.
+        (param_samples, chols) = input_simulation_blob
+        n, _ = param_samples.shape
+        z = tf.random.normal((n, self.num_unknown_param, 1))
+        smoothing_unknown = tf.linalg.matmul(chols, z)[:, :, 0]
+        smoothing_known = tf.zeros((n, self.num_known_param))
+        smoothing = tf.concat([smoothing_unknown, smoothing_known], axis=1)
+        param_samples = param_samples + smoothing
+
+        return param_samples, target_blob
 
     @tf.function
     def random_params_step(
@@ -342,27 +389,34 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return new_params
 
-    def importance_ingredients_sample_batch(
+    def sample_ingredients_batch(
             self,
             params: Tensor2[tf32, Samples, Params],
-    ) -> Tensor2[tf32, Samples, ImportanceIngredients]:
+    ) -> Tuple[
+        Tensor2[tf32, Samples, ImportanceIngredients],
+        Tensor3[tf32, Samples, Estimates, Estimates],
+    ]:
 
         # TODO: Should be possible to speed this up by making the whole
         #       sampling process properly vectorized.
-        return tf.map_fn(self.importance_ingredients_sample, params)
+        return tf.map_fn(self.sample_ingredients, params,
+                         dtype = (tf.float32, tf.float32))
 
     @tf.function
-    def importance_ingredients_sample(
+    def sample_ingredients(
             self,
             params: Tensor1[tf32, Params],
-    ) -> Tensor1[tf32, ImportanceIngredients]:
+    ) -> Tuple[
+         Tensor1[tf32, ImportanceIngredients],
+         Tensor2[tf32, Estimates, Estimates],
+    ]:
 
         mean, cov_chol, inv_chol, chol_det = self.sample_statistics(params)
         importance_ingredients = self.importance_ingredients(params,
                                                              mean,
                                                              cov_chol,
                                                              chol_det)
-        return importance_ingredients
+        return importance_ingredients, cov_chol
 
     @tf.function
     def importance_ingredients(
@@ -493,6 +547,68 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         det_unknown = sigma_chol_det
         det_known = tf.math.pow(self.sd_known, self.num_known_param)
         return tf.math.exp(-0.5 * z_norm_sq) / (det_unknown * det_known)       # NB: We do *not* need sqrt on the determinant because it is the sqrt of the Cholesky factor (already sqrted)
+
+    @tf.function
+    def is_inside_support_region(
+            self,
+            targets: Tensor2[tf32, Samples, ImportanceIngredients],
+    ) -> Tensor1[ttf.bool, Samples]:
+
+        return targets[:, 1] >= 0.                                             # type: ignore
+
+    @tf.function
+    def get_chol_det_from_targets(
+            self,
+            targets: Tensor2[tf32, Samples, ImportanceIngredients],
+    ) -> Tensor1[tf32, Samples]:
+
+        return 1. / tf.math.exp(targets[:, 0])
+
+    def compute_smoothing_regions(
+            self,
+            targets: Tensor2[tf32, Samples, ImportanceIngredients],
+            chols: Tensor3[tf32, Samples, Estimates, Estimates],
+            targets_peripheral: Tensor2[tf32, Samples, ImportanceIngredients],
+            chols_peripheral: Tensor3[tf32, Samples, Estimates, Estimates],
+            mins: Tensor1[tf32, Params],
+            maxs: Tensor1[tf32, Params],
+    ) -> Tuple[
+        Tensor3[tf32, Samples, UnknownParams, UnknownParams],
+        Tensor3[tf32, Samples, UnknownParams, UnknownParams],
+    ]:
+
+        peripherals_inside = self.is_inside_support_region(targets_peripheral)
+        peripherals_inside_float = tf.cast(peripherals_inside, tf.float32)
+        prop_peripherals_inside = tf.reduce_mean(peripherals_inside_float)
+        bounding_volume = tf.reduce_prod(maxs - mins)
+        support_volume = prop_peripherals_inside * bounding_volume
+
+        sample_is_inside = self.is_inside_support_region(targets)
+        targets_inside = tf.boolean_mask(targets, sample_is_inside, axis=0)
+        volumes_inside = self.get_chol_det_from_targets(targets_inside)
+        total_volumes_inside = tf.reduce_sum(volumes_inside)
+
+        # Our goal is to make the determinants of all the Cholesky factors add
+        # up to the same as the support_volume, so that we will have just a
+        # little overlap between each datapoint.
+        chol_scale_factor = tf.math.pow(support_volume / total_volumes_inside,
+                                        1. / self.num_param)
+        tf.print(f"Cholesky scale factor: {chol_scale_factor}.  If this is "
+                 f"above 0.5, you might want to think about increasing the "
+                 f"number of chains, or the chain length.")
+
+        # But we want only to apply that to those datapoints that are INSIDE
+        # the support region, since otherwise, we might eat away at the
+        # support region by expanding datapoints that are outside.
+        chol_scalings = tf.where(sample_is_inside, chol_scale_factor, 0.)
+        chol_scalings_peripheral = tf.where(peripherals_inside,
+                                            chol_scale_factor, 0.)
+
+        chols_scaled = chols * chol_scalings[:, None, None]
+        chols_scaled_peripheral = (chols_peripheral *
+                                   chol_scalings_peripheral[:, None, None])
+
+        return chols_scaled, chols_scaled_peripheral
 
     def get_loss(
             self,
