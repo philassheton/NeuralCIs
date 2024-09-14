@@ -7,3 +7,4 @@ tensorflow==2.8.0
 tensorflow_probability==0.16.0
 tensor_annotations==2.0.2
 tqdm==4.66.4
+pandas==2.2.0

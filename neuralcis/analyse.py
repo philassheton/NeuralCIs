@@ -1,5 +1,6 @@
 import copy
 
+import pandas as pd
 import tensorflow as tf
 import numpy as np
 from scipy import stats
@@ -19,7 +20,7 @@ from plotly.subplots import make_subplots
 from neuralcis import NeuralCIs
 from neuralcis.distributions import Distribution
 
-from typing import Sequence, Dict, Optional, Callable, Tuple
+from typing import Sequence, Dict, Optional, Callable, Tuple, Union
 from tensor_annotations.tensorflow import Tensor1, float32 as tf32
 from neuralcis.common import Samples
 
@@ -144,7 +145,7 @@ def __get_one_p_value_distribution(
         randomize_unspecified_params: bool,
         from_estimates_box_only: bool,
         **param_values: float,
-) -> np.ndarray:
+) -> Dict[str, Union[np.ndarray, float]]:
 
     if randomize_unspecified_params:
         param_values = __param_names_and_random_values(cis,
@@ -159,7 +160,7 @@ def __get_one_p_value_distribution(
     ps_and_cis = cis.ps_and_cis(estimates, param_arrays)
     ps = ps_and_cis["p"]
 
-    return ps
+    return {"p": ps} | param_values
 
 
 def __plot_p_value_distribution_once(
@@ -176,7 +177,7 @@ def __plot_p_value_distribution_once(
     ps = __get_one_p_value_distribution(cis, num_samples,
                                         randomize_unspecified_params,
                                         from_estimates_box_only,
-                                        **param_values)
+                                        **param_values)["p"]
     title = __summarize_values(**param_values)
     fig.add_trace(
         go.Histogram(x=ps, hovertext=title),
@@ -233,6 +234,38 @@ def __plot_3d_with_axis_types(
     ax.set_xticklabels(x_tick_labels)
     ax.set_yticks(y_ticks)
     ax.set_yticklabels(y_tick_labels)
+
+
+def __make_pandas(
+        estimates: Optional[Dict] = None,
+        params: Optional[Dict] = None,
+        sort_by: Optional[str] = None,
+        ascending: bool = False,
+        num_rows_to_print: int = 100,
+        **further_measures: Union[Tensor1[tf32, Samples], np.ndarray],
+) -> pd.DataFrame:
+
+    assert estimates is not None or params is not None
+
+    all_dfs = []
+    if estimates is not None:
+        all_dfs.append(pd.DataFrame(estimates).add_suffix("_hat"))
+    if params is not None:
+        all_dfs.append(pd.DataFrame(params))
+    if len(further_measures) > 0:
+        all_dfs.append(pd.DataFrame(further_measures))
+
+    df = pd.concat(all_dfs, axis=1)
+    if sort_by is not None:
+        df = df.sort_values(by=sort_by, ascending=ascending)
+
+    if num_rows_to_print > 0:
+        with pd.option_context("display.max_columns", None,
+                               "display.max_rows", None,
+                               "display.float_format", "{:.3f}".format):
+            print(df.head(num_rows_to_print))
+
+    return df
 
 
 def visualize_sampling_fn(
@@ -353,7 +386,7 @@ def plot_p_value_cdfs(
         from_estimates_box_only: bool = True,
         sampling_dist_percent: float = 99,
         **param_values: float,
-) -> None:
+) -> pd.DataFrame:
 
     """Overlay CDFs of p-values at randomly selected parameter values.
 
@@ -394,15 +427,22 @@ def plot_p_value_cdfs(
     alpha = 1. / np.sqrt(num_cdfs)
     fig, axes = plt.subplots(1, 2)
     y = np.linspace(0., 1., num_samples)
+    params = {n: np.array([]) for n in cis.param_names_in_sim_order}
+    ks = np.array([])
     for _ in tqdm(range(num_cdfs)):
-        cdf = __get_one_p_value_distribution(cis,
-                                             num_samples,
-                                             randomize_unspecified_params,
-                                             from_estimates_box_only,
-                                             **param_values)
+        cdf_etc = __get_one_p_value_distribution(cis,
+                                                 num_samples,
+                                                 randomize_unspecified_params,
+                                                 from_estimates_box_only,
+                                                 **param_values)
+        cdf = cdf_etc.pop("p")
         cdf.sort()
         for ax in axes:
             ax.plot(cdf, y, alpha=alpha, c="black")
+
+        ks = np.append(ks, np.max(np.abs(cdf - y)))
+        for name, value in cdf_etc.items():
+            params[name] = np.append(params[name], value)
 
     for ax in axes:
         ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Uniform")
@@ -427,6 +467,14 @@ def plot_p_value_cdfs(
     axes[1].set_ylim(0., 0.1)
     axes[1].legend(loc="upper left")
     fig.show()
+
+    pandas_sorted = __make_pandas(
+        params=params,
+        ks=ks,
+        sort_by="ks",
+    )
+
+    return pandas_sorted
 
 
 def plot_p_value_distributions(
@@ -611,3 +659,45 @@ def compare_power_at_h1(
 
     tf.print(f"Power of traditional approach: {np.mean(ps_accurate < .05)};")
     tf.print(f"Power of NeuralCIs:            {np.mean(ps_neural < .05)}.")
+
+
+def compare_techniques_within_estimates_box(
+        cis: NeuralCIs,
+        accurate_p_fn: Callable[
+            [Dict[str, Tensor1[tf32, Samples]],  # Dict of estimates
+             Tuple[Tensor1[tf32, Samples], ...]],  # **params
+            Tensor1[tf32, Samples]  # p-value
+        ],
+        accurate_p_name: str = "Accurate Method",
+        num_tries: int = 1000,
+        **h0_params,
+) -> pd.DataFrame:
+
+    dists = __param_names_and_distributions(cis)
+    tries = num_tries
+    rands = {n: d.from_std_uniform_valid_estimates(tf.random.uniform((tries,)))
+             for n, d in dists.items()}
+    estimates = {name: rands[name] for name in cis.estimate_names}
+    params = rands | __repeat_params_tf(num_tries, **h0_params)
+
+    ps_neural = cis.ps_and_cis(estimates, params)["p"]
+    ps_accurate = accurate_p_fn(estimates, **params)
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Equal")
+    ax.scatter(ps_accurate.numpy(), ps_neural, alpha=0.1)
+    ax.set_xlabel(accurate_p_name)
+    ax.set_ylabel("Neural CIs p-Value")
+    ax.set_aspect("equal")
+    fig.show()
+
+    sorted_pandas = __make_pandas(
+        estimates=estimates,
+        params=params,
+        p_neural=ps_neural,
+        p_accurate=ps_accurate,
+        p_diff=tf.math.abs(ps_neural - ps_accurate),
+        sort_by="p_diff",
+    )
+
+    return sorted_pandas
