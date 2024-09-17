@@ -5,15 +5,17 @@ from neuralcis import common
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 
-from typing import Callable, Tuple, Sequence
-from neuralcis.common import Params, Ys, Zs, Samples, NetInputs
+from typing import Callable, Tuple, Sequence, Optional
+from neuralcis.common import Params, KnownParams, Ys, Zs, Samples, NetInputs
 import tensor_annotations.tensorflow as ttf
-from tensor_annotations.tensorflow import Tensor1, Tensor2
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 tf32 = ttf.float32
 
 
 NetInputBlob = Tuple[Tensor2[tf32, Samples, Ys],                    # -> ys
                      Tensor2[tf32, Samples, Params]]                # -> params
+
+NetTargetBlob = Tensor0
 
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
                       Tensor1[tf32, Samples],          # Jacobian determinants
@@ -36,6 +38,8 @@ class _ZNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
+            num_unknown_param: int,
+            num_known_param: int,
             known_param_indices: Sequence[int],
             coords_fn: Callable[                                               # coords_fn allows us to remap the ys before they are fed into the znet
                 [Tensor2[tf32, Samples, Ys]],                                  #   -- transformation Jacobians will then reach through this transform
@@ -44,40 +48,39 @@ class _ZNet(_SimulatorNet):
             **network_setup_args,
     ) -> None:
 
+        # Allow MonotonicWithParams layers to be used on first net if needed.
+        #  This counts all estimates except the first (num_y - 1) plus the
+        #  contrast (1) plus all known params as "not needing to be monotone"
+        # TODO: Probably now don't need Monotonic Layers any more, so consider
+        #       getting rid of this (but must remove monotonic layers at the
+        #       same time).
+        layer_kwargs = [
+            {'num_params': (num_unknown_param - 1) + 1 + num_known_param},
+            {},
+        ]
+        num_estimate = num_unknown_param
+        num_param = num_unknown_param + num_known_param
+
+        super().__init__(
+            num_inputs_for_each_net=(num_estimate + 1 + num_known_param,
+                                     num_estimate + num_param),
+            num_outputs_for_each_net=(1, num_unknown_param - 1),
+            layer_kwargs=layer_kwargs,
+            **network_setup_args
+        )
+
+        # TODO: Can probably reduce the redundancy here by only passing e.g.
+        #       num_param and known_param_indices.  Can probably do that across
+        #       all net types constructed by NeuralCIs to create a cleaner
+        #       interface.
+        assert len(known_param_indices) == num_known_param
+
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_fn = param_sampling_fn
         self.contrast_fn = contrast_fn
         self.coords_fn = coords_fn
 
-        ys, params = self.sample_ys_and_params(1)
-
-        num_y = tf.shape(ys).numpy()[1]
-        self.num_z = [1, num_y - 1]
-
-        # TODO:  Having to assign None here is a hack, since otherwise it
-        #        insists on constructing the Model superclass first.  Under
-        #        the current design, however, the bottom level class needs
-        #        a few things in place before it can construct the
-        #        _SimulatorNet superclass, which then constructs the
-        #        Model superclass.  Needs a redesign to allow for construction
-        #        of _SimulatorNet first  (e.g. by making the "build" step a
-        #        second step).
-        if len(known_param_indices):
-            self.known_param_indices = known_param_indices
-        else:
-            self.known_param_indices = None
-
-        # Allow MonotonicWithParams layers to be used on first net if needed.
-        #  This counts all estimates except the first (num_y - 1) plus the
-        #  contrast (1) plus all known params as "not needing to be monotone"
-        layer_kwargs = [
-            {'num_params': (num_y-1) + 1 + len(known_param_indices)},
-            {},
-        ]
-
-        super().__init__(num_outputs_for_each_net=self.num_z,
-                         layer_kwargs=layer_kwargs,
-                         **network_setup_args)
+        self.known_param_indices = known_param_indices
 
     ###########################################################################
     #
@@ -88,13 +91,14 @@ class _ZNet(_SimulatorNet):
     @tf.function
     def simulate_training_data(
             self,
-            n: int,
     ) -> Tuple[
             NetInputBlob,
-            None,
+            NetTargetBlob,
     ]:
 
-        return self.sample_ys_and_params(n), None
+        n = self.batch_size
+        no_target_data = tf.constant([[]], shape=(n, 0))
+        return self.sample_ys_and_params(n), no_target_data
 
     @tf.function
     def get_loss(
@@ -141,8 +145,18 @@ class _ZNet(_SimulatorNet):
     ###########################################################################
 
     @tf.function
-    def num_z_total(self) -> int:
-        return sum(self.num_z)
+    def call_tf_contrast_only(
+            self,
+            estimates: Tensor2[tf32, Samples, Ys],                             # TODO: Swap Ys for Estimates.  We don't need Ys any more
+            contrast: Tensor1[tf32, Samples],
+            known_params: Tensor2[tf32, Samples, KnownParams],
+    ) -> Tensor1[tf32, Samples]:
+
+        # TODO: Might want to clean this up to make it more idiomatic
+        net0_inputs = tf.concat([estimates, contrast[:, None], known_params],
+                                axis=1)
+        z = self.nets[0](net0_inputs)
+        return z[:, 0]
 
     @tf.function
     def net_inputs_from_contrast(
@@ -154,13 +168,9 @@ class _ZNet(_SimulatorNet):
 
         coords = self.coords_fn(ys)
         contrast = contrast[:, None]
-        if self.known_param_indices is not None:
-            known_params = tf.gather(params, self.known_param_indices, axis=1)
-            contrast_net_inputs = tf.concat([coords, contrast, known_params],
-                                            axis=1)
-        else:
-            contrast_net_inputs = tf.concat([coords, contrast], axis=1)
-
+        known_params = tf.gather(params, self.known_param_indices, axis=1)
+        contrast_net_inputs = tf.concat([coords, contrast, known_params],
+                                        axis=1)
         other_net_inputs = tf.concat([coords, params], axis=1)
         return contrast_net_inputs, other_net_inputs
 

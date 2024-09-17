@@ -6,10 +6,10 @@ from neuralcis._data_saver import _DataSaver
 from neuralcis import common
 
 # typing
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Sequence
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Params, Estimates, Zs
+from neuralcis.common import Samples, Estimates, Params, KnownParams, Zs
 
 NetInputBlob = Tuple[
     Tensor2[tf32, Samples, Estimates],
@@ -30,6 +30,7 @@ class _PNet(_DataSaver):
             ],
             num_unknown_param: int,
             num_known_param: int,
+            known_param_indices: Sequence[int],
             param_sampling_net: _ParamSamplingNet,
             **network_setup_args,
     ) -> None:
@@ -37,16 +38,13 @@ class _PNet(_DataSaver):
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
 
-        known_param_indices = [
-            i + num_unknown_param for i in range(num_known_param)
-        ]
-
         self.param_sampling_net = param_sampling_net
-
         self.znet = _ZNet(
             self.sampling_distribution_fn,                                     # type: ignore
             self.param_sampling_net.sample_params,
             contrast_fn,
+            num_unknown_param,
+            num_known_param,
             known_param_indices,
             **network_setup_args,
         )
@@ -70,6 +68,21 @@ class _PNet(_DataSaver):
 
         zs = self.znet.call_tf((estimates, params_null))
         return self.ps_from_zs(zs)                                             # type: ignore
+
+    @tf.function
+    def p_from_contrast(
+            self,
+            estimates: Tensor2[tf32, Samples, Estimates],
+            contrast: Tensor1[tf32, Samples],
+            known_params: Tensor2[tf32, Samples, KnownParams],
+    ) -> Tensor1[tf32, Samples]:
+
+        # TODO: This should probably be the main p function and the other one
+        #       could be done away with.  But will need to reformulate the
+        #       users of this func.
+
+        z = self.znet.call_tf_contrast_only(estimates, contrast, known_params)
+        return self.ps_from_zs(z[:, None])
 
     @tf.function
     def ps_from_zs(

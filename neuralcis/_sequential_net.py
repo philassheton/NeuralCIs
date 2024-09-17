@@ -1,4 +1,5 @@
 from neuralcis._layers import layer_type_from_name
+from neuralcis import common
 
 import tensorflow as tf
 import pickle
@@ -14,17 +15,13 @@ KWARGS = "kwargs"
 class _SequentialNet:
     def __init__(
             self,
-            filename: Optional[str] = None,
+            input_batch_size,
             **sequential_kwargs,
     ) -> None:
 
         self.sequential = None
-        if filename is not None:
-            self.sequential_kwargs = None
-            self.load(filename)
-        else:
-            self.sequential_kwargs = sequential_kwargs
-            self.construct_sequential(**self.sequential_kwargs)
+        self.sequential_kwargs = sequential_kwargs
+        self.input_batch_size = input_batch_size
 
     def construct_sequential(
             self,
@@ -52,14 +49,23 @@ class _SequentialNet:
             self.sequential.add(layer_type(layer_outs, **layer_kwargs))
 
         # Need to run some data through net to instantiate weights.
-        self.sequential(tf.ones((2, num_inputs)))
+        self.sequential(tf.ones((self.input_batch_size, num_inputs)))
 
+    def build(self) -> None:
+        self.construct_sequential(**self.sequential_kwargs)
+
+    def ensure_built(self) -> None:
+        if self.sequential is None:
+            self.build()
+
+    @tf.function
     def __call__(self, *args, **kwargs):
-        return self.sequential.__call__(*args, **kwargs)
+        return self.sequential(*args, **kwargs)
 
     def layers(self):
         return self.sequential.layers
 
+    # No need to be a tf.function as they are anyway stored in _SimulatorNet
     def trainable_weights(self):
         return self.sequential.trainable_weights
 
@@ -71,7 +77,7 @@ class _SequentialNet:
     def load(self, filename: str) -> None:
         with open(self.kwargs_filename(filename), "rb") as f:
             self.sequential_kwargs = pickle.load(f)
-        self.construct_sequential(**self.sequential_kwargs)
+        self.build()
         self.sequential.load_weights(self.weights_filename(filename))
 
     @staticmethod

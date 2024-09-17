@@ -23,20 +23,17 @@ class _ParamSamplingNet(_SimulatorNet):
 
     def __init__(
             self,
-            num_unknown_param: int,
-            num_known_param: int,
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],                 # params
                 Tensor2[tf32, Samples, Estimates],                # -> ys
             ],
+            num_unknown_param: int,
+            num_known_param: int,
             estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
             **network_setup_args,
     ) -> None:
 
-        # TODO: Refactor so this isn't necessary
-        tf.keras.models.Model.__init__(self)
-
-        self.feeler_net = _SamplingFeelerNet(
+        feeler_net = _SamplingFeelerNet(
             estimates_min_and_max,
             sampling_distribution_fn,
             num_unknown_param,
@@ -44,20 +41,33 @@ class _ParamSamplingNet(_SimulatorNet):
             **network_setup_args,
         )
 
+        super().__init__(
+            num_inputs_for_each_net=(num_unknown_param + num_known_param,),
+            num_outputs_for_each_net=(num_unknown_param,),
+            subobjects_to_save={'feelernet': feeler_net},
+            **network_setup_args,
+        )
+
+        self.feeler_net = feeler_net
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
         self.sampling_distribution_fn = sampling_distribution_fn
 
-        super().__init__(
-            num_outputs_for_each_net=(self.num_unknown_param,),
-            subobjects_to_save={'feelernet': self.feeler_net},
-            **network_setup_args,
-        )
-
+    @tf.function
     def simulate_training_data(
             self,
-            n: ttf.int32,
     ) -> Tuple[NetInputBlob, None]:
+
+        n = self.batch_size
+        us = self.simulate_us(n)
+        nothing = tf.zeros((n, 0))
+        return us, nothing
+
+    @tf.function
+    def simulate_us(
+            self,
+            n: int,
+    ) -> NetInputBlob:
 
         us_unknown = tf.random.uniform((n, self.num_unknown_param),
                                        minval=common.PARAMS_MIN,
@@ -65,7 +75,8 @@ class _ParamSamplingNet(_SimulatorNet):
         us_known = tf.random.uniform((n, self.num_known_param),
                                      minval=common.PARAMS_MIN,
                                      maxval=common.PARAMS_MAX)
-        return (us_unknown, us_known), None
+
+        return us_unknown, us_known
 
     def get_loss(
             self,
@@ -143,6 +154,6 @@ class _ParamSamplingNet(_SimulatorNet):
             n: int,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        us, _ = self.simulate_training_data(n)
+        us = self.simulate_us(n)
         params = self.call_tf(us)
         return params                                                          # type: ignore

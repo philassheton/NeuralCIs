@@ -77,7 +77,7 @@ NUM_IMPORTANCE_INGREDIENTS = 2
 
 class _SamplingFeelerNet(_SimulatorNetCached):
     relative_loss_increase_tol = common.REL_LOSS_INCREASE_TOL_FEELER_NET
-    loss_to_watch = "loss"
+
     def __init__(
             self,
             estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
@@ -88,10 +88,23 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             num_unknown_param: int,
             num_known_param: int,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
+            sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
+            num_chains: int = common.FEELER_NET_NUM_CHAINS,
+            chain_length: int = common.FEELER_NET_MARKOV_CHAIN_LENGTH,
+            num_peripheral_samples: int = common.FEELER_NET_NUM_PERIPHERAL,
             **network_setup_args,
     ) -> None:
 
-        tf.keras.models.Model.__init__(self)
+        cache_size = num_chains * chain_length + num_peripheral_samples
+
+        super().__init__(
+            cache_size=cache_size,
+            num_inputs_for_each_net=(num_unknown_param + num_known_param,),
+            num_outputs_for_each_net=(NUM_IMPORTANCE_INGREDIENTS,),
+            instance_tf_variables_to_save=('min_params_simulated',
+                                           'max_params_simulated'),
+            **network_setup_args
+        )
 
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_estimate = estimates_min_and_max.shape[0]
@@ -104,6 +117,14 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
         self.num_param = num_unknown_param + num_known_param
+
+        self.sample_size = sample_size
+        self.sd_known = sd_known
+        self.num_chains = num_chains
+        self.chain_length = chain_length
+        self.num_peripheral_samples = num_peripheral_samples
+        self.cache_size = cache_size
+
         self.first_params_min = tf.concat([
             self.estimates_min,
             tf.repeat(common.PARAMS_MIN, num_known_param),
@@ -117,16 +138,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         self.min_params_simulated = tf.Variable(param_nans)
         self.max_params_simulated = tf.Variable(param_nans)
 
-        self.sample_size = sample_size
-        self.sd_known = common.KNOWN_PARAM_MARKOV_CHAIN_SD
-        self.num_chains = common.FEELER_NET_NUM_CHAINS
-        self.chain_length = common.FEELER_NET_MARKOV_CHAIN_LENGTH
-        self.num_peripheral_samples = common.FEELER_NET_NUM_PERIPHERAL_POINTS
-
-        self.cache_size = (self.num_chains *
-                           self.chain_length +
-                           self.num_peripheral_samples)
-
         # See note 2 at the top of this script.  This computes an adjustment
         # of 1 / .82 for a self.sample_size of 100
         self.sd_sampling_error_adjust = 1. / tf.sqrt(
@@ -135,14 +146,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             (sample_size - 1)
         )
 
-        # TODO: Redesign so this lives somewhere more comfortable
-        super().__init__(
-            cache_size=self.cache_size,
-            num_outputs_for_each_net=(NUM_IMPORTANCE_INGREDIENTS,),
-            instance_tf_variables_to_save=('min_params_simulated',
-                                           'max_params_simulated'),
-            **network_setup_args)
-
     def simulate_training_data_cache(
             self,
             n: int,
@@ -150,7 +153,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         assert n == self.cache_size
         return self.simulate_param_samples(self.num_chains,
-                                           self.chain_length,
                                            self.num_peripheral_samples,
                                            store_min_and_max=True)
 
@@ -160,24 +162,13 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         (params_sampled, chols), targets = self.simulate_param_samples(
             common.FEELER_NET_VALIDATION_SET_NUM_CHAINS,
-            common.FEELER_NET_VALIDATION_SET_MARKOV_CHAIN_LENGTH,
             common.FELLER_NET_VALIDATION_SET_NUM_PERIPHERAL_SAMPLES
         )
         return params_sampled, targets
 
-    def simulate_fake_training_data(
-            self,
-            n: ttf.int32,
-    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
-
-        net_input_blob = tf.zeros((n, self.num_param))
-        net_target_blob = tf.zeros((n, NUM_IMPORTANCE_INGREDIENTS))
-        return net_input_blob, net_target_blob
-
     def simulate_param_samples(
             self,
             num_chains: int,
-            chain_length: int,
             num_peripheral_samples: int,
             store_min_and_max: bool = False,
     ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
@@ -187,7 +178,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         targets = []
         print("Generating chains:")
         for _ in tqdm(range(num_chains)):
-            (p, c), t = self.simulate_single_chain(chain_length)
+            (p, c), t = self.simulate_single_chain()
             params_sampled.append(p)
             chols_sampled.append(c)
             targets.append(t)
@@ -237,7 +228,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
     def simulate_single_chain(
             self,
-            chain_length: int,
     ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         u = tf.random.uniform((self.num_param,))
@@ -251,20 +241,20 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         old_importance = tf.math.exp(tf.reduce_sum(importance_ingredients))
 
         param_samples = tf.TensorArray(tf.float32,
-                                       size=chain_length,
+                                       size=self.chain_length,
                                        element_shape=(self.num_param,))
         chols = tf.TensorArray(tf.float32,
-                               size=chain_length,
+                               size=self.chain_length,
                                element_shape=(self.num_estimate,
                                               self.num_estimate))
         targets = tf.TensorArray(tf.float32,
-                                 size=chain_length,
+                                 size=self.chain_length,
                                  element_shape=(NUM_IMPORTANCE_INGREDIENTS,))
         param_samples = param_samples.write(0, old_params)
         chols = chols.write(0, old_cov_chol)
         targets = targets.write(0, importance_ingredients)
 
-        for i in range(chain_length - 1):
+        for i in range(self.chain_length - 1):
             (
                 new_params, new_cov_chol, importance_ingredients,
                 old_params, old_mean, old_cov_chol, old_inv_chol,
@@ -353,7 +343,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             self,
             input_simulation_blob: NetInputSimulationBlob,
             target_blob: NetTargetBlob,
-    ) -> NetInputBlob:
+    ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
         # TODO: I think it makes the most sense not to smooth the known_params,
         #       now that we condition on it, and since we have no info about
@@ -401,7 +391,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         # TODO: Should be possible to speed this up by making the whole
         #       sampling process properly vectorized.
         return tf.map_fn(self.sample_ingredients, params,
-                         dtype = (tf.float32, tf.float32))
+                         dtype=(tf.float32, tf.float32))
 
     @tf.function
     def sample_ingredients(

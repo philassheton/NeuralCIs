@@ -162,19 +162,20 @@ class NeuralCIs(_DataSaver):
             network_setup_args = {}
         num_unknown_param = self.num_estimate
         num_known_param = self.num_param - num_unknown_param
+        known_param_indices = [
+            i + num_unknown_param for i in range(num_known_param)
+        ]
         self.param_sampling_net = _ParamSamplingNet(
-            num_unknown_param,
-            num_known_param,
             self._sampling_dist_net_interface,
-            estimates_min_and_max,
-            train_initial_weights=train_initial_weights,
-            **network_setup_args,
+            num_unknown_param, num_known_param, estimates_min_and_max,
+            train_initial_weights=train_initial_weights, **network_setup_args
         )
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
             num_unknown_param,
             num_known_param,
+            known_param_indices,
             self.param_sampling_net,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
@@ -184,6 +185,7 @@ class NeuralCIs(_DataSaver):
             self._sampling_dist_net_interface,
             self.param_sampling_net.sample_params,
             self.num_param,
+            known_param_indices,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
@@ -196,7 +198,7 @@ class NeuralCIs(_DataSaver):
         )
 
         if foldername is not None:
-            self.load(foldername)
+            _DataSaver.load(self, foldername, common.CIS_FILE_START)
 
     def fit(self, turn_off_gpu: bool = True, *args, **kwargs) -> None:
 
@@ -236,16 +238,9 @@ class NeuralCIs(_DataSaver):
             Tensorflow so that they will not be used.
         """
 
-        if turn_off_gpu:
-            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
         self.param_sampling_net.fit(*args, **kwargs)
         self.pnet.fit(*args, **kwargs)
         self.cinet.fit(*args, **kwargs)
-
-    def compile(self, *args, **kwargs):
-        self.param_sampling_net.compile(*args, **kwargs)
-        self.pnet.compile(*args, **kwargs)
-        self.cinet.compile(*args, **kwargs)
 
     def values_grid(
             self,
@@ -353,6 +348,7 @@ class NeuralCIs(_DataSaver):
         estimates_uniform = self._estimates_to_net(*estimates_tf)
         params_uniform = self._params_to_net(*params_tf)
 
+        # TODO: This should probably live here and be passed down.
         known_params = self.cinet.known_params(params_uniform)
         if len(extra_values_names) > 0:
             values = self.pnet.p_workings(estimates_uniform,
@@ -364,19 +360,14 @@ class NeuralCIs(_DataSaver):
             values = {'p': p.numpy()}
 
         if conf_levels is not None:
-            lower_transformed, upper_transformed = self.cinet.ci(
+            # TODO: Contrast is not currently transformed.  Should change that.
+            #       (Could actually do that to give it unif probability too!)
+            #       And if so, then it would need to be de-transformed here.
+            lower, upper = self.cinet.ci(
                 estimates_uniform,
                 known_params,
                 tf.constant(1. - conf_levels),
             )
-
-            # TODO: improve this: it should be explicitly pulling the
-            #       estimate(s) rather than relying on it/them being first
-            #       in the sim_to_net_order.
-            index_of_estimate = self.sim_to_net_order[0]
-
-            lower = self._params_from_net(lower_transformed)[index_of_estimate]
-            upper = self._params_from_net(upper_transformed)[index_of_estimate]
 
             estimate_name = self.estimate_names[0]
             values[estimate_name + "_lower"] = lower.numpy()
@@ -422,26 +413,16 @@ class NeuralCIs(_DataSaver):
 
         return p_and_ci
 
-    def load(
-            self,
-            foldername: str,
-            *args
-    ) -> None:
+    def load(self, *args) -> None:
 
-        """Load weights and neural architectures stored to disk into self.
+        """Loading weights from a pre-constructed net is now disabled.
 
-        NB this does NOT currently load the sampling or contrast functions,
-        and these must still be supplied before loading the network weights.
-
-        :param foldername: A str, the folder in which the weights and
-            configurations are stored.
+        To load a previously saved NeuralCIs object, you need to pass the
+        `foldername` to the constructor, when first constructing the net.
         """
 
-        if len(args):
-            raise Exception("NeuralCIs only allows you to provide a foldername"
-                            " when loading.")
-
-        super().load(foldername, common.CIS_FILE_START)
+        raise Exception("To load a previously saved NeuralCIs object, you "
+                        "need to pass a foldername to the constructor.")
 
     def save(
             self,

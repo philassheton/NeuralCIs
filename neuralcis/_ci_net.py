@@ -5,7 +5,7 @@ from neuralcis._simulator_net import _SimulatorNet
 import neuralcis.common as common
 
 # typing imports
-from typing import Callable, Tuple, List
+from typing import Callable, Tuple, List, Sequence
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from neuralcis.common import Samples, Params, Estimates, NetInputs, NetOutputs
 from neuralcis.common import KnownParams
@@ -36,17 +36,20 @@ class _CINet(_SimulatorNet):
                 Tensor2[tf32, Samples, Params],
             ],
             num_param: int,
+            known_param_indices: Sequence[int],
             **network_setup_args,
     ) -> None:
+
+        _SimulatorNet.__init__(self,
+                               num_inputs_for_each_net=[num_param + 1],
+                               num_outputs_for_each_net=[2],
+                               **network_setup_args)
 
         self.sample_params = sample_params_fn
         self.pnet = pnet
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_param = num_param
-
-        _SimulatorNet.__init__(self,
-                               num_outputs_for_each_net=[2],
-                               **network_setup_args)
+        self.known_param_indices = known_param_indices
 
     ###########################################################################
     #
@@ -57,9 +60,9 @@ class _CINet(_SimulatorNet):
     @tf.function
     def simulate_training_data(
             self,
-            n: ttf.int32,
     ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
+        n = self.batch_size
         params = self.sample_params(n)
         estimates = self.sampling_distribution_fn(params)
         target_p = tf.random.uniform((n,), tf.constant(0.), tf.constant(1.))
@@ -81,8 +84,8 @@ class _CINet(_SimulatorNet):
 
         lower, upper = self.output_activation(net_outputs, estimates)
 
-        p_lower = self.run_pnet_plugin_first_param(estimates, params, lower)
-        p_upper = self.run_pnet_plugin_first_param(estimates, params, upper)
+        p_lower = self.p_from_pnet(estimates, lower, params)
+        p_upper = self.p_from_pnet(estimates, upper, params)
 
         squared_errors = (tf.math.square(p_lower - p) +
                           tf.math.square(p_upper - p))
@@ -118,39 +121,18 @@ class _CINet(_SimulatorNet):
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor2[tf32, Samples, KnownParams]:
 
-        # TODO: The heart of the bit that will need to change to accommodate
-        #       simultaneous CIs.  At present it is only taking the first
-        #       param as unknown, and taking the other params from the null
-        #       hypothesis.
-
-        return params[:, 1:]                                                   # type: ignore
+        return tf.gather(params, self.known_param_indices, axis=1)
 
     @tf.function
-    def plugin_first_param(
-            self,
-            params: Tensor2[tf32, Samples, Params],
-            first_param: Tensor1[tf32, Samples],
-    ):
-
-        # TODO: Also will need to change to accommodate more parameters.
-
-        known_params = self.known_params(params)
-        combined_params = tf.concat([
-            tf.transpose([first_param]),
-            known_params,
-        ], axis=1)
-        return combined_params
-
-    @tf.function
-    def run_pnet_plugin_first_param(
+    def p_from_pnet(
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
+            contrast: Tensor1[tf32, Samples],
             params: Tensor2[tf32, Samples, Params],
-            first_param: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        plugin_params = self.plugin_first_param(params, first_param)
-        return self.pnet.p(estimates, plugin_params)
+        known_params = self.known_params(params)
+        return self.pnet.p_from_contrast(estimates, contrast, known_params)
 
     @tf.function
     def output_activation(
@@ -168,15 +150,6 @@ class _CINet(_SimulatorNet):
         return lower, upper                                                    # type: ignore
 
     @tf.function
-    def add_known_params(
-            self,
-            good_params: Tensor1[tf32, Samples],
-            known_params: Tensor2[tf32, Samples, KnownParams],
-    ) -> Tensor2[tf32, Samples, Params]:
-
-        return tf.concat([tf.transpose([good_params]), known_params], axis=1)  # type: ignore
-
-    @tf.function
     def ci(
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
@@ -185,14 +158,6 @@ class _CINet(_SimulatorNet):
     ) -> Tuple[Tensor2[tf32, Samples, Params], Tensor2[tf32, Samples, Params]]:
 
         net_outputs = self.call_tf((estimates, known_params, conf_levels))
-
         lower, upper = self.output_activation(net_outputs, estimates)
 
-        # when dealing with transformed values, we need to know all params
-        #    because other params might be used in the de-transform.
-        # TODO: Make sure that the multidimensional case uses the right set of
-        #       params for the de-transform.
-        lower_full = self.add_known_params(lower, known_params)
-        upper_full = self.add_known_params(upper, known_params)
-
-        return lower_full, upper_full
+        return lower, upper

@@ -4,8 +4,8 @@ from neuralcis import common, _layers, _callbacks
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
-import numpy as np
 import collections
+import datetime
 
 from abc import ABC, abstractmethod
 
@@ -33,12 +33,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         (optionally) a tensor of target outputs (if those are required by
         the loss function). If no target outputs are needed, they should be
         replaced with a None value.
-    :func get_validation_set: A function that takes no arguments and returns
-        a static validation set in the same format as from
-        `self.simulate_training_data`.  This needs to be a function as the
-        validation set itself might be transformed by a non-static transform
-        (such as another neural network) before being used here.  It must
-        also be a `tf.function`.
     :func loss: A function that takes the output from
         `self.call_tf(training=True)` and the target values from
         `self.sampling_distribution_fn` and calculates a loss value.
@@ -55,9 +49,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         tf default of a call(training: bool) function) allows better type
         management in the cases we want the net to return different things
         during training.
-    :func compute_optimum_loss: OPTIONAL - A `tf.function` that takes no
-        arguments and computes an estimate for the optimum loss value for
-        the validation set.
 
     The `_SimulatorNet` can be constructed without passing parameters, but
     the following parameters in the constructor allow features of the
@@ -89,6 +80,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     def __init__(
             self,
+            num_inputs_for_each_net: Sequence[int],
             num_outputs_for_each_net: Sequence[int] = (1,),
             num_hidden_layers: int = common.NUM_HIDDEN_LAYERS,
             num_neurons_per_hidden_layer: int = common.NEURONS_PER_LAYER,
@@ -100,6 +92,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                                                     common.LAYER_DEFAULT_OUT,
             layer_kwargs: Optional[Sequence[Dict]] = None,
             train_initial_weights: bool = False,
+            batch_size: int = common.BATCH_SIZE,
             subobjects_to_save: dict = None,
             instance_tf_variables_to_save: Sequence[str] = (),
             *model_args,
@@ -111,43 +104,29 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         tf.keras.Model.__init__(self, *model_args, **model_kwargs)
 
-        self.validation_set = None
+        self.batch_size = batch_size
         self.nets, self.num_nets = self.create_nets(
+            num_inputs_for_each_net,
             num_outputs_for_each_net,
             num_hidden_layers,
             num_neurons_per_hidden_layer,
             input_layer_type_or_types,
             hidden_layer_type_or_types,
             output_layer_type_or_types,
+            batch_size,
             layer_kwargs,
-            train_initial_weights,
         )
 
-        # not filled in at init because it is slow / not always needed, so it
-        #   needs to be explicitly filled by calling precompute_optimum_loss
-        self.validation_optimum_loss = tf.Variable(np.nan)
-
         self.loss_tracker = tf.keras.metrics.Mean(name='loss')
+        self.simnet_weights = None
+        self.train_initial_weights = train_initial_weights
 
-        # TODO: Must figure out something more elegant than this.  Currently
-        #       we are passing in a dummy dataset that generates a single
-        #       random int as dataset and then we generate our own dataset
-        #       inside of train_step and ignore the "random" dataset.
-        #  -- see also tf.data.experimental.RandomDataset, which this function
-        #       constructs (constructing directly is deprecated) and that
-        #       give some clues about how to do this correctly.
-        self.dummy_dataset = tf.data.Dataset.random()
-
-        instance_tf_variables_to_save = list(instance_tf_variables_to_save)
-        instance_tf_variables_to_save.append('validation_optimum_loss')
         _DataSaver.__init__(
             self,
             instance_tf_variables_to_save=instance_tf_variables_to_save,
             nets_with_weights_to_save=self.nets,
             subobjects_to_save=subobjects_to_save,
         )
-
-        self.compile()
 
     ###########################################################################
     #
@@ -158,8 +137,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     @abstractmethod
     def simulate_training_data(
             self,
-            n: ttf.int32,
-    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
+    ) -> Tuple[NetInputBlob, NetTargetBlob]:
 
         """Generate net input samples and output targets.
 
@@ -175,7 +153,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
-            target_outputs: Optional[NetTargetBlob] = None,
+            target_outputs: NetTargetBlob,
     ) -> ttf.float32:
 
         """Calculate the loss.
@@ -197,6 +175,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     #
     ###########################################################################
 
+    @tf.function
     def net_inputs(
             self,
             inputs: NetInputBlob,
@@ -206,49 +185,28 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     def get_ready_for_training(self) -> None:
 
-        """Populate self.validation_set.  Called at start of training.
+        """Called at the start of the fit function.
 
-        Since it may not be possible to select an appropriate validation set
-        until the start of training, this function is called by the fit()
-        function, and populates the value `self.validation_set` at that point.
+        In _SimulatorNet, this builds all the net, lists its weights and
+        compiles the model.  (Better to do this before training in case we
+        make changes to the settings that impact the structure between
+        instantiation and training -- e.g. this happens if the _DataSaver
+        steps in to load the network structure from a file.
 
         :return: None
         """
 
-        self.validation_set = self.simulate_training_data(
-            common.VALIDATION_SET_SIZE
-        )
+        for net in self.nets:
+            net.ensure_built()
+        self.simnet_weights = self.get_simnet_weights()
+        self.compile()
 
-    @tf.function
-    def get_validation_set(
-            self,
-    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
-
-        """Return the validation set.
-
-        Must be a `tf.function`.
-
-        Returns simulations in the same format as `sampling_distribution_fn`.
-
-        :return: A tuple containing two elements: (1) A list of 2D `Tensor`s
-        of samples x network inputs (one for each net) and (2) whatever target
-        values are needed by the loss function (or None).
-        """
-
-        return self.validation_set
-
-    @tf.function
-    def compute_optimum_loss(self) -> ttf.float32:
-
-        """Compute an estimate of the optimum loss for the validation set.
-
-        If this is not possible, the default behaviour in this version
-        (which returns `np.nan`) will suppress use of an optimum loss.
-
-        :return: A `tf.float32` estimate of the optimum loss value.
-        """
-
-        return tf.constant(np.nan)
+        # TODO: Either get rid of this altogether (not really needed any more
+        #       since we don't have fancy layers any more) or at least move
+        #       the whole initialisation thing into the _SequentialNet (also
+        #       this bit still needs to be made parallelisable for GPU).
+        if self.train_initial_weights:
+            self.rescale_layer_weights()
 
     ###########################################################################
     #
@@ -260,7 +218,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             self,
             steps_per_epoch: int = common.STEPS_PER_EPOCH,
             epochs: int = common.EPOCHS,
-            verbose: Union[int, str] = 'auto',
+            verbose: Union[int, str] = 2,
             learning_rate_initial: int = common.LEARNING_RATE_INITIAL,
             callbacks: Sequence[tf.keras.callbacks.Callback] = None,
             *args,
@@ -272,10 +230,10 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         self.get_ready_for_training()
 
-        print(f"Training {self.__class__.__name__}")
+        print(f"{datetime.datetime.now()}: Training {self.__class__.__name__}")
 
         lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
-            self.trainable_weights(),
+            self.simnet_weights,
             monitor=self.loss_to_watch,
             learning_rate_initial=learning_rate_initial,
             factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU,
@@ -290,15 +248,13 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         else:
             callbacks = [lr_scheduler] + list(callbacks)
 
-        history = super().fit(x=self.dummy_dataset,
-                              validation_data=self.dummy_dataset,
+        history = super().fit(x=self.dataset_generator(),
                               steps_per_epoch=steps_per_epoch,
-                              validation_steps=1,
                               epochs=epochs,
                               verbose=verbose,
                               callbacks=callbacks)
 
-        print("Restoring best")
+        print(f"{datetime.datetime.now()}: Restoring best")
         lr_scheduler.restore_best()
 
         return history
@@ -317,31 +273,36 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             else:
                 optimizer = tf.keras.optimizers.Nadam()
 
-        super().compile(optimizer, loss=None, *args, **kwargs)
+        tf.keras.Model.compile(self, optimizer, loss=None, *args, **kwargs)
 
     @tf.function
-    def train_step(self, _):
-        input_blob, targets = self.simulate_training_data(
-            common.MINIBATCH_SIZE,
-        )
+    def train_step(self, data):
+        input_blob, targets = data
         loss, grads = self.loss_and_gradient(input_blob, targets)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_weights()))
-
+        self.optimizer.apply_gradients(zip(grads, self.simnet_weights))
         self.loss_tracker.update_state(loss)
-
         return {'loss': self.loss_tracker.result()}
 
-    def test_step(self, _):
-        # TODO: At present will have to compile a different node for the
-        #    validation runs, as tries to run the whole validation in one go,
-        #    rather than breaking it into minibatches.  To break it into
-        #    minibatches will need to write a custom dataloader that generates
-        #    the data.
-        return {'loss_val': self.validation_loss()}
+    def get_data_signature(self, data):
+        if isinstance(data, tf.Tensor):
+            return tf.TensorSpec.from_tensor(data)
+        elif isinstance(data, collections.abc.Sequence):
+            return tuple(self.get_data_signature(d) for d in data)
+        else:
+            raise ValueError("Data must be made of Tensors, Sequences or None")
 
-    def trainable_weights(self) -> List[tf.Tensor]:
-        trainable_weights = [net.trainable_weights() for net in self.nets]
-        return [w for ws in trainable_weights for w in ws]
+    def data_generator(self) -> Tuple[NetInputBlob, NetTargetBlob]:
+        while(True):
+            yield self.simulate_training_data()
+
+    def dataset_generator(self) -> tf.data.Dataset:
+        sample_data = self.simulate_training_data()
+        data_shape = self.get_data_signature(sample_data)
+        dataset = tf.data.Dataset.from_generator(self.data_generator,
+                                                 output_signature=data_shape)
+        dataset = dataset.prefetch(tf.data.AUTOTUNE)
+
+        return dataset
 
     ###########################################################################
     #
@@ -351,14 +312,15 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     def create_nets(
             self,
+            num_inputs_for_each_net: Sequence[int],
             num_outputs_for_each_net: Sequence[int],
             num_hidden_layers: int,
             num_neurons_per_hidden_layer: int,
             input_layer_type_or_types: Union[str, Sequence[str]],
             hidden_layer_type_or_types: Union[str, Sequence[str]],
             output_layer_type_or_types: Union[str, Sequence[str]],
+            input_batch_size: int,
             layer_kwargs: Sequence[Dict],
-            train_initial_weights: bool,
     ) -> Tuple[
         List[_SequentialNet],
         int,
@@ -375,28 +337,20 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             output_layer_type_or_types, self.num_nets,
         )
 
-        # Need to run some data through the nets to instantiate them.
-        input_blob, _ = self.simulate_fake_training_data(
-            common.MINIBATCH_SIZE,
-        )
-        net_inputs = self.net_inputs(input_blob)
-
         self.nets = [
             self.create_net(
-                num_outputs=n_out,
-                num_inputs=net_inputs[i].shape[-1],
+                num_inputs=n_in,
+                num_outputs=num_outputs_for_each_net[i],
                 num_hidden_layers=num_hidden_layers,
                 num_neurons_per_hidden_layer=num_neurons_per_hidden_layer,
                 input_layer_type_name=input_layer_type_names[i],
                 hidden_layer_type_name=hidden_layer_type_names[i],
                 output_layer_type_name=output_layer_type_names[i],
+                input_batch_size=input_batch_size,
                 layer_kwargs=layer_kwargs[i]
             )
-            for i, n_out in enumerate(num_outputs_for_each_net)
+            for i, n_in in enumerate(num_inputs_for_each_net)
         ]
-
-        if train_initial_weights:
-            self.rescale_layer_weights()
 
         return self.nets, self.num_nets
 
@@ -415,6 +369,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             input_layer_type_name: str,
             hidden_layer_type_name: str,
             output_layer_type_name: str,
+            input_batch_size: int,
             layer_kwargs: Dict,
     ) -> _SequentialNet:
 
@@ -432,6 +387,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         layer_kwargs_per_layer.append(layer_kwargs)
 
         return _SequentialNet(
+            input_batch_size,
             num_inputs=num_inputs,
             num_outputs_per_layer=num_outputs_per_layer,
             layer_type_name_per_layer=layer_type_name_per_layer,
@@ -453,20 +409,9 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             assert len(type_or_types) == n
             return type_or_types
 
-    def precompute_optimum_loss(self) -> None:
-        print("Calculating optimum loss")
-        optimum_loss = self.compute_optimum_loss()
-        print("Calculated optimum loss")
-
-        self.set_validation_optimum_loss(optimum_loss)
-
-    def simulate_fake_training_data(
-            self,
-            n: ttf.int32,
-    ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
-
-        # Override this function if simulation of training data is expensive
-        return self.simulate_training_data(n)
+    def get_simnet_weights(self) -> List[tf.Tensor]:
+        simnet_weights = [net.trainable_weights() for net in self.nets]
+        return [w for ws in simnet_weights for w in ws]
 
     ###########################################################################
     #
@@ -513,58 +458,16 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         return tf.concat(outputs, axis=1)
 
     @tf.function
-    def validation_loss(self):
-        validation_input_blob, validation_targets = self.get_validation_set()
-        validation_outs = self.call_tf_training(validation_input_blob)
-        validation_loss = self.get_loss(validation_outs, validation_targets)
-
-        return validation_loss
-
-    @tf.function
     def loss_and_gradient(
             self,
             input_blob: NetInputBlob,
-            targets: Optional[NetTargetBlob],
+            targets: NetTargetBlob,
     ) -> Tuple[ttf.float32, list]:
 
-        with tf.GradientTape() as tape2:                                       # type: ignore
-            tape2.watch(self.trainable_weights())
+        with tf.GradientTape() as tape2:
+            tape2.watch(self.simnet_weights)
             net_outs = self.call_tf_training(input_blob)
             loss = self.get_loss(net_outs, targets)
-        gradient = tape2.gradient(loss, self.trainable_weights())
+        gradient = tape2.gradient(loss, self.simnet_weights)
 
         return loss, gradient
-
-    ###########################################################################
-    #
-    #  Extra functions for analysing the network.
-    #
-    ###########################################################################
-
-    @tf.function
-    def get_layer_outputs_variance(
-            self,
-            layer_out: Tensor2[tf32, Samples, NodesInLayer],
-    ) -> Tensor1[tf32, NodesInLayer]:
-        return tfp.stats.variance(layer_out, sample_axis=0)
-
-    def get_neuron_variances_for_validation_set(self, net_index) -> list:
-        extractor = tf.keras.models.Model(
-            inputs=self.nets[net_index].sequential.input,
-            outputs=[layer.output for layer in self.nets[net_index].layers()]
-        )
-        validation_input_blob, validation_outs = self.get_validation_set()
-        validation_ins = self.net_inputs(validation_input_blob)[net_index]
-        layer_outs = extractor(validation_ins)
-        layer_variances = [
-            tfp.stats.variance(out, sample_axis=0) for out in layer_outs
-        ][0:-1]
-
-        return layer_variances
-
-    def set_validation_optimum_loss(
-            self,
-            validation_optimum_loss: ttf.float32,
-    ) -> None:
-
-        self.validation_optimum_loss.assign(validation_optimum_loss)
