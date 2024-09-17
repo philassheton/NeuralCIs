@@ -270,7 +270,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return (param_samples.stack(), chols.stack()), targets.stack()
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def sampling_iteration(
             self,
             old_params,
@@ -359,7 +359,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return param_samples, target_blob
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def random_params_step(
             self,
             params: Tensor1[tf32, Params],
@@ -380,6 +380,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return new_params
 
+    @tf.function(jit_compile=True)
     def sample_ingredients_batch(
             self,
             params: Tensor2[tf32, Samples, Params],
@@ -393,7 +394,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         return tf.map_fn(self.sample_ingredients, params,
                          dtype=(tf.float32, tf.float32))
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def sample_ingredients(
             self,
             params: Tensor1[tf32, Params],
@@ -409,7 +410,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
                                                              chol_det)
         return importance_ingredients, cov_chol
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def importance_ingredients(
             self,
             params: Tensor1[tf32, Params],
@@ -437,7 +438,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return tf.math.log(importance_ingredients_unlog + eps)                 # type: ignore
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def overlaps_estimates_box(
             self,
             centroid: Tensor1[tf32, Estimates],
@@ -476,7 +477,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return tf.cast(overlaps, tf.float32)
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def sample_statistics(
             self,
             params: Tensor1[tf32, Params],
@@ -496,7 +497,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return xbar, l, inv_l, det_l                                           # type: ignore
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def covariance_cholesky_computation(
             self,
             estimates: Tensor2[tf32, Samples, Estimates]
@@ -517,7 +518,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return l
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def params_proposal_pdf_proportional(
             self,
             x: Tensor1[tf32, Params],
@@ -539,7 +540,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         det_known = tf.math.pow(self.sd_known, self.num_known_param)
         return tf.math.exp(-0.5 * z_norm_sq) / (det_unknown * det_known)       # NB: We do *not* need sqrt on the determinant because it is the sqrt of the Cholesky factor (already sqrted)
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def is_inside_support_region(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
@@ -547,7 +548,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return targets[:, 1] >= 0.                                             # type: ignore
 
-    @tf.function
+    @tf.function(jit_compile=True)
     def get_chol_det_from_targets(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
