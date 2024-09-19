@@ -60,13 +60,6 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
         pass
 
     @abstractmethod
-    def simulate_validation_data_cache(
-            self
-    ) -> Tuple[NetInputBlob, NetTargetBlob]:
-
-        pass
-
-    @abstractmethod
     def pick_indices_from_cache(
             self,
             cache: Tuple[NetInputSimulationBlob, NetTargetBlob],

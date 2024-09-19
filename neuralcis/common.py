@@ -52,9 +52,10 @@ NUM_SAMPLES_FOR_IDEAL_ERROR_ESTIMATION = 5000
 GAP_BETWEEN_SAMPLES_FOR_PDF_ESTIMATION = 20
 
 # Param sampling
-FEELER_NET_MARKOV_CHAIN_LENGTH = 1000
-FEELER_NET_NUM_CHAINS = 100
-FEELER_NET_NUM_PERIPHERAL_POINTS = 50000
+FEELER_NET_MARKOV_CHAIN_LENGTH = 5000
+FEELER_NET_NUM_CHAINS = 1000
+FEELER_NET_PERIPHERAL_BATCH_SIZE = 100000                                      # Set as high as your GPU can handle
+FEELER_NET_PERIPHERAL_BATCHES = 10
 PARAM_MARKOV_CHAIN_STEP_SIZE = 1.
 KNOWN_PARAM_MARKOV_CHAIN_SD = .1  # Will combine with step size
 SAMPLES_PER_TEST_PARAM = 100
@@ -103,6 +104,7 @@ One = typing.NewType("One", axes.Axis)
 Contrast = typing.NewType("Contrast", axes.Axis)
 J = typing.NewType("J", axes.Axis)
 Indices = typing.NewType("Indices", axes.Axis)
+Chains = typing.NewType("Chains", axes.Axis)
 
 # Again for typing, represents a blob of output from a network that can be
 #   passed into a loss function.
