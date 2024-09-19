@@ -83,13 +83,14 @@ class _DataSaver:
                                                       suffix)
             obj.load(foldername, object_filename)
 
-        for var in self.instance_tf_variables_to_save:
+        for var_name in self.instance_tf_variables_to_save:
+            var = getattr(self, var_name)
             value = tf.raw_ops.Restore(
                 file_pattern=self.instance_variables_filename(fullname_start),
-                tensor_name=var,
-                dt=tf.float32
+                tensor_name=var_name,
+                dt=var.dtype,
             )
-            getattr(self, var).assign(value)
+            var.assign(value)
 
     @staticmethod
     def construct_filename(filename: str, suffix: str) -> str:

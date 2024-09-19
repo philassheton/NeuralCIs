@@ -15,6 +15,11 @@ from tensor_annotations import tensorflow as ttf
 
 tf32 = ttf.float32
 NUM_IMPORTANCE_INGREDIENTS = 2
+NetInputSimulationBlob = Tuple[
+    Tensor2[tf32, Samples, Params],                           # Centroid
+    Tensor3[tf32, Samples, UnknownParams, UnknownParams],     # Cholesky factor
+]
+NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 
 
 ###############################################################################
@@ -65,7 +70,7 @@ NUM_IMPORTANCE_INGREDIENTS = 2
 #
 ###############################################################################
 
-class _SamplingFeelerGenerator(tf.keras.Model, _DataSaver):
+class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def __init__(
             self,
             estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
@@ -112,14 +117,6 @@ class _SamplingFeelerGenerator(tf.keras.Model, _DataSaver):
             self.estimates_max - self.estimates_min,
             tf.repeat(common.PARAMS_MAX - common.PARAMS_MIN, num_known_param),
         ], axis=0)
-
-        # We will also want to safeguard against generating any params beyond
-        #   the bounds of those we have simulated and found to be good
-        #   ("good" in the sense that their samples intersect the estimates
-        #   box)
-        param_nans = tf.fill(self.num_param, np.nan)
-        self.min_params_valid = tf.Variable(param_nans)
-        self.max_params_simulated = tf.Variable(param_nans)
 
         # See note 2 at the top of this script.  This computes an adjustment
         # of 1 / .82 for a self.sample_size of 100
@@ -179,78 +176,40 @@ class _SamplingFeelerGenerator(tf.keras.Model, _DataSaver):
             print(f"{datetime.now()} -- Chains Already Generated.")
             return
 
-        print(f"{datetime.now()} -- Generating parameter samples")
+        print(f"{datetime.now()} -- Generating first parameter samples")
         self.initialise_for_training()
 
-        dummy_optimizer, dummy_dataset = self.dummy_training_stuff()
-        super().compile(optimizer=dummy_optimizer, loss=None)
-        super().fit(x=dummy_dataset,
-                    epochs=1,
-                    steps_per_epoch=self.chain_length - 1)
-
-        print(f"{datetime.now()} -- Reshaping...")
-        num_samples = self.num_chains * self.chain_length
-        self.sampled_params = tf.reshape(
-            self.sampled_params,
-            (num_samples, self.num_param),
-        )
-        self.sampled_chols = tf.reshape(
-            self.sampled_chols,
-            (num_samples, self.num_estimate, self.num_estimate),
-        )
-        self.sampled_targets = tf.reshape(
-            self.sampled_targets,
-            (num_samples, NUM_IMPORTANCE_INGREDIENTS),
-        )
+        print(f"{datetime.now()} -- Generating {self.num_chains} chains of"
+              f" {self.chain_length} parameter samples")
+        self.compute_chains()
 
         mins_valid, maxs_valid = self.mins_and_maxs_valid()
 
-        print(f"{datetime.now()} -- Sampling {self.num_peripheral_batches}"
-              f" batches of {self.peripheral_batch_size} peripheral samples:")
-        for i in range(self.num_peripheral_batches):
-            self.generate_peripheral_samples_batch(mins_valid, maxs_valid)
-
-        print(f"{datetime.now()} -- Concatenating those")
-        self.peripheral_params = tf.concat(
-            self.peripheral_params,
-            axis=0,
-        )
-        self.peripheral_chols = tf.concat(
-            self.peripheral_chols,
-            axis=0,
-        )
-        self.peripheral_targets = tf.concat(
-            self.peripheral_targets,
-            axis=0,
-        )
+        print(f"{datetime.now()} -- Generating {self.num_peripheral_batches}"
+              f" batches of {self.peripheral_batch_size} peripheral samples")
+        (peripheral_params, peripheral_chols), peripheral_targets = \
+            self.generate_peripheral_samples(mins_valid, maxs_valid)
 
         # Compute for each sample a region around the sample that can be
         # substituted for that sample in order to smooth the surface
-        self.sampled_chols, self.peripheral_chols = self.get_smoothing_regions(
+        self.sampled_chols, peripheral_chols = self.get_smoothing_regions(
             self.sampled_targets, self.sampled_chols,
-            self.peripheral_targets, self.peripheral_chols,
+            peripheral_targets, peripheral_chols,
             mins_valid, maxs_valid,
         )
 
         print(f"{datetime.now()} -- Concatenating those")
-        self.sampled_params = tf.concat(
-            [self.sampled_params, self.peripheral_params],
-            axis=0,
-        )
-        self.sampled_chols = tf.concat(
-            [self.sampled_chols, self.peripheral_chols],
-            axis=0,
-        )
-        self.sampled_targets = tf.concat(
-            [self.sampled_targets, self.peripheral_targets],
-            axis=0,
-        )
-        self.peripheral_params = []
-        self.peripheral_chols = []
-        self.peripheral_targets = []
+        self.sampled_params = \
+            tf.concat([self.sampled_params, peripheral_params], axis=0)
+        self.sampled_chols = \
+            tf.concat([self.sampled_chols, peripheral_chols], axis=0)
+        self.sampled_targets = \
+            tf.concat([self.sampled_targets, peripheral_targets], axis=0)
 
         self.min_params_valid = mins_valid
         self.max_params_simulated = maxs_valid
+
+        print(f"{datetime.now()} -- Param samples generated!")
 
     def mins_and_maxs_valid(
             self
@@ -284,6 +243,31 @@ class _SamplingFeelerGenerator(tf.keras.Model, _DataSaver):
         self.sampling_iteration()
         return {}
 
+    def compute_chains(self) -> None:
+        if tf.greater_equal(self.iteration_num, self.chain_length):
+            print("Chains already computed!")
+            return
+
+        dummy_optimizer, dummy_dataset = self.dummy_training_stuff()
+        super().compile(optimizer=dummy_optimizer, loss=None)
+        super().fit(x=dummy_dataset,
+                    epochs=1,
+                    steps_per_epoch=self.chain_length - 1)
+
+        num_samples = self.num_chains * self.chain_length
+        self.sampled_params = tf.reshape(
+            self.sampled_params,
+            (num_samples, self.num_param),
+        )
+        self.sampled_chols = tf.reshape(
+            self.sampled_chols,
+            (num_samples, self.num_estimate, self.num_estimate),
+        )
+        self.sampled_targets = tf.reshape(
+            self.sampled_targets,
+            (num_samples, NUM_IMPORTANCE_INGREDIENTS),
+        )
+
     def initialise_for_training(self):
         self.iteration_num.assign(0)
 
@@ -304,7 +288,8 @@ class _SamplingFeelerGenerator(tf.keras.Model, _DataSaver):
                                       params, importance_ingredients, cov_chol)
 
     def load(self, *args, **kwargs) -> None:
-        n = self.num_chains * self.chain_length
+        n = (self.num_chains * self.chain_length +
+             self.num_peripheral_batches * self.peripheral_batch_size)
         p = self.num_param
         e = self.num_estimate
         i = NUM_IMPORTANCE_INGREDIENTS
@@ -346,36 +331,58 @@ class _SamplingFeelerGenerator(tf.keras.Model, _DataSaver):
 
         self.iteration_num.assign(self.iteration_num + 1)
 
+    def generate_peripheral_samples(
+            self,
+            mins_valid,
+            maxs_valid,
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
+
+        b = self.num_peripheral_batches
+        p = self.num_param
+        u = self.num_unknown_param
+        ni = self.peripheral_batch_size
+        imp = NUM_IMPORTANCE_INGREDIENTS
+
+        params = tf.TensorArray(tf.float32, b, element_shape=(ni, p))
+        chols = tf.TensorArray(tf.float32, b, element_shape=(ni, u, u))
+        targets = tf.TensorArray(tf.float32, b, element_shape=(ni, imp))
+
+        for i in range(self.num_peripheral_batches):
+            (pi, ci), ti = self.generate_peripheral_samples_batch(mins_valid,
+                                                                  maxs_valid)
+            params = params.write(i, pi)
+            chols = chols.write(i, ci)
+            targets = targets.write(i, ti)
+
+        params = tf.reshape(params.stack(), (b*ni, p))
+        chols = tf.reshape(chols.stack(), (b*ni, u, u))
+        targets = tf.reshape(targets.stack(), (b*ni, imp))
+
+        return (params, chols), targets
+
     def generate_peripheral_samples_batch(
             self,
             mins: Tensor1[tf32, Params],
             maxs: Tensor1[tf32, Params],
-    ) -> None:
+    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         # Generate extra samples around the edges that force the
         #    probability of assigning non-zero probability at the edges
         #    down to zero.
         # TODO: Make this fit more snugly to the countours of the original
         #       sample.
-        print(f"{datetime.now()} -- Generating {self.peripheral_batch_size}"
-              f" peripheral samples.")
 
         diffs = maxs - mins
         u = tf.random.uniform((self.peripheral_batch_size, self.num_param))
         sampled_params_peripheral = u * diffs[None, :] + mins[None, :]
 
-        print(f"{datetime.now()} -- ... generating target values")
         targets_peripheral, chols_peripheral = self.sample_ingredients(
             sampled_params_peripheral,
             self.peripheral_batch_size,
         )
-        print(f"{datetime.now()} -- ... done.")
 
-        # TODO better to accumulate them inside another func, and concat.
-        #      This would simplify __init__ too.
-        self.peripheral_params.append(sampled_params_peripheral)
-        self.peripheral_targets.append(targets_peripheral)
-        self.peripheral_chols.append(chols_peripheral)
+        sim_blob = (sampled_params_peripheral, chols_peripheral)
+        return sim_blob, targets_peripheral
 
     @tf.function
     def sampling_iteration(
@@ -654,9 +661,9 @@ class _SamplingFeelerGenerator(tf.keras.Model, _DataSaver):
         # little overlap between each datapoint.
         chol_scale_factor = tf.math.pow(support_volume / total_volumes_inside,
                                         1. / self.num_param)
-        tf.print(f"Cholesky scale factor: {chol_scale_factor}.  If this is "
-                 f"above 0.5, you might want to think about increasing the "
-                 f"number of chains, or the chain length.")
+        print(f"Cholesky scale factor: {chol_scale_factor}.  If this is "
+              f"above 0.5, you might want to think about increasing the "
+              f"number of chains, or the chain length.")
 
         # But we want only to apply that to those datapoints that are INSIDE
         # the support region, since otherwise, we might eat away at the
