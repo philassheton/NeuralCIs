@@ -8,6 +8,7 @@ from neuralcis import sampling
 from neuralcis._param_sampling_net import _ParamSamplingNet
 from neuralcis._p_net import _PNet
 from neuralcis._ci_net import _CINet
+from neuralcis._cdf_feeler_net import _CDFFeelerNet
 from neuralcis._data_saver import _DataSaver
 
 # for typing
@@ -179,6 +180,13 @@ class NeuralCIs(_DataSaver):
             self.param_sampling_net,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
+        )
+        self.cdf_feeler = _CDFFeelerNet(
+            num_unknown_param,
+            num_known_param,
+            self._sampling_dist_net_interface,
+            self.param_sampling_net.feeler_net.sampling_feeler_generator,
+            self.pnet.p,
         )
         self.cinet = _CINet(
             self.pnet,
@@ -353,6 +361,15 @@ class NeuralCIs(_DataSaver):
         if len(extra_values_names) > 0:
             values = self.pnet.p_workings(estimates_uniform,
                                           params_uniform)
+
+
+            # PHIL!!  This will give pathological graphs if they enter
+            #         estimates rather than params!!
+            cdf_values = self.cdf_feeler.call_tf(params_uniform)
+            values["cdf_ad"] = cdf_values[:, 0]
+            values["cdf_ks"] = cdf_values[:, 1]
+
+
             values = {"p": values["p"].numpy()} | \
                      {k: values[k].numpy() for k in extra_values_names}
         else:

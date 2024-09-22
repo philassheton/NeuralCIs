@@ -1,4 +1,5 @@
 from neuralcis._simulator_net_cached import _SimulatorNetCached
+from neuralcis._cdf_feeler_generator import _CDFFeelerGenerator
 from neuralcis._sampling_feeler_generator import _SamplingFeelerGenerator
 from neuralcis import common
 
@@ -23,54 +24,53 @@ NetInputSimulationBlob = Tuple[
 NetInputBlob = Tensor2[tf32, Samples, Params]
 NetOutputBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
-NUM_IMPORTANCE_INGREDIENTS = 2
+NUM_CDF_MEASURES = 2
 
 
-class _SamplingFeelerNet(_SimulatorNetCached):
+class _CDFFeelerNet(_SimulatorNetCached):
     relative_loss_increase_tol = common.REL_LOSS_INCREASE_TOL_FEELER_NET
 
     def __init__(
             self,
-            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
+            num_unknown_param: int,
+            num_known_param: int,
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
                 Tensor2[tf32, Samples, Estimates],  # -> ys
             ],
-            num_unknown_param: int,
-            num_known_param: int,
-            sample_size: int = common.PARAM_FEELER_SAMPLES_PER_TEST_PARAM,
-            sd_known: float = common.PARAM_FEELER_KNOWN_PARAM_MARKOV_CHAIN_SD,
-            num_chains: int = common.PARAM_FEELER_NUM_CHAINS,
-            chain_length: int = common.PARAM_FEELER_MARKOV_CHAIN_LENGTH,
-            peripheral_batch_size: int =
-                                       common.PARAM_FEELER_PERIPHERAL_BATCH_SIZE,
-            num_peripheral_batches: int = common.PARAM_FEELER_PERIPHERAL_BATCHES,
+            sampling_feeler_generator: _SamplingFeelerGenerator,
+            p_fn: Callable[
+                [Tensor2[tf32, Samples, Estimates],
+                 Tensor2[tf32, Samples, Params]],
+                Tensor1[tf32, Samples]
+            ],
+            num_samples_per_param: int = \
+                                      common.CDF_FEELER_SAMPLES_PER_TEST_PARAM,
+            num_params_per_batch: int = common.CDF_FEELER_PARAMS_PER_BATCH,
+            subsample_proportion: float = 1.,
             **network_setup_args,
     ) -> None:
 
-        cache_size = (num_chains * chain_length +
-                      num_peripheral_batches * peripheral_batch_size)
-
-        sampling_feeler_generator = _SamplingFeelerGenerator(
-            estimates_min_and_max,
+        cdf_feeler_generator = _CDFFeelerGenerator(
             sampling_distribution_fn,
-            num_unknown_param,
-            num_known_param,
-            sample_size,
-            sd_known,
-            num_chains,
-            chain_length,
-            peripheral_batch_size,
-            num_peripheral_batches,
+            sampling_feeler_generator,
+            p_fn,
+            num_samples_per_param,
+            num_params_per_batch,
+            subsample_proportion,
         )
 
         super().__init__(
-            cache_size=cache_size,
+
+
+            # PHIL!!
+            cache_size=None,
+
+
+
             num_inputs_for_each_net=(num_unknown_param + num_known_param,),
-            num_outputs_for_each_net=(NUM_IMPORTANCE_INGREDIENTS,),
-            subobjects_to_save=({"feelergen": sampling_feeler_generator}),
-            instance_tf_variables_to_save=('min_params_valid',
-                                           'max_params_valid'),
+            num_outputs_for_each_net=(NUM_CDF_MEASURES,),
+            subobjects_to_save=({"cdfgen": cdf_feeler_generator}),
             **network_setup_args
         )
 
@@ -78,24 +78,39 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         self.num_known_param = num_known_param
         self.num_param = num_unknown_param + num_known_param
 
-        self.sampling_feeler_generator = sampling_feeler_generator
-
-        self.min_params_valid = tf.Variable(tf.fill((self.num_param,), np.nan))
-        self.max_params_valid = tf.Variable(tf.fill((self.num_param,), np.nan))
+        self.cdf_feeler_generator = cdf_feeler_generator
 
     def simulate_training_data_cache(
             self,
             n: int,
     ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
-        assert n == self.cache_size
-        self.sampling_feeler_generator.fit()
 
-        mins, maxs = self.sampling_feeler_generator.mins_and_maxs_valid()
-        self.min_params_valid.assign(mins)
-        self.max_params_valid.assign(maxs)
 
+        # PHIL!!  we just need to totally get rid of n and cache size
+        #         from this altogether!!  It can just be left to generate
+        #         whatever size cache it likes, and then we set self.cache_size
+        #         based on that.
+        assert n is None
+
+
+
+
+
+        # TODO: Shouldn't even be an n here.
+        # assert n == self.cache_size
+        self.cdf_feeler_generator.fit()
         sim_blob, target_blob = self.get_data_from_generator()
+
+
+
+
+        # PHIL!!  This should maybe be returned rather than directly stored
+        #         in here.
+        #          -> Tuple[int, NetInputSimulationBlob, NetTargetBlob]
+        self.cache_size = self.cdf_feeler_generator.num_param_samples
+
+
 
         return sim_blob, target_blob
 
@@ -103,10 +118,26 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             self
     ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
-        sim_blob = (self.sampling_feeler_generator.sampled_params,
-                    self.sampling_feeler_generator.sampled_chols)
-        target_blob = self.sampling_feeler_generator.sampled_targets
-        return sim_blob, target_blob
+        generator = self.cdf_feeler_generator
+        sampling_feeler_indices = generator.sampling_feeler_indices
+
+        params = generator.sampling_feeler_generator.sampled_params
+        chols = generator.sampling_feeler_generator.sampled_chols
+
+        params = tf.gather(params, sampling_feeler_indices, axis=0)
+        chols = tf.gather(chols, sampling_feeler_indices, axis=0)
+
+        targets = tf.stack([
+            generator.darlings,
+            generator.ks,
+        ], axis=1)
+
+        sim_blob = (params, chols)
+        return sim_blob, targets
+
+    # TODO: Everything beneath here is copied from _SamplingFeelerNet
+    #       Can we factor things so we don't need to reproduce?
+    #       Perhaps make an abstract base class that has the core things in.
 
     @tf.function
     def pick_indices_from_cache(
@@ -163,28 +194,3 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         # TODO: can we just push this up to the _SimulatorNet?
         return inputs,                                                         # type: ignore
 
-    @tf.function
-    def get_log_importance_from_net(
-            self,
-            params: Tensor2[tf32, Samples, Params],
-    ) -> Tensor1[tf32, Samples]:
-
-        importance_ingredients = self.call_tf(params)
-        importance_log = tf.reduce_sum(importance_ingredients, axis=1)
-
-        # Add a punitive amount for being outside the region sampled from
-        param_too_low_by = tf.maximum(self.min_params_valid[None, :] - params,
-                                      0.)
-        param_too_high_by = tf.maximum(params - self.max_params_valid[None, :],
-                                       0.)
-        param_out_of_bound_by = tf.maximum(param_too_low_by, param_too_high_by)
-        greatest_out_of_bound = tf.reduce_max(param_out_of_bound_by, axis=1)
-
-        # oob = out of bounds
-        oob = tf.sign(greatest_out_of_bound)
-        not_oob = 1. - oob
-
-        log_eps = tf.math.log(common.SMALLEST_LOGABLE_NUMBER)
-        out_of_bounds_val = log_eps - greatest_out_of_bound
-
-        return not_oob*importance_log + oob*out_of_bounds_val

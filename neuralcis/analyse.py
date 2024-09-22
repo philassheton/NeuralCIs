@@ -157,10 +157,15 @@ def __get_one_p_value_distribution(
     param_tensors = __repeat_params_tf(num_samples, **param_values)
     param_arrays = __repeat_params_np(num_samples, **param_values)
     estimates = cis.sampling_distribution_fn(**param_tensors)
-    ps_and_cis = cis.ps_and_cis(estimates, param_arrays)
-    ps = ps_and_cis["p"]
+    ps_and_cis = cis.ps_and_cis(estimates, param_arrays,
+                                extra_values_names=("cdf_ad", "cdf_ks"))
+    ps_etc = {
+        "p": ps_and_cis["p"],
+        "feeler_ad": ps_and_cis["cdf_ad"],
+        "feeler_ks": ps_and_cis["cdf_ks"],
+    }
 
-    return {"p": ps} | param_values
+    return ps_etc | param_values
 
 
 def __plot_p_value_distribution_once(
@@ -429,18 +434,39 @@ def plot_p_value_cdfs(
     y = np.linspace(0., 1., num_samples)
     params = {n: np.array([]) for n in cis.param_names_in_sim_order}
     ks = np.array([])
+    ad = np.array([])
+    feeler_ks = np.array([])
+    feeler_ad = np.array([])
     for _ in tqdm(range(num_cdfs)):
         cdf_etc = __get_one_p_value_distribution(cis,
                                                  num_samples,
                                                  randomize_unspecified_params,
                                                  from_estimates_box_only,
                                                  **param_values)
+
         cdf = cdf_etc.pop("p")
         cdf.sort()
         for ax in axes:
             ax.plot(cdf, y, alpha=alpha, c="black")
 
+
+        # PHIL!!
+        print(cdf_etc["feeler_ad"])
+
+
+
+
+        feeler_ad = np.append(feeler_ad, cdf_etc.pop("feeler_ad")[0])
+        feeler_ks = np.append(feeler_ks, cdf_etc.pop("feeler_ks")[0])
+
         ks = np.append(ks, np.max(np.abs(cdf - y)))
+        ad = np.append(
+            ad,
+            -num_samples - np.sum(
+                (2. * np.arange(num_samples) + 1) / num_samples *
+                (np.log(cdf) + np.log(np.flip(cdf)))
+            )
+        )
         for name, value in cdf_etc.items():
             params[name] = np.append(params[name], value)
 
@@ -471,6 +497,9 @@ def plot_p_value_cdfs(
     pandas_sorted = __make_pandas(
         params=params,
         ks=ks,
+        ad=ad,
+        feeler_ad=feeler_ad,
+        feeler_ks=feeler_ks,
         sort_by="ks",
     )
 

@@ -80,13 +80,13 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             ],
             num_unknown_param: int,
             num_known_param: int,
-            sample_size: int = common.SAMPLES_PER_TEST_PARAM,
-            sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
-            num_chains: int = common.FEELER_NET_NUM_CHAINS,
-            chain_length: int = common.FEELER_NET_MARKOV_CHAIN_LENGTH,
+            sample_size: int = common.PARAM_FEELER_SAMPLES_PER_TEST_PARAM,
+            sd_known: float = common.PARAM_FEELER_KNOWN_PARAM_MARKOV_CHAIN_SD,
+            num_chains: int = common.PARAM_FEELER_NUM_CHAINS,
+            chain_length: int = common.PARAM_FEELER_MARKOV_CHAIN_LENGTH,
             peripheral_batch_size: int =
-                                       common.FEELER_NET_PERIPHERAL_BATCH_SIZE,
-            num_peripheral_batches: int = common.FEELER_NET_PERIPHERAL_BATCHES,
+                                       common.PARAM_FEELER_PERIPHERAL_BATCH_SIZE,
+            num_peripheral_batches: int = common.PARAM_FEELER_PERIPHERAL_BATCHES,
     ):
 
         tf.keras.Model.__init__(self)
@@ -216,15 +216,18 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     ) -> Tuple[Tensor1[tf32, Params],
                Tensor1[tf32, Params]]:
 
-        valid_rows = tf.where(
-            self.is_inside_support_region(self.sampled_targets)
-        )[:, 0]
+        valid_rows = self.valid_row_indices()
         params_sampled_valid = tf.gather(self.sampled_params,
                                          valid_rows, axis=0)
         mins_sampled = tf.reduce_min(params_sampled_valid, axis=0)
         maxs_sampled = tf.reduce_max(params_sampled_valid, axis=0)
 
         return mins_sampled, maxs_sampled
+
+    @tf.function
+    def valid_row_indices(self) -> Tensor1[ttf.int64, Samples]:
+        valid = tf.where(self.is_inside_support_region(self.sampled_targets))
+        return valid[:, 0]
 
     @staticmethod
     def dummy_training_stuff() -> Tuple[tf.keras.optimizers.Optimizer,
@@ -530,7 +533,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         # TODO: Again, we need to look more carefully at this.  How do we make
         #   sure we are sampling enough but not too much, to make sure we have
         #   sufficient info?
-        tails_probability = 1. - common.SAMPLE_PARAM_IF_SAMPLE_PERCENTILE / 100
+        percentile = common.PARAM_FEELER_SAMPLE_PARAM_IF_SAMPLE_PERCENTILE
+        tails_probability = 1. - percentile / 100
         tails_probability_bonferroni = tails_probability / self.num_param
         quantile = 1 - tails_probability_bonferroni / 2.
         cutoff = tfp.distributions.Normal(0., 1.).quantile(quantile)
@@ -565,6 +569,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                                                    self.sample_size,
                                                    self.num_estimate))
         xbar = tf.reduce_mean(estimates_grouped, axis=1)
+        #l = self.covariance_cholesky_computation(estimates_grouped, xbar)
         l = tfp.stats.cholesky_covariance(estimates_grouped, sample_axis=1)
         identity = tf.eye(self.num_estimate, batch_shape=(num_chains, ))
         inv_l = tf.linalg.triangular_solve(l, identity)
@@ -677,3 +682,16 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                                    chol_scalings_peripheral[:, None, None])
 
         return chols_scaled, chols_scaled_peripheral
+
+    def release_gpu(self):
+        with(tf.device("/CPU:0")):
+            self.sampled_params = tf.identity(self.sampled_params)
+            self.sampled_chols = tf.identity(self.sampled_chols)
+            self.sampled_targets = tf.identity(self.sampled_targets)
+
+        del self.params
+        del self.mean
+        del self.cov_chol
+        del self.inv_chol
+        del self.chol_det
+        del self.importance
