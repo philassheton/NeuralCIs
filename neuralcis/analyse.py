@@ -19,8 +19,9 @@ from plotly.subplots import make_subplots
 
 from neuralcis import NeuralCIs
 from neuralcis.distributions import Distribution
+from neuralcis.common import HAT
 
-from typing import Sequence, Dict, Optional, Callable, Tuple, Union
+from typing import Sequence, Dict, Optional, Callable, Tuple, Union, Any
 from tensor_annotations.tensorflow import Tensor1, float32 as tf32
 from neuralcis.common import Samples
 
@@ -30,7 +31,9 @@ def __param_names_and_medians(
         **value_overrides: float,
 ) -> Dict[str, float]:
 
-    param_values = value_overrides
+    param_values = {n: value_overrides[n]
+                    for n in cis.param_names_in_sim_order
+                    if n in value_overrides}
     for name, dist in zip(cis.param_names_in_sim_order,
                           cis.param_dists_in_sim_order):
         if name not in param_values:
@@ -73,12 +76,30 @@ def __param_names_and_random_values(
     return param_values
 
 
-def __param_names_and_distributions(
+def __add_estimates_equal_to_params(
+        cis: NeuralCIs,
+        param_values: Dict[str, Any],
+        **value_overrides,
+) -> Dict[str, Any]:
+
+    estimate_values = {name: param_values[dehat]
+                       for name, dehat in zip(cis.estimate_names,
+                                              cis._estimate_names_dehatted())}
+    for estimate_name in estimate_values.keys():
+        if estimate_name in value_overrides:
+            estimate_values[estimate_name] = value_overrides[estimate_name]
+
+    return estimate_values | param_values
+
+
+def __estimate_and_param_names_and_distributions(
         cis: NeuralCIs,
 ) -> Dict[str, Distribution]:
 
-    return {name: dist for name, dist in zip(cis.param_names_in_sim_order,
-                                             cis.param_dists_in_sim_order)}
+    param_dists = {name: dist
+                   for name, dist in zip(cis.param_names_in_sim_order,
+                                         cis.param_dists_in_sim_order)}
+    return __add_estimates_equal_to_params(cis, param_dists)
 
 
 def __repeat_params_np(
@@ -110,7 +131,7 @@ def __axis_linspace(
         num_grid: int = 100,
 ):
     std_unif_linspace = tf.constant(np.linspace(0., 1., num_grid), tf.float32)
-    param_dists = __param_names_and_distributions(cis)
+    param_dists = __estimate_and_param_names_and_distributions(cis)
     if lims is None:
         u = std_unif_linspace
         linspace = param_dists[name].from_std_uniform_valid_estimates(u)
@@ -155,9 +176,8 @@ def __get_one_p_value_distribution(
         param_values = __param_names_and_medians(cis, **param_values)
 
     param_tensors = __repeat_params_tf(num_samples, **param_values)
-    param_arrays = __repeat_params_np(num_samples, **param_values)
     estimates = cis.sampling_distribution_fn(**param_tensors)
-    ps_and_cis = cis.ps_and_cis(estimates, param_arrays)
+    ps_and_cis = cis.ps_and_cis(**(estimates | param_tensors))
     ps = ps_and_cis["p"]
 
     return {"p": ps} | param_values
@@ -187,9 +207,10 @@ def __plot_p_value_distribution_once(
 
 
 def __get_axis_types(cis: NeuralCIs) -> Dict[str, str]:
-    return {name: dist.axis_type for name, dist in zip(
-                        cis.param_names_in_sim_order,
-                        cis.param_dists_in_sim_order)}
+    param_axis_types = {name: dist.axis_type
+                        for name, dist in zip(cis.param_names_in_sim_order,
+                                              cis.param_dists_in_sim_order)}
+    return __add_estimates_equal_to_params(cis, param_axis_types)
 
 
 # Because set_xscale does not work in 3d (grrr)
@@ -237,21 +258,16 @@ def __plot_3d_with_axis_types(
 
 
 def __make_pandas(
-        estimates: Optional[Dict] = None,
-        params: Optional[Dict] = None,
+        estimates_and_params: Dict,
         sort_by: Optional[str] = None,
         ascending: bool = False,
         num_rows_to_print: int = 100,
         **further_measures: Union[Tensor1[tf32, Samples], np.ndarray],
 ) -> pd.DataFrame:
 
-    assert estimates is not None or params is not None
-
     all_dfs = []
-    if estimates is not None:
-        all_dfs.append(pd.DataFrame(estimates).add_suffix("_hat"))
-    if params is not None:
-        all_dfs.append(pd.DataFrame(params))
+    if estimates_and_params is not None:
+        all_dfs.append(pd.DataFrame(estimates_and_params))
     if len(further_measures) > 0:
         all_dfs.append(pd.DataFrame(further_measures))
 
@@ -469,7 +485,7 @@ def plot_p_value_cdfs(
     fig.show()
 
     pandas_sorted = __make_pandas(
-        params=params,
+        estimates_and_params=params,
         ks=ks,
         sort_by="ks",
     )
@@ -543,13 +559,10 @@ def cis_surface(
         x_name: str,
         y_name: str,
         z_name: str = "p",
-        x_is_param: bool = False,
-        y_is_param: bool = False,
         x_lims: Optional[Sequence[int]] = None,
         y_lims: Optional[Sequence[int]] = None,
-        param_overrides: Optional[Dict] = None,
-        estimate_overrides: Optional[Dict] = None,
         num_grid: int = 100,
+        **value_overrides,
 ) -> None:
 
     """Plot surface of p, z0, z1, etc against any two other variables.
@@ -581,32 +594,23 @@ def cis_surface(
         cis_surface(cis, "mu", "sigma", param_overrides={"n": 10.})
     """
 
-    if param_overrides is None:
+    if value_overrides is None:
         param_values = __param_names_and_medians(cis)
     else:
-        param_values = __param_names_and_medians(cis, **param_overrides)
+        param_values = __param_names_and_medians(cis, **value_overrides)
 
     axis_types = __get_axis_types(cis)
 
-    estimate_values = {name: param_values[name] for name in cis.estimate_names}
-    if estimate_overrides is not None:
-        for name, override in estimate_overrides.items():
-            estimate_values[name] = override
+    estimates_and_params = __add_estimates_equal_to_params(cis, param_values,
+                                                           **value_overrides)
 
     x_linspace = __axis_linspace(cis, x_name, x_lims, num_grid)
     y_linspace = __axis_linspace(cis, y_name, y_lims, num_grid)
 
-    if x_is_param:
-        param_values[x_name] = x_linspace
-    else:
-        estimate_values[x_name] = x_linspace
+    estimates_and_params[x_name] = x_linspace
+    estimates_and_params[y_name] = y_linspace
 
-    if y_is_param:
-        param_values[y_name] = y_linspace
-    else:
-        estimate_values[y_name] = y_linspace
-
-    xs, ys, zs = cis.values_grid(estimate_values, param_values, (z_name,))
+    xs, ys, zs = cis.values_grid((z_name,), **estimates_and_params)
 
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
     __plot_3d_with_axis_types(ax.plot_surface, ax,
@@ -637,11 +641,11 @@ def compare_power_at_h1(
 
     h1_params = copy.deepcopy(h0_params) | h1_params_different_from_h0_params
 
-    h0_params = __repeat_params_np(num_samples, **h0_params)
+    h0_params = __repeat_params_tf(num_samples, **h0_params)
     h1_params = __repeat_params_tf(num_samples, **h1_params)
     estimates = cis.sampling_distribution_fn(**h1_params)
-    ps_neural = cis.ps_and_cis(estimates, h0_params)["p"]
-    ps_accurate = accurate_p_fn(estimates=estimates, **h0_params)
+    ps_neural = cis.ps_and_cis(**(estimates | h0_params))["p"]
+    ps_accurate = accurate_p_fn(**(estimates |h0_params))
 
     fig, ax = plt.subplots(1, 2)
     ax[0].plot([0, 1], [0, 1], 'r-')
@@ -673,15 +677,15 @@ def compare_techniques_within_estimates_box(
         **h0_params,
 ) -> pd.DataFrame:
 
-    dists = __param_names_and_distributions(cis)
-    tries = num_tries
-    rands = {n: d.from_std_uniform_valid_estimates(tf.random.uniform((tries,)))
-             for n, d in dists.items()}
-    estimates = {name: rands[name] for name in cis.estimate_names}
-    params = rands | __repeat_params_tf(num_tries, **h0_params)
+    dists = __estimate_and_param_names_and_distributions(cis)
+    rand_unif = lambda: tf.random.uniform((num_tries,))
+    estimates_and_params = {n: d.from_std_uniform_valid_estimates(rand_unif())
+                            for n, d in dists.items()}
+    estimates_and_params |= cis.sample_params(num_tries)
+    estimates_and_params |= __repeat_params_tf(num_tries, **h0_params)
 
-    ps_neural = cis.ps_and_cis(estimates, params)["p"]
-    ps_accurate = accurate_p_fn(estimates, **params)
+    ps_neural = cis.ps_and_cis(**estimates_and_params)["p"]
+    ps_accurate = accurate_p_fn(**estimates_and_params)
 
     fig, ax = plt.subplots()
     ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Equal")
@@ -692,8 +696,7 @@ def compare_techniques_within_estimates_box(
     fig.show()
 
     sorted_pandas = __make_pandas(
-        estimates=estimates,
-        params=params,
+        estimates_and_params,
         p_neural=ps_neural,
         p_accurate=ps_accurate,
         p_diff=tf.math.abs(ps_neural - ps_accurate),

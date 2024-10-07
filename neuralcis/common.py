@@ -11,6 +11,8 @@ INSTANCE_VARS = "instancevars"
 WEIGHTS = "weights"
 SEQUENTIAL = "seq"
 
+HAT = "_hat"
+
 # model construction
 NUM_HIDDEN_LAYERS = 7
 NEURONS_PER_LAYER = 50

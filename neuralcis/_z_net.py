@@ -6,7 +6,8 @@ import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 
 from typing import Callable, Tuple, Sequence, Optional
-from neuralcis.common import Params, KnownParams, Ys, Zs, Samples, NetInputs
+from neuralcis.common import Params, KnownParams, Ys, Zs, Samples
+from neuralcis.common import NetInputs, NetOutputs
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 tf32 = ttf.float32
@@ -38,13 +39,16 @@ class _ZNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
+            transform_on_params_fn: Callable[
+                [Tensor2[tf32, Samples, Ys],
+                 Tensor2[tf32, Samples, Params]],
+                Tuple[Tensor2[tf32, Samples, Ys],
+                      Tensor2[tf32, Samples, Params]]
+            ],
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
-            coords_fn: Callable[                                               # coords_fn allows us to remap the ys before they are fed into the znet
-                [Tensor2[tf32, Samples, Ys]],                                  #   -- transformation Jacobians will then reach through this transform
-                Tensor2[tf32, Samples, Ys]                                     #      to give the distribution of the *inputs* to this function.
-            ] = tf.identity,
+            num_params_remaining_after_transform: int,
             **network_setup_args,
     ) -> None:
 
@@ -59,11 +63,11 @@ class _ZNet(_SimulatorNet):
             {},
         ]
         num_estimate = num_unknown_param
-        num_param = num_unknown_param + num_known_param
 
         super().__init__(
             num_inputs_for_each_net=(num_estimate + 1 + num_known_param,
-                                     num_estimate + num_param),
+                                     num_estimate +
+                                     num_params_remaining_after_transform),
             num_outputs_for_each_net=(1, num_unknown_param - 1),
             layer_kwargs=layer_kwargs,
             **network_setup_args
@@ -78,7 +82,7 @@ class _ZNet(_SimulatorNet):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_fn = param_sampling_fn
         self.contrast_fn = contrast_fn
-        self.coords_fn = coords_fn
+        self.transform_on_params_fn = transform_on_params_fn
 
         self.known_param_indices = known_param_indices
 
@@ -129,6 +133,18 @@ class _ZNet(_SimulatorNet):
         )
         return out, det, dz0_dcon
 
+    @tf.function
+    def net_inputs(
+            self,
+            input_blob: NetInputBlob,
+            transform: bool = False,
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
+
+        # TODO: relate this to the contrast rather than "known param" naming
+        ys, params = input_blob
+        contrast = self.contrast_fn(params)
+        return self.net_inputs_from_contrast(contrast, ys, params, transform)
+
     def compute_optimum_loss(self) -> ttf.float32:
         # TODO: the individual losses here are not currently saved.  Need to
         #       rewrite _DataSaver to have functions that can be overridden
@@ -159,31 +175,36 @@ class _ZNet(_SimulatorNet):
         return z[:, 0]
 
     @tf.function
+    def call_tf_transformed(
+            self,
+            input_blob: NetInputBlob,
+    ) -> Tensor2[tf32, Samples, NetOutputs]:
+
+        # This is only for use in the p_workings function to analyse the net.
+        # TODO: must be a cleaner way -- eg. transform input_blob directly
+        net_inputs = self.net_inputs(input_blob, transform=True)
+        return self._call_tf(net_inputs, training=False)
+
+    @tf.function
     def net_inputs_from_contrast(
             self,
             contrast: Tensor1[tf32, Samples],
             ys: Tensor2[tf32, Samples, Ys],
             params: Tensor2[tf32, Samples, Params],
+            transform: bool = False,
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        coords = self.coords_fn(ys)
+        if transform:
+            ys_trans, params_trans = self.transform_on_params_fn(ys, params)
+        else:
+            ys_trans, params_trans = ys, params
+
         contrast = contrast[:, None]
         known_params = tf.gather(params, self.known_param_indices, axis=1)
-        contrast_net_inputs = tf.concat([coords, contrast, known_params],
+        contrast_net_inputs = tf.concat([ys, contrast, known_params],
                                         axis=1)
-        other_net_inputs = tf.concat([coords, params], axis=1)
+        other_net_inputs = tf.concat([ys_trans, params_trans], axis=1)
         return contrast_net_inputs, other_net_inputs
-
-    @tf.function
-    def net_inputs(
-            self,
-            input_blob: NetInputBlob,
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
-
-        # TODO: relate this to the contrast rather than "known param" naming
-        ys, params = input_blob
-        contrast = self.contrast_fn(params)
-        return self.net_inputs_from_contrast(contrast, ys, params)
 
     @tf.function
     def neg_log_likelihoods(
@@ -223,7 +244,8 @@ class _ZNet(_SimulatorNet):
             contrast = self.contrast_fn(params)
             tape.watch(contrast)
 
-            inputs = self.net_inputs_from_contrast(contrast, ys, params)
+            inputs = self.net_inputs_from_contrast(contrast, ys, params,
+                                                   transform=True)
             zs = self._call_tf(inputs, training=training)
             z0 = zs[:, 0]
 
@@ -251,3 +273,17 @@ class _ZNet(_SimulatorNet):
         params = self.sample_params(n)
         y = self.sampling_distribution_fn(params)
         return y, params
+
+    @tf.function
+    def z(
+            self,
+            ys: Tensor2[tf32, Samples, Ys],
+            params: Tensor2[tf32, Samples, Params],
+    ) -> Tensor1[tf32, Samples]:
+
+        # We need a separate function for this, as we might not have our
+        # params in the right format for the second net after a transform
+        # on estimates call.
+        net0_inputs, _ = self.net_inputs((ys, params))
+        z = self.nets[0](net0_inputs)[:, 0]
+        return z

@@ -28,9 +28,16 @@ class _PNet(_DataSaver):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
+            transform_on_params_fn: Callable[
+                [Tensor2[tf32, Samples, Estimates],
+                 Tensor2[tf32, Samples, Params]],
+                Tuple[Tensor2[tf32, Samples, Estimates],
+                      Tensor2[tf32, Samples, Params]]
+            ],
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
+            num_params_remaining_after_transform: int,
             param_sampling_net: _ParamSamplingNet,
             **network_setup_args,
     ) -> None:
@@ -43,9 +50,11 @@ class _PNet(_DataSaver):
             self.sampling_distribution_fn,                                     # type: ignore
             self.param_sampling_net.sample_params,
             contrast_fn,
+            transform_on_params_fn,
             num_unknown_param,
             num_known_param,
             known_param_indices,
+            num_params_remaining_after_transform,
             **network_setup_args,
         )
 
@@ -66,8 +75,8 @@ class _PNet(_DataSaver):
             params_null: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
-        zs = self.znet.call_tf((estimates, params_null))
-        return self.ps_from_zs(zs)                                             # type: ignore
+        z = self.znet.z(estimates, params_null)
+        return self.p_from_z(z)
 
     @tf.function
     def p_from_contrast(
@@ -82,15 +91,15 @@ class _PNet(_DataSaver):
         #       users of this func.
 
         z = self.znet.call_tf_contrast_only(estimates, contrast, known_params)
-        return self.ps_from_zs(z[:, None])
+        return self.p_from_z(z[:, None])
 
     @tf.function
-    def ps_from_zs(
+    def p_from_z(
             self,
-            zs: Tensor2[tf32, Samples, Zs],
-    ):
+            z: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
 
-        cdf = tfp.distributions.Normal(0., 1.).cdf(zs[:, 0])
+        cdf = tfp.distributions.Normal(0., 1.).cdf(z)
         p = 1. - tf.math.abs(cdf * 2. - 1.)
 
         return p                                                               # type: ignore
@@ -108,8 +117,8 @@ class _PNet(_DataSaver):
         #       used in training of CINet, this is important.  Not sure though
         #       and should check.
 
-        zs = self.znet.call_tf((estimates, params_null))
-        ps = self.ps_from_zs(zs)
+        zs = self.znet.call_tf_transformed((estimates, params_null))
+        ps = self.p_from_z(zs[:, 0])
         feeler_net = self.param_sampling_net.feeler_net
         feeler_outputs = feeler_net.call_tf(params_null)                       # type: ignore
         feeler_final = feeler_net.get_log_importance_from_net(params_null)
