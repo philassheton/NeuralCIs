@@ -1,4 +1,5 @@
 import copy
+from collections import abc
 
 import pandas as pd
 import tensorflow as tf
@@ -222,6 +223,7 @@ def __plot_3d_with_axis_types(
         z: np.ndarray,
         x_axis_type: str,   # currently either "log" or "linear"
         y_axis_type: str,
+        z_axis_lims: Optional[Sequence[float]],
 ):
 
     def round_log_scale_ticks(v: np.ndarray, sf=1):
@@ -249,6 +251,10 @@ def __plot_3d_with_axis_types(
     x, x_ticks, x_tick_labels = transform_axis(x, x_axis_type)
     y, y_ticks, y_tick_labels = transform_axis(y, y_axis_type)
 
+    if z_axis_lims is not None:
+        z = tf.math.maximum(z, z_axis_lims[0])
+        z = tf.math.minimum(z, z_axis_lims[1])
+
     plot_fn(x, y, z)
 
     ax.set_xticks(x_ticks)
@@ -273,7 +279,9 @@ def __make_pandas(
 
     df = pd.concat(all_dfs, axis=1)
     if sort_by is not None:
-        df = df.sort_values(by=sort_by, ascending=ascending)
+        df = df.sort_values(by=sort_by,
+                            ascending=ascending).reset_index().drop("index",
+                                                                    axis=1)
 
     if num_rows_to_print > 0:
         with pd.option_context("display.max_columns", None,
@@ -401,6 +409,8 @@ def plot_p_value_cdfs(
         randomize_unspecified_params: bool = True,
         from_estimates_box_only: bool = True,
         sampling_dist_percent: float = 99,
+        params_df: Optional[pd.DataFrame] = None,
+        params_df_rows: Union[None, int, Sequence[int]] = None,
         **param_values: float,
 ) -> pd.DataFrame:
 
@@ -430,6 +440,15 @@ def plot_p_value_cdfs(
         dashed lines will enclose the theoretical inner 99% of the sampling
         distribution of these empirical CDFs, on the null that they come from
         a uniform distribution.
+    :param params_df: An optional pandas.DataFrame that contains the param
+        values to use, each in their own column.  One example that would be
+        valid here is the dataframe returned by a previous run of this
+        function.
+    :param params_df_rows: An optional int, or sequence of ints, specifying
+        which rows of the dataframe to focus on.  If None and a `params_df`
+        is passed in, all rows of the DataFrame will be used; if None and no
+        `params_df` is passed in, `num_cdf` random parameters will be used.
+        If `params_df` is None, this must also be None.
     :param **param_values:  A set of float overrides used to set a given
         parameter to a given fixed value in all histograms.
 
@@ -439,33 +458,60 @@ def plot_p_value_cdfs(
         plot_p_value_distributions(cis, n=20.)
     """
 
+    if params_df is None:
+        assert params_df_rows is None
+        indices = range(num_cdfs)
+    else:
+        num_df_rows, _ = params_df.shape
+        if params_df_rows is None:
+            indices = range(num_df_rows)
+        elif isinstance(params_df_rows, int):
+            indices = [params_df_rows]
+        elif isinstance(params_df_rows, abc.Sequence):
+            indices = params_df_rows
+        else:
+            raise Exception("params_df_rows can only be None, int or"
+                            " Sequence[int]!!!")
+
     print("Generating CDFs; this may take a few seconds")
-    alpha = 1. / np.sqrt(num_cdfs)
-    fig, axes = plt.subplots(1, 2)
+    alpha = 1. / np.sqrt(len(indices))
+    fig, axes = plt.subplots(1, 3)
     y = np.linspace(0., 1., num_samples)
     params = {n: np.array([]) for n in cis.param_names_in_sim_order}
     ks = np.array([])
-    for _ in tqdm(range(num_cdfs)):
+    for i in tqdm(indices):
+        if params_df is not None:
+            params_i = (
+                    params_df.loc[i, cis.param_names_in_sim_order].to_dict() |
+                    param_values
+            )
+        else:
+            params_i = param_values
+
         cdf_etc = __get_one_p_value_distribution(cis,
                                                  num_samples,
                                                  randomize_unspecified_params,
                                                  from_estimates_box_only,
-                                                 **param_values)
+                                                 **params_i)
         cdf = cdf_etc.pop("p")
         cdf.sort()
-        for ax in axes:
+        for ax in axes[0:2]:
             ax.plot(cdf, y, alpha=alpha, c="black")
+        axes[2].plot(cdf, y - cdf, alpha=alpha, c="black")
 
         ks = np.append(ks, np.max(np.abs(cdf - y)))
         for name, value in cdf_etc.items():
             params[name] = np.append(params[name], value)
 
-    for ax in axes:
+    for ax in axes[0:2]:
         ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Uniform")
 
         ax.set_xlabel("p-Value")
         ax.set_ylabel("CDF")
         ax.set_aspect("equal")
+    axes[2].set_xlabel("p-Value")
+    axes[2].set_ylabel("Distance from uniform")
+    axes[2].set_box_aspect(1)
 
     axes[1].plot([.01, 1], [0, .99], c="cyan", linestyle="--", label="+/- .01")
     axes[1].plot([0, .99], [.01, 1], c="cyan", linestyle="--")
@@ -559,8 +605,9 @@ def cis_surface(
         x_name: str,
         y_name: str,
         z_name: str = "p",
-        x_lims: Optional[Sequence[int]] = None,
-        y_lims: Optional[Sequence[int]] = None,
+        x_lims: Optional[Sequence[float]] = None,
+        y_lims: Optional[Sequence[float]] = None,
+        z_lims: Optional[Sequence[float]] = None,
         num_grid: int = 100,
         **value_overrides,
 ) -> None:
@@ -583,6 +630,7 @@ def cis_surface(
         limits that the x-axis will be plotted between.  If the axis is a log
         variable, make sure not to include zero or less than zero in this.
     :param y_lims:  See x_lims.
+    :param z_lims:  See x_lims; will be used to limit the values of z.
     :param estimate_overrides:  An optional dict; see param_overrides.
     :param num_grid:  An int, default 100; number of grid points on each axis.
 
@@ -615,7 +663,7 @@ def cis_surface(
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
     __plot_3d_with_axis_types(ax.plot_surface, ax,
                               xs, ys, zs,
-                              axis_types[x_name], axis_types[y_name])
+                              axis_types[x_name], axis_types[y_name], z_lims)
     ax.set_xlabel(x_name)
     ax.set_ylabel(y_name)
     ax.set_zlabel(z_name)
