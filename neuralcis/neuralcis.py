@@ -227,8 +227,10 @@ class NeuralCIs(_DataSaver):
         if foldername is not None:
             _DataSaver.load(self, foldername, common.CIS_FILE_START)
 
-    def tf_fun(self, func: Union[Callable, TFFunction]) -> TFFunction:
-        if isinstance(func, TFFunction):
+    def tf_fun(self, func: Union[None, Callable, TFFunction]) -> TFFunction:
+        if func is None:
+            return None
+        elif isinstance(func, TFFunction):
             return func
         else:
             return tf.function(func)
@@ -329,6 +331,7 @@ class NeuralCIs(_DataSaver):
             self,
             conf_levels: Optional[np.ndarray] = None,
             extra_values_names: Sequence[str] = (),
+            apply_transform: bool = True,
             **estimates_and_params: Union[Tensor1[tf32, Samples], np.ndarray],
     ) -> Dict[str, np.ndarray]:
 
@@ -356,13 +359,14 @@ class NeuralCIs(_DataSaver):
         estimates_and_params_tf = {k: tf.constant(v, tf.float32)
                                    for k, v in estimates_and_params.items()}
 
-        estimates_and_params_trans = self._transform_on_estimates(
-            **estimates_and_params_tf
-        )
+        if apply_transform:
+            estimates_and_params_tf = self._transform_on_estimates(
+                **estimates_and_params_tf
+            )
 
-        estimates_tf = [estimates_and_params_trans[n]
+        estimates_tf = [estimates_and_params_tf[n]
                         for n in self.estimate_names]
-        params_tf = [estimates_and_params_trans[n] for
+        params_tf = [estimates_and_params_tf[n] for
                      n in self.param_names_in_sim_order]
 
         estimates_uniform = self._estimates_to_net(*estimates_tf)

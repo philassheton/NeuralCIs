@@ -166,6 +166,7 @@ def __get_one_p_value_distribution(
         num_samples: int,
         randomize_unspecified_params: bool,
         from_estimates_box_only: bool,
+        apply_transform: bool,
         **param_values: float,
 ) -> Dict[str, Union[np.ndarray, float]]:
 
@@ -178,7 +179,8 @@ def __get_one_p_value_distribution(
 
     param_tensors = __repeat_params_tf(num_samples, **param_values)
     estimates = cis.sampling_distribution_fn(**param_tensors)
-    ps_and_cis = cis.ps_and_cis(**(estimates | param_tensors))
+    ps_and_cis = cis.ps_and_cis(**(estimates | param_tensors),
+                                apply_transform=apply_transform)
     ps = ps_and_cis["p"]
 
     return {"p": ps} | param_values
@@ -411,6 +413,7 @@ def plot_p_value_cdfs(
         sampling_dist_percent: float = 99,
         params_df: Optional[pd.DataFrame] = None,
         params_df_rows: Union[None, int, Sequence[int]] = None,
+        apply_transform: bool = True,
         **param_values: float,
 ) -> pd.DataFrame:
 
@@ -492,6 +495,7 @@ def plot_p_value_cdfs(
                                                  num_samples,
                                                  randomize_unspecified_params,
                                                  from_estimates_box_only,
+                                                 apply_transform,
                                                  **params_i)
         cdf = cdf_etc.pop("p")
         cdf.sort()
