@@ -181,6 +181,9 @@ class _ZNet(_SimulatorNet):
     ) -> Tensor2[tf32, Samples, NetOutputs]:
 
         # This is only for use in the p_workings function to analyse the net.
+        #  -- NB This is ONLY needed if we are accessing the second z-net,
+        #     since at inference time the first should be transformed on
+        #     estimates which is done in the neuralcis object
         # TODO: must be a cleaner way -- eg. transform input_blob directly
         net_inputs = self.net_inputs(input_blob, transform=True)
         return self._call_tf(net_inputs, training=False)

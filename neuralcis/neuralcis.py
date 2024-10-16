@@ -281,9 +281,9 @@ class NeuralCIs(_DataSaver):
     def values_grid(
             self,
             value_names: Sequence[str] = ("p",),
-            return_also_axes: bool = True,
+            return_also_axes: Sequence[str] = (),
             **estimates_and_params: Union[np.ndarray, tf.Tensor, float],
-    ) -> Sequence[np.ndarray]:
+    ) -> List[np.ndarray]:
 
         """Calculate the p-value across a grid of estimates and/or params.
 
@@ -295,9 +295,11 @@ class NeuralCIs(_DataSaver):
         :param value_names: Sequence of strs (default contains only "p");
          list of values to be returned.  Currently also supports "z0", "z1",
          etc., as well as "{estimate_name}_lower" and "{estimate_name}_upper".
-        :param return_also_axes: A bool (default True) that determines whether
-         all the axes (estimates, params, etc) are returned.  If False, just
-         one grid of p-values are returned.
+        :param return_also_axes: A sequence of str values: the names of the
+         axes that should also be returned.  If this is not empty, the return
+         type will be a list with these axes first, and the output values
+         grid last.  If it is (), a list with only the requested `value_names`
+         is returned.
         :param **estimates_and_params: Named arguments mapping each estimate
          and param name to either a range/sequence of values, or to a single
          fixed value.
@@ -321,10 +323,12 @@ class NeuralCIs(_DataSaver):
         values_seq = [np.squeeze(np.reshape(values_dict[n], shape))
                       for n in value_names]
 
-        if return_also_axes:
-            return [np.squeeze(gr)
-                    for gr, inp in zip(all_grids, all_values)
-                    if inp.shape != ()] + values_seq
+        if len(return_also_axes) > 0:
+            estimates_params_grids = {n: g for n, g in zip(all_names,
+                                                           all_grids)}
+            return_grids = [np.squeeze(estimates_params_grids[n])
+                            for n in return_also_axes]
+            return return_grids + values_seq
         else:
             return values_seq
 

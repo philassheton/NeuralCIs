@@ -256,7 +256,12 @@ def __plot_3d_with_axis_types(
         z: np.ndarray,
         x_axis_type: str,   # currently either "log" or "linear"
         y_axis_type: str,
-        z_axis_lims: Optional[Sequence[float]],
+        z_axis_type: str = "linear",
+        x_name: str = "",
+        y_name: str = "",
+        z_name: str = "",
+        z_axis_lims: Optional[Sequence[float]] = None,
+        **extra_args,
 ):
 
     def round_log_scale_ticks(v: np.ndarray, sf=1):
@@ -281,19 +286,27 @@ def __plot_3d_with_axis_types(
 
         return v, tick_points, tick_labels
 
+    if z_axis_lims is not None:
+        z = np.maximum(z, z_axis_lims[0])
+        z = np.minimum(z, z_axis_lims[1])
+
     x, x_ticks, x_tick_labels = transform_axis(x, x_axis_type)
     y, y_ticks, y_tick_labels = transform_axis(y, y_axis_type)
+    z, z_ticks, z_tick_labels = transform_axis(z, z_axis_type)
 
-    if z_axis_lims is not None:
-        z = tf.math.maximum(z, z_axis_lims[0])
-        z = tf.math.minimum(z, z_axis_lims[1])
-
-    plot_fn(x, y, z)
+    plot_fn(x, y, z, **extra_args)
 
     ax.set_xticks(x_ticks)
     ax.set_xticklabels(x_tick_labels)
+    ax.set_xlabel(x_name)
+
     ax.set_yticks(y_ticks)
     ax.set_yticklabels(y_tick_labels)
+    ax.set_ylabel(y_name)
+
+    ax.set_zticks(z_ticks)
+    ax.set_zticklabels(z_tick_labels)
+    ax.set_zlabel(z_name)
 
 
 def __make_pandas(
@@ -546,6 +559,7 @@ def plot_p_value_cdfs(
         ax.set_aspect("equal")
     axes[2].set_xlabel("p-Value")
     axes[2].set_ylabel("Distance from uniform")
+    axes[2].set_ylim(-0.02, 0.02)
     axes[2].set_box_aspect(1)
 
     axes[1].plot([.01, 1], [0, .99], c="cyan", linestyle="--", label="+/- .01")
@@ -693,15 +707,16 @@ def cis_surface(
     estimates_and_params[x_name] = x_linspace
     estimates_and_params[y_name] = y_linspace
 
-    xs, ys, zs = cis.values_grid((z_name,), **estimates_and_params)
+    xs, ys, zs = cis.values_grid(value_names=(z_name,),
+                                 return_also_axes=(x_name, y_name),
+                                 **estimates_and_params)
 
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
     __plot_3d_with_axis_types(ax.plot_surface, ax,
                               xs, ys, zs,
-                              axis_types[x_name], axis_types[y_name], z_lims)
-    ax.set_xlabel(x_name)
-    ax.set_ylabel(y_name)
-    ax.set_zlabel(z_name)
+                              axis_types[x_name], axis_types[y_name], "linear",
+                              x_name, y_name, z_name,
+                              z_lims)
     fig.show()
 
 
@@ -757,6 +772,7 @@ def compare_techniques_within_estimates_box(
         ],
         accurate_p_name: str = "Accurate Method",
         num_tries: int = 1000,
+        apply_transform: bool = True,
         **h0_params,
 ) -> pd.DataFrame:
 
@@ -764,18 +780,26 @@ def compare_techniques_within_estimates_box(
     rand_unif = lambda: tf.random.uniform((num_tries,))
     estimates_and_params = {n: d.from_std_uniform_valid_estimates(rand_unif())
                             for n, d in dists.items()}
-    estimates_and_params |= cis.sample_params(num_tries)
+    estimates_and_params |= __sample_params_inner_zone(cis, num_tries)
     estimates_and_params |= __repeat_params_tf(num_tries, **h0_params)
 
-    ps_neural = cis.ps_and_cis(**estimates_and_params)["p"]
+    ps_neural = cis.ps_and_cis(**estimates_and_params,
+                               apply_transform=apply_transform)["p"]
     ps_accurate = accurate_p_fn(**estimates_and_params)
 
-    fig, ax = plt.subplots()
-    ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Equal")
-    ax.scatter(ps_accurate.numpy(), ps_neural, alpha=0.1)
-    ax.set_xlabel(accurate_p_name)
-    ax.set_ylabel("Neural CIs p-Value")
-    ax.set_aspect("equal")
+    fig, ax = plt.subplots(1, 2)
+    ax[0].plot([0, 1], [0, 1], c="red", linestyle="--", label="Equal")
+    ax[0].scatter(ps_accurate.numpy(), ps_neural, alpha=0.1)
+    ax[0].set_xlabel(accurate_p_name)
+    ax[0].set_ylabel("Neural CIs p-Value")
+    ax[0].set_aspect("equal")
+
+    ax[1].scatter(ps_accurate.numpy(),
+                  ps_neural - ps_accurate.numpy(),
+                  alpha=0.1)
+    ax[1].set_xlabel(accurate_p_name)
+    ax[1].set_ylabel("Neural CIs p-Value error")
+    ax[1].set_box_aspect(1)
     fig.show()
 
     sorted_pandas = __make_pandas(
