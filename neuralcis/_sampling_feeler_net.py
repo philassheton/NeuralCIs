@@ -48,9 +48,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             **network_setup_args,
     ) -> None:
 
-        cache_size = (num_chains * chain_length +
-                      num_peripheral_batches * peripheral_batch_size)
-
         feeler_data_generator = _SamplingFeelerGenerator(
             estimates_min_and_max,
             sampling_distribution_fn,
@@ -65,7 +62,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         )
 
         super().__init__(
-            cache_size=cache_size,
             num_inputs_for_each_net=(num_unknown_param + num_known_param,),
             num_outputs_for_each_net=(NUM_IMPORTANCE_INGREDIENTS,),
             subobjects_to_save=({"feelergen": feeler_data_generator}),
@@ -85,28 +81,33 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
     def simulate_training_data_cache(
             self,
-            n: int,
-    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
+    ) -> Tuple[Tuple[NetInputSimulationBlob, NetTargetBlob],
+               Tensor1[ttf.float64, Indices]]:
 
-        assert n == self.cache_size
         self.feeler_data_generator.fit()
 
         mins, maxs = self.feeler_data_generator.mins_and_maxs_valid()
         self.min_params_valid.assign(mins)
         self.max_params_valid.assign(maxs)
 
-        sim_blob, target_blob = self.get_data_from_generator()
+        sim_blob, target_blob, indices = self.get_data_from_generator()
 
-        return sim_blob, target_blob
+        return (sim_blob, target_blob), indices
 
     def get_data_from_generator(
             self
-    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
+    ) -> Tuple[NetInputSimulationBlob,
+               NetTargetBlob,
+               Tensor1[ttf.float64, Samples]]:
 
         sim_blob = (self.feeler_data_generator.sampled_params,
                     self.feeler_data_generator.sampled_chols)
         target_blob = self.feeler_data_generator.sampled_targets
-        return sim_blob, target_blob
+
+        non_nan_indices = tf.where(~tf.math.is_nan(target_blob[:, 0]))[:, 0]
+        print(f"{len(non_nan_indices)} / {target_blob.shape[0]} were not NaN!")
+
+        return sim_blob, target_blob, non_nan_indices
 
     @tf.function
     def pick_indices_from_cache(

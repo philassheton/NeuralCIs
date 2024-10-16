@@ -14,14 +14,13 @@ from neuralcis.common import NetInputSimulationBlob, Indices
 class _SimulatorNetCached(_SimulatorNet, ABC):
     def __init__(
             self,
-            cache_size: int,
             **sim_net_kwargs,
     ) -> None:
 
         super().__init__(**sim_net_kwargs)
-        self.cache_size = cache_size
         self.current_index = tf.Variable(0)
         self.cache = None
+        self.cache_size = None
 
     def get_ready_for_training(
             self,
@@ -29,9 +28,10 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
 
         super().get_ready_for_training()
         if self.cache is None:
-            self.cache = self.simulate_training_data_cache(self.cache_size)
-            random_order = tf.random.shuffle(tf.range(self.cache_size))
+            self.cache, indices = self.simulate_training_data_cache()
+            random_order = tf.random.shuffle(indices)
             self.cache = self.pick_indices_from_cache(self.cache, random_order)
+            self.cache_size = len(indices)
 
     @tf.function
     def simulate_training_data(
@@ -54,8 +54,11 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
     @abstractmethod
     def simulate_training_data_cache(
             self,
-            n: ttf.int32,
-    ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
+    ) -> Tuple[Tuple[NetInputSimulationBlob, NetTargetBlob],                   # Cache
+               Tensor1[ttf.float64, Indices]]:                                 # Indices of cache to use
+
+        # By allowing the subclass to pass back indices, we allow larger caches
+        # since we don't have to subset the cache twice.
 
         pass
 
@@ -63,7 +66,7 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
     def pick_indices_from_cache(
             self,
             cache: Tuple[NetInputSimulationBlob, NetTargetBlob],
-            indices: Tensor1[ttf.int16, Indices],
+            indices: Tensor1[ttf.int64, Indices],
     ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         pass
