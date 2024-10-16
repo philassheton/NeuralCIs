@@ -27,6 +27,10 @@ class _ParamSamplingNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],                 # params
                 Tensor2[tf32, Samples, Estimates],                # -> ys
             ],
+            preprocess_params_fn: Callable[
+                [Tensor2[tf32, Samples, Params]],
+                Tensor2[tf32, Samples, Params]
+            ],
             num_unknown_param: int,
             num_known_param: int,
             estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
@@ -52,6 +56,7 @@ class _ParamSamplingNet(_SimulatorNet):
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
         self.sampling_distribution_fn = sampling_distribution_fn
+        self.preprocess_params_fn = preprocess_params_fn
 
     @tf.function
     def simulate_training_data(
@@ -156,4 +161,5 @@ class _ParamSamplingNet(_SimulatorNet):
 
         us = self.simulate_us(n)
         params = self.call_tf(us)
-        return params                                                          # type: ignore
+        params_preprocessed = self.preprocess_params_fn(params)                # type: ignore
+        return params_preprocessed

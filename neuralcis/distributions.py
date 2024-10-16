@@ -49,6 +49,14 @@ class Distribution(ABC):
                                 + estimate_min_std_unif)
         return self.from_std_uniform(std_uniform_tensor)
 
+    @tf.function
+    def preprocess(
+            self,
+            std_uniform_tensor: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return std_uniform_tensor
+
 
 class TransformUniformDistribution(Distribution):
     uniform_min: Tensor0
@@ -112,16 +120,35 @@ class TransformUniformDistribution(Distribution):
 class LogUniform(TransformUniformDistribution):
     axis_type = "log"
 
+    @tf.function
     def to_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
         return tf.math.log(x)                                                  # type: ignore
 
+    @tf.function
     def from_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
         return tf.math.exp(x)                                                  # type: ignore
 
 
 class Uniform(TransformUniformDistribution):
+    @tf.function
     def to_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
         return x
 
+    @tf.function
     def from_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
         return x
+
+
+class PositiveCount(LogUniform):
+
+    @tf.function
+    def preprocess(
+            self,
+            std_uniform_tensor: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        n_unround = self.from_std_uniform(std_uniform_tensor) + 0.5
+        n_round = tf.floor(n_unround + 0.5)
+        std_uniform_round = self.to_std_uniform(n_round)
+
+        return std_uniform_round

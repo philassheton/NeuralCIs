@@ -192,6 +192,7 @@ class NeuralCIs(_DataSaver):
         ]
         self.param_sampling_net = _ParamSamplingNet(
             self._sampling_dist_net_interface,
+            self._preprocess_params_net_interface,
             num_unknown_param, num_known_param, estimates_min_and_max,
             train_initial_weights=train_initial_weights, **network_setup_args
         )
@@ -541,6 +542,24 @@ class NeuralCIs(_DataSaver):
         params_net = self._std_uniform_to_net(params_uniform)
 
         return estimates_net, params_net
+
+    @tf.function
+    def _preprocess_params_net_interface(
+            self,
+            params_transformed: Tensor2[tf32, Samples, Params],
+    ) -> Tensor2[tf32, Samples, Params]:
+
+        # TODO: First cut with some copy paste.  MUST be refactored!!
+        uniform = self._std_uniform_from_net(params_transformed)
+        uniform_net_order = tf.unstack(uniform, num=self.num_param, axis=1)
+        uniform_sim_order = self._reorder(uniform_net_order,
+                                          self.net_to_sim_order)
+        dist_unif = zip(self.param_dists_in_sim_order, uniform_sim_order)
+        unif_preproc = [dist.preprocess(unif) for dist, unif in dist_unif]
+        unif_net_order = self._reorder(unif_preproc, self.sim_to_net_order)
+        params_std_uniform_stacked = tf.stack(unif_net_order, axis=1)
+
+        return self._std_uniform_to_net(params_std_uniform_stacked)
 
     def _transform_on_estimates(
             self,
