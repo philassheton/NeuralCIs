@@ -1,5 +1,6 @@
 from neuralcis._simulator_net_cached import _SimulatorNetCached
 from neuralcis._sampling_feeler_generator import _SamplingFeelerGenerator
+from neuralcis._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
 from neuralcis import common
 
 import tensorflow as tf
@@ -23,7 +24,6 @@ NetInputSimulationBlob = Tuple[
 NetInputBlob = Tensor2[tf32, Samples, Params]
 NetOutputBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
-NUM_IMPORTANCE_INGREDIENTS = 2
 
 
 class _SamplingFeelerNet(_SimulatorNetCached):
@@ -170,7 +170,9 @@ class _SamplingFeelerNet(_SimulatorNetCached):
     ) -> Tensor1[tf32, Samples]:
 
         importance_ingredients = self.call_tf(params)
-        importance_log = tf.reduce_sum(importance_ingredients, axis=1)
+        importance_log = self.feeler_data_generator.get_log_importance(
+            importance_ingredients
+        )
 
         # Add a punitive amount for being outside the region sampled from
         param_too_low_by = tf.maximum(self.min_params_valid[None, :] - params,

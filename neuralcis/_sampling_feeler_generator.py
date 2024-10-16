@@ -14,7 +14,7 @@ from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
 
 tf32 = ttf.float32
-NUM_IMPORTANCE_INGREDIENTS = 2
+NUM_IMPORTANCE_INGREDIENTS = 3
 NetInputSimulationBlob = Tuple[
     Tensor2[tf32, Samples, Params],                           # Centroid
     Tensor3[tf32, Samples, UnknownParams, UnknownParams],     # Cholesky factor
@@ -206,9 +206,6 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         self.sampled_targets = \
             tf.concat([self.sampled_targets, peripheral_targets], axis=0)
 
-        self.min_params_valid = mins_valid
-        self.max_params_simulated = maxs_valid
-
         print(f"{datetime.now()} -- Param samples generated!")
 
     def mins_and_maxs_valid(
@@ -268,6 +265,20 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             (num_samples, NUM_IMPORTANCE_INGREDIENTS),
         )
 
+        num_in_each_zone = tf.reduce_sum(tf.cast(
+            self.sampled_targets > common.NEGLIGIBLE_LOG,
+            tf.int64
+        ), axis=0)
+        num_in_both_zones = tf.reduce_sum(tf.cast(
+            (self.sampled_targets[:, 1] > common.NEGLIGIBLE_LOG) &
+            (self.sampled_targets[:, 2] > common.NEGLIGIBLE_LOG),
+            tf.int64
+        ), axis=0)
+        print(f"{self.sampled_targets.shape[0]} samples:"
+              f" {num_in_each_zone[1]} in large zone,"
+              f" {num_in_each_zone[2]} in small zone."
+              f" ({num_in_both_zones} in both zones; should equal small)")
+
     def initialise_for_training(self):
         self.iteration_num.assign(0)
 
@@ -300,9 +311,6 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         self.sampled_targets = tf.Variable(tf.fill((n, i), np.nan),
                                            dtype=tf.float32)
         super().load(*args, **kwargs)
-        mins, maxs = self.mins_and_maxs_valid()
-        self.min_params_valid = mins
-        self.min_params_valid = maxs
 
     @tf.function
     def assign_iteration_results(
@@ -480,7 +488,13 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         eps = common.SMALLEST_LOGABLE_NUMBER
 
+        # TODO: Since this will not anyway be the right way mathematically,
+        #       just putting this in as a quick method.  If we were to stay
+        #       with this approach, it should be possible to save effort
+        #       by computing both together.
         overlaps = self.overlaps_estimates_box(centroid, cov_chol)
+        overlaps_wider = self.overlaps_estimates_box(centroid, 3. * cov_chol)
+
         known_params = params[:, self.num_unknown_param:]
         known_params_valid = tf.math.reduce_all(
             (known_params >= common.PARAMS_MIN)
@@ -493,10 +507,22 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         importance_ingredients_unlog = tf.stack([
             importance_if_overlaps,
-            overlaps * known_params_valid
+            overlaps_wider * known_params_valid,
+            overlaps * known_params_valid,
         ], axis=1)
 
         return tf.math.log(importance_ingredients_unlog + eps)                 # type: ignore
+
+    @tf.function
+    def get_log_importance(
+            self,
+            importance_ingredients: Tensor2[tf32, Chains,
+                                                  ImportanceIngredients]
+    ) -> Tensor1[tf32, Chains]:
+
+        vol = common.IMPORTANCE_INGREDIENTS_VOLUMES_INDEX
+        samp = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
+        return importance_ingredients[:, vol] + importance_ingredients[:, samp]
 
     @tf.function
     def get_importance(
@@ -505,7 +531,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                                                   ImportanceIngredients]
     ) -> Tensor1[tf32, Chains]:
 
-        return tf.math.exp(tf.reduce_sum(importance_ingredients, axis=1))
+        return tf.math.exp(self.get_log_importance(importance_ingredients))
 
     @tf.function
     def overlaps_estimates_box(

@@ -43,36 +43,67 @@ def __param_names_and_medians(
     return param_values
 
 
+def __sample_params_inner_zone(
+        cis: NeuralCIs,
+        num_samples: int,
+        batch_size: int = 100000,
+        verbose: bool = False,
+) -> Dict[str, Tensor1[tf32, Samples]]:
+
+    params = {n: [] for n in cis.param_names_in_sim_order}
+    total_samples_selected = 0
+    total_samples_tried = 0
+    total_samples_inside_inner = 0
+    total_samples_inside_outer = 0
+    while total_samples_selected < num_samples:
+        total_samples_tried += batch_size
+        trial_params = cis.sample_params(batch_size)
+
+        # TODO: This might want to live in neuralcis object
+        sim_order_params = [trial_params[n]
+                            for n in cis.param_names_in_sim_order]
+        net_params = cis._params_to_net(*sim_order_params)
+
+        importance_ingredients = cis.param_sampling_net.feeler_net.call_tf(
+            net_params
+        )
+        in_outer_boundary = importance_ingredients[:, 1] > -3.
+        in_inner_boundary = importance_ingredients[:, 2] > -3.
+
+        total_samples_inside_inner += tf.reduce_sum(tf.cast(in_inner_boundary,
+                                                            tf.int64)).numpy()
+        total_samples_inside_outer += tf.reduce_sum(tf.cast(in_outer_boundary,
+                                                            tf.int64)).numpy()
+
+        num_to_select = tf.minimum(
+            total_samples_inside_inner,
+            num_samples,
+        ) - total_samples_selected
+
+        selected = tf.where(in_inner_boundary)[:num_to_select, 0]
+        for n in cis.param_names_in_sim_order:
+            params[n].append(tf.gather(trial_params[n], selected, axis=0))
+        total_samples_selected += num_to_select
+
+    params = {n: tf.concat(params[n], axis=0)
+              for n in cis.param_names_in_sim_order}
+
+    if verbose:
+        print("%.0f%% of samples were in inner and %.0f%% in outer" %
+              (total_samples_inside_inner / total_samples_tried * 100,
+               total_samples_inside_outer / total_samples_tried * 100))
+
+    return params
+
+
 def __param_names_and_random_values(
         cis: NeuralCIs,
         from_estimates_box_only: bool = False,
         **value_overrides,
 ) -> Dict[str, float]:
 
-    if len(value_overrides) and not from_estimates_box_only:
-        raise ValueError('If drawing parameters randomly from the '
-                         'param sampling distribution, it is only '
-                         'possible to draw all parameters at once, '
-                         'since I do not currently have a way to '
-                         'compute a conditional distribution on this '
-                         'at present.  You can still randomize '
-                         'parameters within the estimates box AND '
-                         'have parameter overrides, by setting '
-                         'from_estimates_box_only=True.  This '
-                         'will only generate params within the valid '
-                         'estimates box, but will allow you to fix '
-                         'any number of the parameters.')
-
-    if from_estimates_box_only:
-        param_values = value_overrides
-        for name, dist in zip(cis.param_names_in_sim_order,
-                              cis.param_dists_in_sim_order):
-            if name not in param_values:
-                r = np.random.rand()
-                param_values[name] = dist.from_std_uniform_valid_estimates(r)
-    else:
-        random_params = cis.sample_params(1)
-        param_values = {n: float(p.numpy()) for n, p in random_params.items()}
+    random_params = __sample_params_inner_zone(cis, 1, batch_size=20)
+    param_values = {n: float(p.numpy()) for n, p in random_params.items()}
 
     return param_values
 
