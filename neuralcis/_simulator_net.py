@@ -208,6 +208,10 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         if self.train_initial_weights:
             self.rescale_layer_weights()
 
+    def erase_weights(self):
+        for net in self.nets:
+            net.erase_weights()
+
     ###########################################################################
     #
     #  Methods overridden from tf.keras.Model
