@@ -225,7 +225,11 @@ class NeuralCIs(_DataSaver):
         if foldername is not None:
             _DataSaver.load(self, foldername, common.CIS_FILE_START)
 
-    def tf_fun(self, func: Union[None, Callable, TFFunction]) -> TFFunction:
+    @staticmethod
+    def tf_fun(
+            func: Union[None, Callable, TFFunction]
+    ) -> Optional[TFFunction]:
+
         if func is None:
             return None
         elif isinstance(func, TFFunction):
@@ -233,7 +237,7 @@ class NeuralCIs(_DataSaver):
         else:
             return tf.function(func)
 
-    def fit(self, turn_off_gpu: bool = True, *args, **kwargs) -> None:
+    def fit(self, *args, **kwargs) -> None:
 
         """Fit the networks to the simulation.
 
@@ -243,7 +247,7 @@ class NeuralCIs(_DataSaver):
         This is a very rough network fitting algorithm in Version 1.0.0.
         Better fitting of the models is a priority in future versions.
         Currently, the default Keras training loop is used with an
-        exponentially decreasing learning rate (it will be
+        exponentially decreasing learning rate; it will be
         decreased every epoch such that it halves every
         `learning_rate_half_life_epochs` epochs.
 
@@ -265,10 +269,6 @@ class NeuralCIs(_DataSaver):
         :param learning_rate_half_life_epochs: An int (default 4).  Learning
             rate will halve each time this number of epochs has passed.
         :param callbacks: An array of callbacks to be used during training.
-        :param turn_off_gpu: A bool (default True).  Since we are training
-            very small networks, it is generally much much faster to train
-            on the CPU.  Setting this true will make any GPUs invisible to
-            Tensorflow so that they will not be used.
         """
 
         self.param_sampling_net.fit(*args, **kwargs)
@@ -289,6 +289,9 @@ class NeuralCIs(_DataSaver):
         and params.  The p-value is then computed at all combinations of each
         of these values.
 
+        :param **estimates_and_params: Named arguments mapping each estimate
+         and param name to either a range/sequence of values, or to a single
+         fixed value.
         :param value_names: Sequence of strs (default contains only "p");
          list of values to be returned.  Currently also supports "z0", "z1",
          etc., as well as "{estimate_name}_lower" and "{estimate_name}_upper".
@@ -297,9 +300,6 @@ class NeuralCIs(_DataSaver):
          type will be a list with these axes first, and the output values
          grid last.  If it is (), a list with only the requested `value_names`
          is returned.
-        :param **estimates_and_params: Named arguments mapping each estimate
-         and param name to either a range/sequence of values, or to a single
-         fixed value.
         :return:
         """
 
@@ -340,21 +340,20 @@ class NeuralCIs(_DataSaver):
         """Calculate the p-values and confidence intervals for a series of
         novel cases.
 
-        :param estimates: A dict of lists of floats, all the same length; the
-            estimated values of the parameters in each case.
-        :param params: A dict of lists of floats, all the same length; for
-            each parameter input to the simulation, the values of that
-            parameter that corresponds with each estimate (for
-            the parameters being estimated, this should be the null values
-            under which the *p*-value is to be calculated).  Each should
-            be a float.
+        :param **estimates_and_params: A set of named params, giving values
+            for the estimates and null hypothesis params (named as per their
+            naming in the simulation function).  Each of these may be a
+            Tensor, numpy.ndarray or a sequence of floats.
         :param conf_levels: An optional list of floats (default .95).
             Confidence level for each respective  confidence interval.  If
             None, then no confidence interval is computed and only p-values
             are returned.
         :param extra_values_names: An optional sequence of strs, giving
-            extra values to be returned from the p-net.  Currently supports
+            extra values to be returned from the p-net.  Currently, supports
             "z0", "z1", ...  up to the number of zs but may be expanded later.
+        :param apply_transform: A bool, default True.  If False, the
+            transform_on_estimates function will be bypassed.  For testing
+            purposes only.
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
@@ -408,12 +407,10 @@ class NeuralCIs(_DataSaver):
         single estimate, null parameter value, and known parameters, and
         it will return p-value, lower bound, upper bound.
 
-        :param estimates: A dict, the estimated values of the parameters.
-        :param params: A dict of floats.  For each parameter input to the
-            simulation, the value of that parameter (for
-            the parameters being estimated, this should be the null values
-            under which the *p*-value is to be calculated).  Each should
-            be a float.
+        :param: **estimates_and_params, a set of named parameters, all floats,
+            giving values for the estimates and null hypothesis params for
+            which a single p-value is to be calculated.  Naming should be the
+            same as in the simulation function.
         :param conf_level: A float (default .95).  Confidence level for the
             confidence interval.
         :return: Dict with float values: p-value, lower and upper CI bounds.
@@ -565,16 +562,15 @@ class NeuralCIs(_DataSaver):
     #   format used by the user-provided sampling function.  These two formats
     #   differ in two key ways:
     #
-    #   (1) The net assumes that the parameters should be sampled uniformly
-    #       from [-1, 1].  The net first translates these into standard uniform
-    #       values and then uses the user-provided distribution objects to
-    #       transform these standard uniform values into the raw parameters.
+    #   (1) Before we pass estimates or parameters to the net, we transform
+    #       them in such a way that they should be closer to uniform
+    #       distributed (e.g. by log-transforming scale variables).
     #
     #   (2) The net assumes a particular order to the parameters, whereas the
     #       inputs to the sampling function could be in any order.  The order
     #       assumed by the net is: (i) parameters to be estimated,
-    #       (ii) nuisance parameters (not yet supported) and then (iii) known
-    #       parameters.
+    #       (ii) nuisance parameters and then (iii) known parameters (e.g.
+    #       sample size).
     #
     ###########################################################################
 
