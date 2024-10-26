@@ -1,7 +1,6 @@
 import tensorflow as tf
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 import numpy as np
-import os
 
 from neuralcis import common
 from neuralcis import sampling
@@ -143,37 +142,34 @@ class NeuralCIs(_DataSaver):
         self.transform_on_estimates_fn = self.tf_fun(transform_on_estimates_fn)
 
         (
-            self.param_names_in_sim_order,
+            self.param_names_in_net_order,
             self.estimate_names,
             self.sim_to_net_order,
             self.net_to_sim_order,
-            self.param_dists_in_sim_order,
-            self.estimate_dists_in_sim_order,
+            self.param_dists_in_net_order,
+            self.estimate_dists_in_net_order,
         ) = self._align_simulation_params(param_distributions)
 
-        self.num_param = len(self.param_dists_in_sim_order)
-        self.num_estimate = len(self.estimate_dists_in_sim_order)
+        self.num_param = len(self.param_dists_in_net_order)
+        self.num_estimate = len(self.estimate_dists_in_net_order)
+        self.num_unknown_param = self.num_estimate
+        self.num_known_param = self.num_param - self.num_unknown_param
+
+        self.net_to_contrast_order = self._align_contrast_fn_params(
+            param_distributions
+        )
 
         (
-            self.param_dists_in_contrast_order,
-            self.net_to_contrast_order,
-        ) = self._align_contrast_fn_params(param_distributions)
-
-        (
-            # TODO: just store the param dists once in net order and apply
-            #       that first.
             self.has_transform,
-            self.param_dists_in_transform_input_order,
-            self.param_dists_in_transform_output_order,
             self.net_to_transform_order,
             self.fn_to_net_estimates_order,
             self.fn_to_net_params_order,
             num_params_remaining_after_transform,
-        ) = self._align_transform_by_params_fn_inputs(param_distributions)
+        ) = self._align_transform_by_params_fn_inputs()
 
         estimates_min_and_max_std_uniform = tf.stack([
             dist.min_and_max_std_uniform
-            for dist in self.estimate_dists_in_sim_order
+            for dist in self.estimate_dists_in_net_order
         ], axis=0)
         estimates_min_and_max = sampling.uniform_from_std_uniform(
             estimates_min_and_max_std_uniform,
@@ -185,23 +181,24 @@ class NeuralCIs(_DataSaver):
 
         if network_setup_args is None:
             network_setup_args = {}
-        num_unknown_param = self.num_estimate
-        num_known_param = self.num_param - num_unknown_param
         known_param_indices = [
-            i + num_unknown_param for i in range(num_known_param)
+            i + self.num_unknown_param for i in range(self.num_known_param)
         ]
         self.param_sampling_net = _ParamSamplingNet(
             self._sampling_dist_net_interface,
             self._preprocess_params_net_interface,
-            num_unknown_param, num_known_param, estimates_min_and_max,
-            train_initial_weights=train_initial_weights, **network_setup_args
+            self.num_unknown_param,
+            self.num_known_param,
+            estimates_min_and_max,
+            train_initial_weights=train_initial_weights,
+            **network_setup_args,
         )
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
             self._transform_on_params_fn_net_interface,
-            num_unknown_param,
-            num_known_param,
+            self.num_unknown_param,
+            self.num_known_param,
             known_param_indices,
             num_params_remaining_after_transform,
             self.param_sampling_net,
@@ -306,7 +303,7 @@ class NeuralCIs(_DataSaver):
         :return:
         """
 
-        all_names = self.estimate_names + self.param_names_in_sim_order
+        all_names = self.estimate_names + self.param_names_in_net_order
         all_values = [tf.constant(estimates_and_params[n], dtype=tf.float32)
                       for n in all_names]
         all_grids = tf.meshgrid(*all_values)
@@ -372,31 +369,27 @@ class NeuralCIs(_DataSaver):
         estimates_tf = [estimates_and_params_tf[n]
                         for n in self.estimate_names]
         params_tf = [estimates_and_params_tf[n] for
-                     n in self.param_names_in_sim_order]
+                     n in self.param_names_in_net_order]
 
-        estimates_uniform = self._estimates_to_net(*estimates_tf)
-        params_uniform = self._params_to_net(*params_tf)
+        estimates_net = self._estimates_human_net_order_to_net(*estimates_tf)
+        params_net = self._params_human_net_order_to_net(*params_tf)
 
         # TODO: This should probably live here and be passed down.
-        known_params = self.cinet.known_params(params_uniform)
+        known_params = self.cinet.known_params(params_net)
         if len(extra_values_names) > 0:
-            values = self.pnet.p_workings(estimates_uniform,
-                                          params_uniform)
+            values = self.pnet.p_workings(estimates_net, params_net)
             values = {"p": values["p"].numpy()} | \
                      {k: values[k].numpy() for k in extra_values_names}
         else:
-            p = self.pnet.p(estimates_uniform, params_uniform)
+            p = self.pnet.p(estimates_net, params_net)
             values = {'p': p.numpy()}
 
         if conf_levels is not None:
             # TODO: Contrast is not currently transformed.  Should change that.
             #       (Could actually do that to give it unif probability too!)
             #       And if so, then it would need to be de-transformed here.
-            lower, upper = self.cinet.ci(
-                estimates_uniform,
-                known_params,
-                tf.constant(1. - conf_levels),
-            )
+            target_p = tf.constant(1. - conf_levels)
+            lower, upper = self.cinet.ci(estimates_net, known_params, target_p)
 
             values["lower"] = lower.numpy()
             values["upper"] = upper.numpy()
@@ -480,22 +473,24 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _sampling_dist_net_interface(
             self,
-            params_transformed: Tensor2[tf32, Samples, Params],
+            params_net: Tensor2[tf32, Samples, Params],
     ) -> Tensor2[tf32, Samples, Estimates]:
 
-        params = self._params_from_net(params_transformed)
+        params_human = self._params_net_to_human_in_net_order(params_net)
+        params = self._reorder(params_human, self.net_to_sim_order)
         estimates = self.sampling_distribution_fn(*params).values()
-        estimates_transformed = self._estimates_to_net(*estimates)
+        estimates_net = self._estimates_human_net_order_to_net(*estimates)
 
-        return estimates_transformed
+        return estimates_net
 
     @tf.function
     def _contrast_fn_net_interface(
             self,
-            params_transformed: Tensor2[tf32, Samples, Params],
+            params_net: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
-        params = self._contrast_params_from_net(params_transformed)
+        params_human = self._params_net_to_human_in_net_order(params_net)
+        params = self._reorder(params_human, self.net_to_contrast_order)
         contrasts = self.contrast_fn(*params)
 
         return contrasts
@@ -503,72 +498,54 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _transform_on_params_fn_net_interface(
             self,
-            estimates_transformed: Tensor2[tf32, Samples, Estimates],
-            params_transformed: Tensor2[tf32, Samples, Params],
+            estimates_net: Tensor2[tf32, Samples, Estimates],
+            params_net: Tensor2[tf32, Samples, Params],
     ) -> Tuple[Tensor2[tf32, Samples, Estimates],
                Tensor2[tf32, Samples, Params]]:
 
-
-        # TODO: This function MUST be factored!!
-
         if not self.has_transform:
-            return estimates_transformed, params_transformed
+            return estimates_net, params_net
 
-        estimates_uniform = self._std_uniform_from_net(estimates_transformed)
-        params_uniform = self._std_uniform_from_net(params_transformed)
-        estimates_uniform_net_order = tf.unstack(estimates_uniform,
-                                                 num=self.num_estimate, axis=1)
-        params_uniform_net_order = tf.unstack(params_uniform,
-                                              num=self.num_param, axis=1)
-        uniform_net_order = (estimates_uniform_net_order +
-                             params_uniform_net_order)
-        uniform_inputs_order = self._reorder(uniform_net_order,
-                                             self.net_to_transform_order)
-        dist_unif = zip(self.param_dists_in_transform_input_order,
-                        uniform_inputs_order)
-        inputs = [dist.from_std_uniform(unif) for dist, unif in dist_unif]
+        estimates_human = \
+                    self._estimates_net_to_human_in_net_order(estimates_net)
+        params_human = self._params_net_to_human_in_net_order(params_net)
+        inputs = self._reorder(estimates_human + params_human,
+                               self.net_to_transform_order)
+
         outputs = self.transform_on_params_fn(*inputs).values()
 
-        dist_out = zip(self.param_dists_in_transform_output_order, outputs)
-        uniform_outputs_order = [dist.to_std_uniform(out)
-                                 for dist, out in dist_out]
-        uniform_estimates_net_order = self._reorder(
-            uniform_outputs_order,
-            self.fn_to_net_estimates_order
-        )
-        uniform_params_net_order = self._reorder(
-            uniform_outputs_order,
-            self.fn_to_net_params_order,
-        )
-        estimates_uniform = tf.stack(uniform_estimates_net_order, axis=1)
-        params_uniform = tf.stack(uniform_params_net_order, axis=1)
-        estimates_net = self._std_uniform_to_net(estimates_uniform)
-        params_net = self._std_uniform_to_net(params_uniform)
+        estimates_human = self._reorder(outputs,
+                                        self.fn_to_net_estimates_order)
+        params_human = self._reorder(outputs, self.fn_to_net_params_order)
+
+        estimates_net = \
+                       self._estimates_human_net_order_to_net(*estimates_human)
+        params_net = self._params_human_net_order_to_net(*params_human)
 
         return estimates_net, params_net
 
     @tf.function
     def _preprocess_params_net_interface(
             self,
-            params_transformed: Tensor2[tf32, Samples, Params],
+            params_net: Tensor2[tf32, Samples, Params],
+            known_params_only: bool = False,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        # TODO: First cut with some copy paste.  MUST be refactored!!
-        uniform = self._std_uniform_from_net(params_transformed)
-        uniform_net_order = tf.unstack(uniform, num=self.num_param, axis=1)
-        uniform_sim_order = self._reorder(uniform_net_order,
-                                          self.net_to_sim_order)
-        dist_unif = zip(self.param_dists_in_sim_order, uniform_sim_order)
-        unif_preproc = [dist.preprocess(unif) for dist, unif in dist_unif]
-        unif_net_order = self._reorder(unif_preproc, self.sim_to_net_order)
-        params_std_uniform_stacked = tf.stack(unif_net_order, axis=1)
-
-        return self._std_uniform_to_net(params_std_uniform_stacked)
+        params_human_preprocessed = self._params_net_to_human_in_net_order(
+            params_net,
+            known_params_only=known_params_only,
+            preprocess=True,
+        )
+        params_net_preprocessed = self._params_human_net_order_to_net(
+            *params_human_preprocessed,
+            known_params_only=known_params_only,
+        )
+        return params_net_preprocessed
 
     def _transform_on_estimates(
             self,
             **estimates_and_params: Tensor1[tf32, Samples],
-    ) -> List[Tensor1[tf32, Samples]]:
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
 
         if self.transform_on_estimates_fn is None:
             return estimates_and_params
@@ -601,83 +578,76 @@ class NeuralCIs(_DataSaver):
     #
     ###########################################################################
 
+
     @tf.function
-    def _contrast_params_from_net(
+    def _params_net_to_human_in_net_order(
             self,
-            transformed: Tensor2[tf32, Samples, Params],
+            params_net: Tensor2[tf32, Samples, Params],
+            known_params_only: bool = False,
+            preprocess: bool = False,
     ) -> List[Tensor1[tf32, Samples]]:
 
-        # TODO: it may be possible to factor this into _params_from_net
-        #       but just writing a first draft for now to try to get this
-        #       to work...
-        uniform = self._std_uniform_from_net(transformed)
-        uniform_net_order = tf.unstack(uniform, num=self.num_param, axis=1)
-        uniform_con_order = self._reorder(uniform_net_order,
-                                          self.net_to_contrast_order)
+        if known_params_only:
+            num_param = self.num_known_param
+            param_dists = self.param_dists_in_net_order[-num_param:]
+        else:
+            num_param = self.num_param
+            param_dists = self.param_dists_in_net_order
 
-        dist_unif = zip(self.param_dists_in_contrast_order, uniform_con_order)
-        params = [dist.from_std_uniform(unif) for dist, unif in dist_unif]
+        params_net_split = tf.unstack(params_net, num=num_param, axis=1)
+        params_human_net_order = [d.from_net(p)
+                                  for d, p in zip(param_dists,
+                                                  params_net_split)]
 
-        return params
+        if preprocess:
+            params_human_net_order = [d.preprocess(p)
+                                      for d, p in zip(param_dists,
+                                                      params_human_net_order)]
 
-    @tf.function
-    def _params_from_net(
-            self,
-            transformed: Tensor2[tf32, Samples, Params],
-    ) -> List[Tensor1[tf32, Samples]]:
-
-        uniform = self._std_uniform_from_net(transformed)
-        uniform_net_order = tf.unstack(uniform, num=self.num_param, axis=1)
-        uniform_sim_order = self._reorder(uniform_net_order,
-                                          self.net_to_sim_order)
-        dist_unif = zip(self.param_dists_in_sim_order, uniform_sim_order)
-        params = [dist.from_std_uniform(unif) for dist, unif in dist_unif]
-
-        return params
+        return params_human_net_order
 
     @tf.function
-    def _params_to_net(
+    def _params_human_net_order_to_net(
             self,
-            *params: Tensor1[tf32, Samples],
+            *params_human: Tensor1[tf32, Samples],
+            known_params_only: bool = False,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        dist_par = zip(self.param_dists_in_sim_order, params)
-        unif_sim_order = [dist.to_std_uniform(par) for dist, par in dist_par]
-        unif_net_order = self._reorder(unif_sim_order, self.sim_to_net_order)
-        params_std_uniform_stacked = tf.stack(unif_net_order, axis=1)
-        return self._std_uniform_to_net(params_std_uniform_stacked)
+        if known_params_only:
+            param_dists = self.param_dists_in_net_order[-self.num_known_param:]
+        else:
+            param_dists = self.param_dists_in_net_order
+
+        params_net_split = [d.to_net(p)
+                            for d, p in zip(param_dists, params_human)]
+        params_net = tf.stack(params_net_split, axis=1)
+
+        return params_net
 
     @tf.function
-    def _estimates_from_net(
+    def _estimates_net_to_human_in_net_order(
             self,
-            transformed: Tensor2[tf32, Samples, Estimates],
+            estimates_net: Tensor2[tf32, Samples, Estimates],
     ) -> List[Tensor1[tf32, Samples]]:
 
-        # TODO: rather than going back and forth between transformed and
-        #       untransformed, create a wrapper for the simulation function
-        #       that then returns transformed and untransformed on the spot
-        #       (Though this would also need to provide Jacobians..... :/ )
-
-        # For estimates, net and sim order are the same.
-        uniform = self._std_uniform_from_net(transformed)
-        unif_net_order = tf.unstack(uniform, self.num_estimate, axis=1)
-        dist_unif = zip(self.estimate_dists_in_sim_order, unif_net_order)
-        estimates = [dist.from_std_uniform(unif) for dist, unif in dist_unif]
-
-        return estimates
+        estimates_net_split = tf.unstack(estimates_net,
+                                         num=self.num_estimate, axis=1)
+        estimates_human_net_order = [d.from_net(p) for d, p in
+                                     zip(self.estimate_dists_in_net_order,
+                                         estimates_net_split)]
+        return estimates_human_net_order
 
     @tf.function
-    def _estimates_to_net(
+    def _estimates_human_net_order_to_net(
             self,
-            *estimates: Tensor1[tf32, Samples],
+            *estimates_human: Tensor1[tf32, Samples],
     ) -> Tensor2[tf32, Samples, Estimates]:
 
-        # the net is organised in the same order as the estimates so no need
-        #   for a reordering (unlike with the params)
-        dist_est = zip(self.estimate_dists_in_sim_order, estimates)
-        uniform = [dist.to_std_uniform(est) for dist, est in dist_est]
-        uniform_stacked = tf.stack(uniform, axis=1)
-        return self._std_uniform_to_net(uniform_stacked)
+        estimates_net_split = [d.to_net(p) for d, p in
+                               zip(self.estimate_dists_in_net_order,
+                                   estimates_human)]
+        estimates_net = tf.stack(estimates_net_split, axis=1)
+        return estimates_net
 
     @tf.function
     def _reorder(self, tensors: List[Tensor1], order: List[int]) \
@@ -691,26 +661,6 @@ class NeuralCIs(_DataSaver):
     ) -> float:
 
         return float(tensor.numpy()[0])
-
-    @tf.function
-    def _std_uniform_to_net(
-            self,
-            std_uniform: Tensor2[tf32, Samples, Union[Estimates, Params]],
-    ) -> Tensor2[tf32, Samples, Union[Estimates, Params]]:
-
-        return sampling.uniform_from_std_uniform(
-            std_uniform, common.PARAMS_MIN, common.PARAMS_MAX
-        )
-
-    @tf.function
-    def _std_uniform_from_net(
-            self,
-            transformed: Tensor2[tf32, Samples, Union[Estimates, Params]],
-    ) -> Tensor2[tf32, Samples, Union[Estimates, Params]]:
-
-        return sampling.uniform_to_std_uniform(
-            transformed, common.PARAMS_MIN, common.PARAMS_MAX
-        )
 
     ###########################################################################
     #
@@ -771,7 +721,7 @@ class NeuralCIs(_DataSaver):
         List[int],
         List[int],
         List[Distribution],
-        List[Distribution]
+        List[Distribution],
     ]:
 
         sim_order_names = self._get_tf_params(self.sampling_distribution_fn)
@@ -803,27 +753,28 @@ class NeuralCIs(_DataSaver):
 
         sorted_inds_and_net_to_sim = sorted(zip(sim_to_net_order, range(n)))
         net_to_sim_order = [x[1] for x in sorted_inds_and_net_to_sim]
+        net_order_names = [sim_order_names[i] for i in sim_to_net_order]
 
-        param_transforms_in_sim_order = [
-            param_distributions_named[i] for i in sim_order_names
+        param_transforms_in_net_order = [
+            param_distributions_named[i] for i in net_order_names
         ]
-        estimate_transforms_in_sim_order = [
+        estimate_transforms_in_net_order = [
             param_distributions_named[i] for i in estimate_names_dehatted
         ]
 
         return (
-            sim_order_names,
+            net_order_names,
             estimate_names,
             sim_to_net_order,
             net_to_sim_order,
-            param_transforms_in_sim_order,
-            estimate_transforms_in_sim_order
+            param_transforms_in_net_order,
+            estimate_transforms_in_net_order,
         )
 
     def _align_contrast_fn_params(
             self,
             param_distributions_named: dict,
-    ) -> Tuple[List[Distribution], List[int]]:
+    ) -> List[int]:
 
         # note that we only need transforms on the way in: since we look at
         #   each contrast in isolation, and since we only care about how the
@@ -834,41 +785,32 @@ class NeuralCIs(_DataSaver):
         #       above).
 
         fn_order_params = self._get_tf_params(self.contrast_fn)
-        sim_order_params = self.param_names_in_sim_order
-        net_order_params = [sim_order_params[i] for i in self.sim_to_net_order]
+        net_order_params = self.param_names_in_net_order
 
         net_to_con_order = [fn_order_params.index(p) for p in net_order_params]
 
-        param_transforms_in_con_order = [
-            param_distributions_named[i] for i in fn_order_params
-        ]
-
-        return param_transforms_in_con_order, net_to_con_order
+        return net_to_con_order
 
     def _align_transform_by_params_fn_inputs(
             self,
-            param_distributions_named: dict,
     ) -> Tuple[bool,
-               List[Distribution],
-               List[Distribution],
                List[int],
                List[int],
                List[int],
                int]:
 
         if self.transform_on_params_fn is None:
-            return False, [], [], [], [], [], self.num_param
+            return False, [], [], [], self.num_param
 
         # TODO: there is a lot duplicated here from functions above.  Need to
         #       find a neat framework for this all to work cleanly.  Also this
         #       is very much a quick dirty test-it-out first draft.  Tidy!!
         fn_order_inputs = self._get_tf_params(self.transform_on_params_fn)
-        sim_order_params = self.param_names_in_sim_order
-        net_order_params = [sim_order_params[i] for i in self.sim_to_net_order]
+        net_order_params = self.param_names_in_net_order
         net_order_estimates = self.estimate_names
 
         test_inputs = [tf.random.uniform((common.BATCH_SIZE,))
-                       for i in fn_order_inputs]
+                       for _ in fn_order_inputs]
         test_outputs = self.transform_on_params_fn(*test_inputs)
         fn_order_outputs = [n for n in test_outputs.keys()]
 
@@ -886,20 +828,9 @@ class NeuralCIs(_DataSaver):
                                   for p in net_order_params
                                   if p in fn_order_outputs]
 
-        param_transforms_in_fn_input_order = [
-            param_distributions_named[n.removesuffix(HAT)]
-            for n in fn_order_inputs
-        ]
-        param_transforms_in_fn_output_order = [
-            param_distributions_named[n.removesuffix(HAT)]
-            for n in fn_order_outputs
-        ]
-
         num_params_remaining = len(fn_to_net_params_order)
 
         return (True,
-                param_transforms_in_fn_input_order,
-                param_transforms_in_fn_output_order,
                 net_to_fn_order,
                 fn_to_net_estimates_order,
                 fn_to_net_params_order,
@@ -916,14 +847,14 @@ class NeuralCIs(_DataSaver):
     ###########################################################################
 
     def _max_error_of_reverse_mapping(self) -> Tensor0[tf32]:
-        test_params = tf.random.uniform(
+        params_net = tf.random.uniform(
             (common.SAMPLES_TO_TEST_PARAM_MAPPINGS, self.num_param),
             common.PARAMS_MIN,
             common.PARAMS_MAX,
         )
-        as_params = self._params_from_net(test_params)
-        as_uniform = self._params_to_net(*as_params)
-        errors = tf.math.abs(as_uniform - test_params)                         # type: ignore
+        params_human = self._params_net_to_human_in_net_order(params_net)
+        params_net_again = self._params_human_net_order_to_net(*params_human)
+        errors = tf.math.abs(params_net_again - params_net)
 
         return tf.math.reduce_max(errors)
 
@@ -938,9 +869,8 @@ class NeuralCIs(_DataSaver):
             n: int,
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        params_tensor_in_net_form = self.param_sampling_net.sample_params(n)
-        params_in_sim_form = self._params_from_net(params_tensor_in_net_form)
-        param_values = {n: p for n, p in zip(self.param_names_in_sim_order,
-                                             params_in_sim_form)}
-
-        return param_values
+        params_net = self.param_sampling_net.sample_params(n)
+        params_human = self._params_net_to_human_in_net_order(params_net)
+        params_dict = {n: p for n, p in zip(self.param_names_in_net_order,
+                                            params_human)}
+        return params_dict

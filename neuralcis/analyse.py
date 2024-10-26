@@ -33,10 +33,10 @@ def __param_names_and_medians(
 ) -> Dict[str, float]:
 
     param_values = {n: value_overrides[n]
-                    for n in cis.param_names_in_sim_order
+                    for n in cis.param_names_in_net_order
                     if n in value_overrides}
-    for name, dist in zip(cis.param_names_in_sim_order,
-                          cis.param_dists_in_sim_order):
+    for name, dist in zip(cis.param_names_in_net_order,
+                          cis.param_dists_in_net_order):
         if name not in param_values:
             param_values[name] = dist.from_std_uniform(0.5).numpy()
 
@@ -50,7 +50,7 @@ def __sample_params_inner_zone(
         verbose: bool = False,
 ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-    params = {n: [] for n in cis.param_names_in_sim_order}
+    params = {n: [] for n in cis.param_names_in_net_order}
     total_samples_selected = 0
     total_samples_tried = 0
     total_samples_inside_inner = 0
@@ -60,9 +60,8 @@ def __sample_params_inner_zone(
         trial_params = cis.sample_params(batch_size)
 
         # TODO: This might want to live in neuralcis object
-        sim_order_params = [trial_params[n]
-                            for n in cis.param_names_in_sim_order]
-        net_params = cis._params_to_net(*sim_order_params)
+        params_human = [trial_params[n] for n in cis.param_names_in_net_order]
+        params_net = cis._params_human_net_order_to_net(*params_human)
 
         importance_ingredients = cis.param_sampling_net.feeler_net.call_tf(
             net_params
@@ -81,12 +80,12 @@ def __sample_params_inner_zone(
         ) - total_samples_selected
 
         selected = tf.where(in_inner_boundary)[:num_to_select, 0]
-        for n in cis.param_names_in_sim_order:
+        for n in cis.param_names_in_net_order:
             params[n].append(tf.gather(trial_params[n], selected, axis=0))
         total_samples_selected += num_to_select
 
     params = {n: tf.concat(params[n], axis=0)
-              for n in cis.param_names_in_sim_order}
+              for n in cis.param_names_in_net_order}
 
     if verbose:
         print("%.0f%% of samples were in inner and %.0f%% in outer" %
@@ -129,8 +128,8 @@ def __estimate_and_param_names_and_distributions(
 ) -> Dict[str, Distribution]:
 
     param_dists = {name: dist
-                   for name, dist in zip(cis.param_names_in_sim_order,
-                                         cis.param_dists_in_sim_order)}
+                   for name, dist in zip(cis.param_names_in_net_order,
+                                         cis.param_dists_in_net_order)}
     return __add_estimates_equal_to_params(cis, param_dists)
 
 
@@ -242,8 +241,8 @@ def __plot_p_value_distribution_once(
 
 def __get_axis_types(cis: NeuralCIs) -> Dict[str, str]:
     param_axis_types = {name: dist.axis_type
-                        for name, dist in zip(cis.param_names_in_sim_order,
-                                              cis.param_dists_in_sim_order)}
+                        for name, dist in zip(cis.param_names_in_net_order,
+                                              cis.param_dists_in_net_order)}
     return __add_estimates_equal_to_params(cis, param_axis_types)
 
 
@@ -417,7 +416,7 @@ def plot_params_vs_estimates(
     """
 
     if param_names is None:
-        param_names = cis.param_names_in_sim_order
+        param_names = cis.param_names_in_net_order
     if estimate_names is None:
         estimate_names = cis.estimate_names
 
@@ -524,12 +523,12 @@ def plot_p_value_cdfs(
     alpha = 1. / np.sqrt(len(indices))
     fig, axes = plt.subplots(1, 3)
     y = np.linspace(0., 1., num_samples)
-    params = {n: np.array([]) for n in cis.param_names_in_sim_order}
+    params = {n: np.array([]) for n in cis.param_names_in_net_order}
     ks = np.array([])
     for i in tqdm(indices):
         if params_df is not None:
             params_i = (
-                    params_df.loc[i, cis.param_names_in_sim_order].to_dict() |
+                    params_df.loc[i, cis.param_names_in_net_order].to_dict() |
                     param_values
             )
         else:

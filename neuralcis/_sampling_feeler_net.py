@@ -36,6 +36,10 @@ class _SamplingFeelerNet(_SimulatorNetCached):
                 [Tensor2[tf32, Samples, Params]],  # params
                 Tensor2[tf32, Samples, Estimates],  # -> ys
             ],
+            preprocess_params_fn: Callable[
+                [Tensor2[tf32, Samples, Params]],
+                Tensor2[tf32, Samples, Params]
+            ],
             num_unknown_param: int,
             num_known_param: int,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
@@ -51,6 +55,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         feeler_data_generator = _SamplingFeelerGenerator(
             estimates_min_and_max,
             sampling_distribution_fn,
+            preprocess_params_fn,
             num_unknown_param,
             num_known_param,
             sample_size,
@@ -107,7 +112,21 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         non_nan_indices = tf.where(~tf.math.is_nan(target_blob[:, 0]))[:, 0]
         print(f"{len(non_nan_indices)} / {target_blob.shape[0]} were not NaN!")
 
-        return sim_blob, target_blob, non_nan_indices
+        known = self.num_known_param
+        knowns_inside_indices = tf.where(tf.reduce_all(
+            (sim_blob[0][:, -known:] >= self.min_params_valid[None, -known:]) &
+            (sim_blob[0][:, -known:] <= self.max_params_valid[None, -known:]),
+            axis=1
+        ))[:, 0]
+        print(f"{len(knowns_inside_indices)} / {sim_blob[0].shape[0]}"
+              f" were inside known params range!")
+
+        indices = tf.sparse.to_dense(
+            tf.sets.intersection(non_nan_indices[None, :],
+                                 knowns_inside_indices[None, :])
+        )[0, :]
+
+        return sim_blob, target_blob, indices
 
     @tf.function
     def pick_indices_from_cache(

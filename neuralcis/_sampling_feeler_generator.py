@@ -78,6 +78,10 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                 [Tensor2[tf32, Samples, Params]],  # params
                 Tensor2[tf32, Samples, Estimates],  # -> ys
             ],
+            preprocess_params_fn: Callable[
+                [Tensor2[tf32, Samples, Params]],
+                Tensor2[tf32, Samples, Params]
+            ],
             num_unknown_param: int,
             num_known_param: int,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
@@ -92,6 +96,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         tf.keras.Model.__init__(self)
 
         self.sampling_distribution_fn = sampling_distribution_fn
+        self.preprocess_params_fn = preprocess_params_fn
         self.num_estimate = estimates_min_and_max.shape[0]
         self.estimates_min = estimates_min_and_max[:, 0]
         self.estimates_max = estimates_min_and_max[:, 1]
@@ -285,18 +290,24 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         u = tf.random.uniform((self.num_chains, self.num_param))
         params = (u * self.first_params_widths[None, :] +
                   self.first_params_min[None, :])
-        mean, cov_chol, inv_chol, chol_det = \
-            self.sample_statistics(params, self.num_chains)
-        importance_ingredients = self.importance_ingredients(params,
+        params_pp, mean, cov_chol, inv_chol, chol_det = \
+            self.sample_statistics(params)
+        importance_ingredients = self.importance_ingredients(params_pp,
                                                              mean,
                                                              cov_chol,
                                                              chol_det)
         importance = self.get_importance(importance_ingredients)
 
+        # We want to store un-preprocessed params as current state from which
+        #   to step from (this way we will naturally diffuse across different
+        #   discrete possibilities) but we want to store for the long term the
+        #   discretized value params_pp (pp=preprocessed_ for training our
+        #   nets with.
         self.assign_iteration_results(params, mean,
                                       cov_chol, inv_chol, chol_det,
                                       importance,
-                                      params, importance_ingredients, cov_chol)
+                                      params_pp, importance_ingredients,
+                                      cov_chol)
 
     def load(self, *args, **kwargs) -> None:
         n = (self.num_chains * self.chain_length +
@@ -384,10 +395,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         u = tf.random.uniform((self.peripheral_batch_size, self.num_param))
         sampled_params_peripheral = u * diffs[None, :] + mins[None, :]
 
-        targets_peripheral, chols_peripheral = self.sample_ingredients(
-            sampled_params_peripheral,
-            self.peripheral_batch_size,
-        )
+        sampled_params_peripheral, targets_peripheral, chols_peripheral = \
+            self.sample_ingredients(sampled_params_peripheral)
 
         sim_blob = (sampled_params_peripheral, chols_peripheral)
         return sim_blob, targets_peripheral
@@ -398,15 +407,15 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     ):
 
         new_params = self.random_params_step(self.params, self.cov_chol)
-        new_mean, new_cov_chol, new_inv_chol, new_chol_det = \
-            self.sample_statistics(new_params, self.num_chains)
+        new_params_pp, new_mean, new_cov_chol, new_inv_chol, new_chol_det = \
+            self.sample_statistics(new_params)
         prop_prob_new_given_old = self.params_proposal_pdf_proportional(
             new_params, self.params, self.inv_chol, self.chol_det,
         )
         prop_prob_old_given_new = self.params_proposal_pdf_proportional(
             self.params, new_params, new_inv_chol, new_chol_det,
         )
-        new_importance_ingredients = self.importance_ingredients(new_params,
+        new_importance_ingredients = self.importance_ingredients(new_params_pp,
                                                                  new_mean,
                                                                  new_cov_chol,
                                                                  new_chol_det)
@@ -432,7 +441,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         # ...we just use the MCMC to help us decide which way to walk next
         self.assign_iteration_results(params, mean,
                                       cov_chol, inv_chol, chol_det, importance,
-                                      new_params,
+                                      new_params_pp,
                                       new_importance_ingredients,
                                       new_cov_chol)
 
@@ -463,19 +472,19 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def sample_ingredients(
             self,
             params: Tensor2[tf32, Samples, Params],
-            num_chains: int,
     ) -> Tuple[
-         Tensor2[tf32, Samples, ImportanceIngredients],
-         Tensor3[tf32, Samples, Estimates, Estimates],
+        Tensor2[tf32, Samples, Params],
+        Tensor2[tf32, Samples, ImportanceIngredients],
+        Tensor3[tf32, Samples, Estimates, Estimates],
     ]:
 
-        mean, cov_chol, inv_chol, chol_det = self.sample_statistics(params,
-                                                                    num_chains)
-        importance_ingredients = self.importance_ingredients(params,
+        params_preproc, mean, cov_chol, inv_chol, chol_det = \
+            self.sample_statistics(params)
+        importance_ingredients = self.importance_ingredients(params_preproc,
                                                              mean,
                                                              cov_chol,
                                                              chol_det)
-        return importance_ingredients, cov_chol
+        return params_preproc, importance_ingredients, cov_chol
 
     @tf.function
     def importance_ingredients(
@@ -579,13 +588,15 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             params: Tensor2[tf32, Chains, Params],
             num_chains: int,
     ) -> Tuple[
+        Tensor2[tf32, Chains, Params],
         Tensor2[tf32, Chains, Estimates],
         Tensor3[tf32, Chains, Estimates, Estimates],
         Tensor3[tf32, Chains, Estimates, Estimates],
         Tensor1[tf32, Chains],
     ]:
 
-        params_repeated = tf.repeat(params, self.sample_size, axis=0)
+        params_pp = self.preprocess_params_fn(params)
+        params_repeated = tf.repeat(params_pp, self.sample_size, axis=0)
         estimates = self.sampling_distribution_fn(params_repeated)
         estimates_grouped = tf.reshape(estimates, (num_chains,
                                                    self.sample_size,
@@ -596,7 +607,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         inv_l = tf.linalg.triangular_solve(l, identity)
         det_l = tf.reduce_prod(tf.linalg.diag_part(l), axis=1)
 
-        return xbar, l, inv_l, det_l
+        return params_pp, xbar, l, inv_l, det_l
 
     @tf.function
     def covariance_cholesky_computation(

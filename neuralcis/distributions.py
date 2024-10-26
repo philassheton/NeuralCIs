@@ -3,6 +3,7 @@ import tensorflow as tf
 
 from typing import Optional, Union
 from neuralcis.common import Samples
+from neuralcis import sampling, common
 from tensor_annotations.tensorflow import Tensor0, Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
 
@@ -11,6 +12,7 @@ AnyTensor = Union[Tensor0, Tensor1]
 
 class Distribution(ABC):
     axis_type = "linear"
+    known_param_only = False
 
     def __init__(
             self,
@@ -37,16 +39,40 @@ class Distribution(ABC):
     ) -> Tensor1[tf32, Samples]:
         pass
 
+    @tf.function
+    def from_net(
+            self,
+            values_net: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        std_uniform = sampling.uniform_to_std_uniform(
+            values_net, common.PARAMS_MIN, common.PARAMS_MAX
+        )
+        return self.from_std_uniform(std_uniform)
+
+    @tf.function
+    def to_net(
+            self,
+            values_human: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        std_uniform = self.to_std_uniform(values_human)
+        return sampling.uniform_from_std_uniform(
+            std_uniform, common.PARAMS_MIN, common.PARAMS_MAX
+        )
+
     def from_std_uniform_valid_estimates(
             self,
             std_uniform_tensor: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
+        """Useful for random sampling from estimates box."""
+
         estimate_min_std_unif = self.to_std_uniform(self.estimate_min)
         estimate_max_std_unif = self.to_std_uniform(self.estimate_max)
         estimate_range_std_unif = estimate_max_std_unif - estimate_min_std_unif
         std_uniform_tensor = (std_uniform_tensor * estimate_range_std_unif
-                                + estimate_min_std_unif)
+                              + estimate_min_std_unif)
         return self.from_std_uniform(std_uniform_tensor)
 
     @tf.function
@@ -144,11 +170,28 @@ class PositiveCount(LogUniform):
     @tf.function
     def preprocess(
             self,
-            std_uniform_tensor: Tensor1[tf32, Samples],
+            params_tensor: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        n_unround = self.from_std_uniform(std_uniform_tensor) + 0.5
-        n_round = tf.floor(n_unround + 0.5)
-        std_uniform_round = self.to_std_uniform(n_round)
+        return tf.floor(params_tensor + 0.5)
 
-        return std_uniform_round
+
+class SampleSize(PositiveCount):
+    known_param_only = True
+
+    def __init__(
+            self,
+            min_value: int,
+            max_value: int,
+    ) -> None:
+
+        assert min_value >= 3
+        super().__init__(min_value - 0.5, max_value + 0.5)
+
+    @tf.function
+    def to_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
+        return tf.math.log(x - 2.)                                             # type: ignore
+
+    @tf.function
+    def from_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
+        return tf.math.exp(x) + 2.                                             # type: ignore

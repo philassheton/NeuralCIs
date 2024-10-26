@@ -40,6 +40,7 @@ class _ParamSamplingNet(_SimulatorNet):
         feeler_net = _SamplingFeelerNet(
             estimates_min_and_max,
             sampling_distribution_fn,
+            preprocess_params_fn,
             num_unknown_param,
             num_known_param,
             **network_setup_args,
@@ -80,6 +81,7 @@ class _ParamSamplingNet(_SimulatorNet):
         us_known = tf.random.uniform((n, self.num_known_param),
                                      minval=common.PARAMS_MIN,
                                      maxval=common.PARAMS_MAX)
+        us_known = self.preprocess_params_fn(us_known, known_params_only=True)
 
         return us_unknown, us_known
 
@@ -161,5 +163,5 @@ class _ParamSamplingNet(_SimulatorNet):
 
         us = self.simulate_us(n)
         params = self.call_tf(us)
-        params_preprocessed = self.preprocess_params_fn(params)                # type: ignore
-        return params_preprocessed
+
+        return params

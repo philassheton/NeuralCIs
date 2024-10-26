@@ -35,7 +35,7 @@ def test_param_samples(
         **params_high_low: Dict[str, Tuple[float, float]],
 ) -> None:
 
-    params = {n: [] for n in cis.param_names_in_sim_order}
+    params = {n: [] for n in cis.param_names_in_net_order}
     total_samples_selected = 0
     total_samples_tried = 0
     total_samples_inside_inner = 0
@@ -44,13 +44,8 @@ def test_param_samples(
     while total_samples_selected < num_samples:
         total_samples_tried += 100000
         trial_params = cis.sample_params(100000)
-
-
-        # PHIL!!  move this into neuralcis
-        sim_order_params = [trial_params[n]
-                            for n in cis.param_names_in_sim_order]
-        net_params = cis._params_to_net(*sim_order_params)
-
+        params_human = [trial_params[n] for n in cis.param_names_in_net_order]
+        params_net = cis._params_human_net_order_to_net(*params_human)
 
         importance_ingredients = cis.param_sampling_net.feeler_net.call_tf(
             net_params
@@ -85,7 +80,7 @@ def test_param_samples(
         )
         to_select = to_select[:num_to_select]
 
-        for n in cis.param_names_in_sim_order:
+        for n in cis.param_names_in_net_order:
             params[n].append(tf.gather(trial_params[n], to_select, axis=0))
         total_samples_selected += num_to_select
 
@@ -95,7 +90,7 @@ def test_param_samples(
 
 
     params = {n: tf.concat(params[n], axis=0).numpy()
-              for n in cis.param_names_in_sim_order}
+              for n in cis.param_names_in_net_order}
 
     print("%.0f%% of samples were in inner and %.0f%% in outer" %
           (total_samples_inside_inner / total_samples_tried * 100,
@@ -132,15 +127,15 @@ def plot_generator_samples(
 
     generator = cis.param_sampling_net.feeler_net.feeler_data_generator
     params = generator.sampled_params
+    names = cis.param_names_in_net_order
     if len(param_limits):
-        names = cis.param_names_in_sim_order
-        dists = cis.param_dists_in_sim_order
+        dists = cis.param_dists_in_net_order
         for n, d in zip(names, dists):
             if n not in param_limits:
                 param_limits[n] = d.from_std_uniform((-float("inf"),
                                                        float("inf")))
-        limits_in_sim_order = [param_limits[n] for n in names]
-        limits_net = cis._params_to_net(*limits_in_sim_order)
+        limits_human = [tf.constant(param_limits[n]) for n in names]
+        limits_net = cis._params_human_net_order_to_net(*limits_human)
         above_bottom = params >= limits_net[0:1, :]
         below_top = params < limits_net[1:2, :]
         in_range = above_bottom & below_top
@@ -157,7 +152,7 @@ def plot_generator_samples(
         indices = tf.random.shuffle(indices)[:max_samples]
 
     to_plot_net = tf.gather(params, indices, axis=0)
-    to_plot = cis._params_from_net(to_plot_net)
+    to_plot = cis._params_net_to_human_in_net_order(to_plot_net)
     to_plot = {n: p for n, p in zip(names, to_plot)}
     targets = tf.gather(generator.sampled_targets, indices, axis=0)
     is_inside_inner_zone = targets[:, 2] > common.NEGLIGIBLE_LOG
