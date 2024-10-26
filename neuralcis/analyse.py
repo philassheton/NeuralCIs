@@ -293,7 +293,7 @@ def __plot_3d_with_axis_types(
     y, y_ticks, y_tick_labels = transform_axis(y, y_axis_type)
     z, z_ticks, z_tick_labels = transform_axis(z, z_axis_type)
 
-    plot_fn(x, y, z, **extra_args)
+    plot_return = plot_fn(x, y, z, **extra_args)
 
     ax.set_xticks(x_ticks)
     ax.set_xticklabels(x_tick_labels)
@@ -306,6 +306,8 @@ def __plot_3d_with_axis_types(
     ax.set_zticks(z_ticks)
     ax.set_zticklabels(z_tick_labels)
     ax.set_zlabel(z_name)
+
+    return plot_return
 
 
 def __make_pandas(
