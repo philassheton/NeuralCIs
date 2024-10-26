@@ -6,13 +6,13 @@ import tensorflow as tf
 
 # Typing
 from typing import Tuple, Callable, Optional
-from neuralcis.common import Samples, Params, Us, Estimates, MinAndMax
+from neuralcis.common import Samples, Params, Zs, Us, Estimates, MinAndMax
 from neuralcis.common import NetTargetBlob, NetInputs, NetOutputs
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 tf32 = ttf.float32
 
-NetInputBlob = Tuple[Tensor2[tf32, Samples, Us],       # unknown param uniforms
+NetInputBlob = Tuple[Tensor2[tf32, Samples, Zs],       # unknown param uniforms
                      Tensor2[tf32, Samples, Us]]       # known param uniforms
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Params],  # net outputs (params)
                       Tensor1[tf32, Samples]]          # Jacobian determinants
@@ -65,25 +65,24 @@ class _ParamSamplingNet(_SimulatorNet):
     ) -> Tuple[NetInputBlob, None]:
 
         n = self.batch_size
-        us = self.simulate_us(n)
+        zs_us = self.simulate_zs_and_us(n)
         nothing = tf.zeros((n, 0))
-        return us, nothing
+        return zs_us, nothing
 
     @tf.function
-    def simulate_us(
+    def simulate_zs_and_us(
             self,
             n: int,
     ) -> NetInputBlob:
 
-        us_unknown = tf.random.uniform((n, self.num_unknown_param),
-                                       minval=common.PARAMS_MIN,
-                                       maxval=common.PARAMS_MAX)
+
+        zs_unknown = tf.random.normal((n, self.num_unknown_param))
         us_known = tf.random.uniform((n, self.num_known_param),
                                      minval=common.PARAMS_MIN,
                                      maxval=common.PARAMS_MAX)
         us_known = self.preprocess_params_fn(us_known, known_params_only=True)
 
-        return us_unknown, us_known
+        return zs_unknown, us_known
 
     def get_loss(
             self,
@@ -117,8 +116,8 @@ class _ParamSamplingNet(_SimulatorNet):
             input_blob: NetInputBlob
     ) -> Tensor2[tf32, Samples, NetOutputs]:
 
-        us_unknown, us_known = input_blob
-        net_inputs = self.net_inputs((us_unknown, us_known))
+        zs_unknown, us_known = input_blob
+        net_inputs = self.net_inputs((zs_unknown, us_known))
         params_unknown = self._call_tf(net_inputs, training=False)
         params = tf.concat([params_unknown, us_known], axis=1)
 
@@ -161,7 +160,7 @@ class _ParamSamplingNet(_SimulatorNet):
             n: int,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        us = self.simulate_us(n)
-        params = self.call_tf(us)
+        zs_us = self.simulate_zs_and_us(n)
+        params = self.call_tf(zs_us)
 
         return params
