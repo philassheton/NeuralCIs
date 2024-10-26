@@ -154,10 +154,10 @@ class _CINet(_SimulatorNet):
             self,
             estimates: Tensor2[tf32, Samples, Estimates],
             known_params: Tensor2[tf32, Samples, KnownParams],
-            conf_levels: Tensor1[tf32, Samples],
+            target_p: Tensor1[tf32, Samples],
     ) -> Tuple[Tensor2[tf32, Samples, Params], Tensor2[tf32, Samples, Params]]:
 
-        net_outputs = self.call_tf((estimates, known_params, conf_levels))
+        net_outputs = self.call_tf((estimates, known_params, target_p))
         lower, upper = self.output_activation(net_outputs, estimates)
 
         return lower, upper
