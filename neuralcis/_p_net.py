@@ -120,7 +120,7 @@ class _PNet(_DataSaver):
         zs = self.znet.call_tf_transformed((estimates, params_null))
         ps = self.p_from_z(zs[:, 0])
         feeler_net = self.param_sampling_net.feeler_net
-        feeler_outputs = feeler_net.call_tf(params_null)                       # type: ignore
+        feeler_outputs = feeler_net.call_tf((params_null, params_null))        # type: ignore
         feeler_final = feeler_net.get_log_importance_from_net(params_null)
 
         values = {}
@@ -128,7 +128,8 @@ class _PNet(_DataSaver):
             values[f"z{i}"] = zs[:, i]
         values["p"] = ps
         values["feeler_log_vol"] = feeler_outputs[:, 0]
-        values["feeler_p_intersect"] = feeler_outputs[:, 1]
+        values["feeler_include"] = feeler_outputs[:, 1]
+        values["feeler_inner"] = feeler_outputs[:, 2]
         values["feeler"] = feeler_final
 
         return values

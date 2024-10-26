@@ -48,7 +48,7 @@ def test_param_samples(
         params_net = cis._params_human_net_order_to_net(*params_human)
 
         importance_ingredients = cis.param_sampling_net.feeler_net.call_tf(
-            net_params
+            (params_net, params_net)
         )
         is_in_outer = importance_ingredients[:, 1] > -3.
         is_in_inner = importance_ingredients[:, 2] > -3.
@@ -64,6 +64,7 @@ def test_param_samples(
                 (trial_params[param_name] >= range[0]) &
                 (trial_params[param_name] <= range[1])
             )
+
         in_range = tf.reduce_all(tf.stack(in_range, axis=1), axis=1)
 
         to_select = in_range

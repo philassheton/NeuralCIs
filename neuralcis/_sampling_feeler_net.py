@@ -21,7 +21,8 @@ NetInputSimulationBlob = Tuple[
     Tensor2[tf32, Samples, Params],                           # Centroid
     Tensor3[tf32, Samples, UnknownParams, UnknownParams],     # Cholesky factor
 ]
-NetInputBlob = Tensor2[tf32, Samples, Params]
+NetInputBlob = Tuple[Tensor2[tf32, Samples, Params],          # for log vol
+                     Tensor2[tf32, Samples, Params]]          # for intersect
 NetOutputBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 
@@ -67,8 +68,9 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         )
 
         super().__init__(
-            num_inputs_for_each_net=(num_unknown_param + num_known_param,),
-            num_outputs_for_each_net=(NUM_IMPORTANCE_INGREDIENTS,),
+            num_inputs_for_each_net=(num_unknown_param + num_known_param,
+                                     num_unknown_param + num_known_param),
+            num_outputs_for_each_net=(1, NUM_IMPORTANCE_INGREDIENTS - 1),
             subobjects_to_save=({"feelergen": feeler_data_generator}),
             instance_tf_variables_to_save=('min_params_valid',
                                            'max_params_valid'),
@@ -159,9 +161,14 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         smoothing_unknown = tf.linalg.matmul(chols, z)[:, :, 0]
         smoothing_known = tf.zeros((n, self.num_known_param))
         smoothing = tf.concat([smoothing_unknown, smoothing_known], axis=1)
-        param_samples = param_samples + smoothing
 
-        return param_samples, target_blob
+        smoothing_log_vol = common.IMPORTANCE_INGREDIENTS_VOLUMES_SMOOTHING
+        smoothing_include = \
+            common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_SMOOTHING
+        param_samples_log_vol = param_samples + smoothing_log_vol * smoothing
+        param_samples_include = param_samples + smoothing_include * smoothing
+
+        return (param_samples_log_vol, param_samples_include), target_blob
 
     @tf.function
     def get_loss(
@@ -181,7 +188,8 @@ class _SamplingFeelerNet(_SimulatorNetCached):
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
         # TODO: can we just push this up to the _SimulatorNet?
-        return inputs,                                                         # type: ignore
+        tf.debugging.check_numerics(inputs, "NaN in inputs!")
+        return inputs                                                          # type: ignore
 
     @tf.function
     def get_log_importance_from_net(
@@ -189,10 +197,11 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
-        importance_ingredients = self.call_tf(params)
-        importance_log = self.feeler_data_generator.get_log_importance(
-            importance_ingredients
-        )
+        importance_ingredients = self.call_tf((params, params))
+        vol = common.IMPORTANCE_INGREDIENTS_VOLUMES_INDEX
+        include = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
+        importance_log = (tf.minimum(importance_ingredients[:, include], -3.) +
+                          importance_ingredients[:, vol])
 
         # Add a punitive amount for being outside the region sampled from
         param_too_low_by = tf.maximum(self.min_params_valid[None, :] - params,

@@ -64,7 +64,7 @@ def __sample_params_inner_zone(
         params_net = cis._params_human_net_order_to_net(*params_human)
 
         importance_ingredients = cis.param_sampling_net.feeler_net.call_tf(
-            net_params
+            (params_net, params_net),
         )
         in_outer_boundary = importance_ingredients[:, 1] > -3.
         in_inner_boundary = importance_ingredients[:, 2] > -3.
