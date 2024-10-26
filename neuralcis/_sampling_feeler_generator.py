@@ -131,6 +131,10 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             (sample_size - 1)
         )
 
+        # TODO: Rather than assuming origin is at (0, 0, ..., 0), store the
+        #       origin in self and choose it as a meaningful middle
+        self.widths_at_origin = self.estimate_sampling_widths_at_origin()
+
         # Set up all the tf.Variables that will be used to construct the chains
         def state_variable(shape_inner, dtype=tf.float32):
             shape = [self.num_chains] + list(shape_inner)
@@ -501,8 +505,11 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         #       just putting this in as a quick method.  If we were to stay
         #       with this approach, it should be possible to save effort
         #       by computing both together.
-        overlaps = self.overlaps_estimates_box(centroid, cov_chol)
-        overlaps_wider = self.overlaps_estimates_box(centroid, 3. * cov_chol)
+        overlaps_simple, overlaps_outer  = self.overlaps_estimates_box(
+            params,
+            centroid,
+            cov_chol,
+        )
 
         known_params = params[:, self.num_unknown_param:]
         known_params_valid = tf.math.reduce_all(
@@ -516,8 +523,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         importance_ingredients_unlog = tf.stack([
             importance_if_overlaps,
-            overlaps_wider * known_params_valid,
-            overlaps * known_params_valid,
+            overlaps_outer * known_params_valid,
+            overlaps_simple * known_params_valid,
         ], axis=1)
 
         return tf.math.log(importance_ingredients_unlog + eps)                 # type: ignore
@@ -545,9 +552,10 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def overlaps_estimates_box(
             self,
+            params: Tensor2[tf32, Chains, Params],
             centroid: Tensor2[tf32, Chains, Estimates],
             cov_chol: Tensor3[tf32, Chains, Estimates, Estimates],
-    ) -> Tensor1[tf32, Chains]:
+    ) -> Tuple[Tensor1[tf32, Chains], Tensor1[tf32, Chains]]:
 
         # TODO: Quick substitution for now.  Instead of testing whether the
         #       sample intersects with the estimates box using the Cholesky
@@ -560,33 +568,152 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         #       cases that do not even produce samples within our region of
         #       interest).
 
+        widths = self.get_sampling_widths_from_chol(cov_chol)
+        distances_to_estimates_box = tf.where(
+            centroid >= self.estimates_min[None, :],
+            tf.maximum(centroid - self.estimates_max[None, :], 0.),
+            self.estimates_min[None, :] - centroid,
+        )
+        distances_to_origin = tf.math.abs(centroid)
+        overlaps_simple = tf.reduce_all(widths >= distances_to_estimates_box,
+                                        axis=1)
+        widths_middle = self.estimate_sampling_widths_for_params(params / 2.)
+        standardised_distances_to_estimates_box = (distances_to_estimates_box /
+                                                   distances_to_origin)
+        standardised_widths_at_params = widths / distances_to_origin
+        standardised_widths_at_middle = widths_middle / distances_to_origin
+        standardised_widths_at_origin = (self.widths_at_origin[None, :] /
+                                         distances_to_origin)
+
+        a, b, c = self.quadratic_coefficients(standardised_widths_at_params,
+                                              standardised_widths_at_middle,
+                                              standardised_widths_at_origin)
+
+        # bearing in mind that 0 is the point and 1 is the origin, and width is y:
+        # x + width > dist_to_box
+        # x + width - dist_to_box > 0
+        reaches_estimates_box = self.quadratic_above_zero(
+            a,                                                # width
+            b + 1,                                            # - x
+            c - standardised_distances_to_estimates_box,      # > dist to box
+        )
+
+        # x - width < param_box_edge
+        # x - width < c
+        # x - width - c < 0
+        # width + c - x > 0
+        reaches_param_sampling_box = self.quadratic_above_zero(
+            a,                                            # width         aka: | -width
+            b - 1.,                                       # - x                | + x
+            2*c,                                          # > -param box edge  | < param box edge
+        )
+
+        overlaps_outer = tf.reduce_any(reaches_estimates_box &
+                                       reaches_param_sampling_box,
+                                       axis=1)
+
+        return (tf.cast(overlaps_simple, tf.float32),
+                tf.cast(overlaps_outer, tf.float32))
+
+    @tf.function
+    def quadratic_coefficients(
+            self,
+            widths_0,
+            widths_middle,
+            widths_1,
+    ):
+        a = 2*widths_1 + 2*widths_0 - 4*widths_middle
+        b = -widths_1 + 4*widths_middle - 3*widths_0
+        c = widths_0
+        return a, b, c
+
+    @tf.function
+    def quadratic_solutions(
+            self,
+            a: tf.Tensor,
+            b: tf.Tensor,
+            c: tf.Tensor,
+    ) -> Tuple[tf.Tensor, tf.Tensor]:
+
+        base = -b / (2*a)
+        plus_minus = tf.math.sqrt(tf.square(b) - 4*a*c) / (2*a)
+        return base + plus_minus, base - plus_minus
+
+    @tf.function
+    def quadratic_above_zero(
+            self,
+            a: tf.Tensor,
+            b: tf.Tensor,
+            c: tf.Tensor,
+    ):
+
+        # TODO: Look at a better way than this.  Just for quick dirty testing,
+        #         am just getting it to compute each quadratic across a mesh.
+        # TODO: This would be much better if it could just go from the edge
+        #         of the estimates box to the the edge of param sampling box
+        #         (e.g. from 0.2 to 0.8 or something) -- but that would also
+        #         have the problem of mixing up params and estimates, which
+        #         is perhaps not very good.  Also might miss cases where
+        #         a point in the sampling box might actually get it over the
+        #         line so perhaps don't do it at all.  Think about it!
+        x = tf.linspace(0., 1., 100)[None, None, :]
+
+        y = a[:, :, None]*tf.square(x) + b[:, :, None]*x + c[:, :, None]
+        return tf.reduce_all(y >= 0., axis=1)
+
+    @tf.function
+    def get_sampling_widths_from_chol(
+            self,
+            cov_chol: Tensor3[tf32, Samples, Estimates, Estimates],
+    ) -> Tensor2[tf32, Samples, Estimates]:
+
         # Very crude Bonferroni adjusted bounding box for now.  Should be
         #   fine for small number of parameters.
         # TODO: Again, we need to look more carefully at this.  How do we make
         #   sure we are sampling enough but not too much, to make sure we have
         #   sufficient info?
+
         tails_probability = 1. - common.SAMPLE_PARAM_IF_SAMPLE_PERCENTILE / 100
         tails_probability_bonferroni = tails_probability / self.num_param
         quantile = 1 - tails_probability_bonferroni / 2.
         cutoff = tfp.distributions.Normal(0., 1.).quantile(quantile)
         cutoff = cutoff * self.sd_sampling_error_adjust                        # See comment number 2. at top of page
         sds = tf.sqrt(tf.reduce_sum(tf.square(cov_chol), axis=2))
-        bounding_box_lower = centroid - cutoff * sds
-        bounding_box_upper = centroid + cutoff * sds
+        widths = sds * cutoff
 
-        param_is_above_low = bounding_box_lower <= self.estimates_max[None, :]
-        param_is_below_upp = bounding_box_upper >= self.estimates_min[None, :]
-        params_are_above_lower = tf.math.reduce_all(param_is_above_low, axis=1)
-        params_are_below_upper = tf.math.reduce_all(param_is_below_upp, axis=1)
-        overlaps = params_are_above_lower & params_are_below_upper
+        return widths
 
-        return tf.cast(overlaps, tf.float32)
+    @tf.function
+    def estimate_sampling_widths_for_params(
+            self,
+            params: Tensor2[tf32, Chains, Params],
+    ) -> Tensor2[tf32, Chains, Estimates]:
+
+        # TODO: Not necessary to invert matrix here; refactor.
+        _, _, cov_chol, _, _ = self.sample_statistics(params)
+        widths = self.get_sampling_widths_from_chol(cov_chol)
+        return widths
+
+    @tf.function
+    def estimate_sampling_widths_at_origin(
+            self,
+    ) -> Tensor1[tf32, Estimates]:
+
+        # To save on tracing, and hopefully produce a very accurate width for
+        # the centre of space, we will compute the same widths self.num_chains
+        # times, and then average their squares together.
+
+        # TODO: Check that it is using n rather than n-1 for the chols
+        #         otherwise we need to do something slightly smarter
+        params = tf.zeros((self.num_chains, self.num_param))
+        widths = self.estimate_sampling_widths_for_params(params)
+        widths = tf.math.sqrt(tf.reduce_mean(tf.square(widths), axis=0))
+        return widths
 
     @tf.function
     def sample_statistics(
             self,
             params: Tensor2[tf32, Chains, Params],
-            num_chains: int,
     ) -> Tuple[
         Tensor2[tf32, Chains, Params],
         Tensor2[tf32, Chains, Estimates],
@@ -595,6 +722,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         Tensor1[tf32, Chains],
     ]:
 
+        num_chains, _ = params.shape
         params_pp = self.preprocess_params_fn(params)
         params_repeated = tf.repeat(params_pp, self.sample_size, axis=0)
         estimates = self.sampling_distribution_fn(params_repeated)
