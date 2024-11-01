@@ -1,15 +1,14 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
-from neuralcis._param_sampling_net import _ParamSamplingNet
+from neuralcis._param_sampler import _ParamSampler
 from neuralcis._z_net import _ZNet
 from neuralcis._data_saver import _DataSaver
-from neuralcis import common
 
 # typing
 from typing import Callable, Tuple, Sequence
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Estimates, Params, KnownParams, Zs
+from neuralcis.common import Samples, Estimates, Params, KnownParams
 
 NetInputBlob = Tuple[
     Tensor2[tf32, Samples, Estimates],
@@ -38,17 +37,18 @@ class _PNet(_DataSaver):
             num_known_param: int,
             known_param_indices: Sequence[int],
             num_params_remaining_after_transform: int,
-            param_sampling_net: _ParamSamplingNet,
+            param_sampler: _ParamSampler,
             **network_setup_args,
     ) -> None:
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
+        self.known_param_indices = known_param_indices
 
-        self.param_sampling_net = param_sampling_net
+        self.param_sampler = param_sampler
         self.znet = _ZNet(
             self.sampling_distribution_fn,                                     # type: ignore
-            self.param_sampling_net.sample_params,
+            self.param_sampler.sample_params,
             contrast_fn,
             transform_on_params_fn,
             num_unknown_param,
@@ -119,18 +119,37 @@ class _PNet(_DataSaver):
 
         zs = self.znet.call_tf_transformed((estimates, params_null))
         ps = self.p_from_z(zs[:, 0])
-        feeler_net = self.param_sampling_net.feeler_net
-        feeler_outputs = feeler_net.call_tf((params_null, params_null))        # type: ignore
-        feeler_final = feeler_net.get_log_importance_from_net(params_null)
+        inner_feeler = self.param_sampler.inner_feeler_net
+        inner_feeler_outputs = inner_feeler.call_tf((params_null, params_null))  # type: ignore
+        inner_importance = inner_feeler.get_log_importance_from_net(
+            params_null
+        )
+        outer_feeler = self.param_sampler.outer_feeler_net
+        outer_feeler_outputs = outer_feeler.call_tf((params_null, params_null))  # type: ignore
+        outer_importance = outer_feeler.get_log_importance_from_net(
+            params_null
+        )
+
+        known_params_null = tf.gather(params_null,
+                                      self.known_param_indices,
+                                      axis=1)
+        inside_net = self.param_sampler.hits_inside_net
+        inside_prob = inside_net.call_tf((estimates, known_params_null))
+        hits_inside = inside_net.is_inside_sampled_region(estimates,
+                                                          known_params_null)
 
         values = {}
         for i in range(zs.shape[-1]):
             values[f"z{i}"] = zs[:, i]
         values["p"] = ps
-        values["feeler_log_vol"] = feeler_outputs[:, 0]
-        values["feeler_include"] = feeler_outputs[:, 1]
-        values["feeler_inner"] = feeler_outputs[:, 2]
-        values["feeler"] = feeler_final
+        values["inner_log_vol"] = inner_feeler_outputs[:, 0]
+        values["inner_include"] = inner_feeler_outputs[:, 1]
+        values["inner_importance"] = inner_importance
+        values["outer_log_vol"] = outer_feeler_outputs[:, 0]
+        values["outer_include"] = outer_feeler_outputs[:, 1]
+        values["outer_importance"] = outer_importance
+        values["inside_prob"] = inside_prob
+        values["hits_inside"] = hits_inside
 
         return values
 

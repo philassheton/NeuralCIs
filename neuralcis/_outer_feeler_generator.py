@@ -1,8 +1,10 @@
+# TODO: Refactor this and sampling_feeler_net since both share a lot
+
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
-import gc
 from datetime import datetime
+from tqdm import tqdm
 
 from neuralcis._data_saver import _DataSaver
 from neuralcis import common
@@ -10,7 +12,7 @@ from neuralcis import common
 # typing
 from typing import Callable, Tuple
 from neuralcis.common import Samples, Estimates, Params, UnknownParams
-from neuralcis.common import MinAndMax, ImportanceIngredients, Chains
+from neuralcis.common import ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
 
@@ -71,10 +73,13 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 #
 ###############################################################################
 
-class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
+class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     def __init__(
             self,
-            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
+            sample_params_inner_fn: Callable[
+                [int],
+                Tensor2[tf32, Samples, Params],
+            ],
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
                 Tensor2[tf32, Samples, Estimates],  # -> ys
@@ -83,6 +88,11 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Params]
             ],
+            inside_inner_fn: Callable[
+                [Tensor2[tf32, Samples, Estimates],
+                 Tensor2[tf32, Samples, Params]],
+                Tensor1[ttf.bool, Samples],
+            ],
             num_unknown_param: int,
             num_known_param: int,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
@@ -90,17 +100,20 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             num_chains: int = common.FEELER_NET_NUM_CHAINS,
             chain_length: int = common.FEELER_NET_MARKOV_CHAIN_LENGTH,
             peripheral_batch_size: int =
-                                       common.FEELER_NET_PERIPHERAL_BATCH_SIZE,
-            num_peripheral_batches: int = common.FEELER_NET_PERIPHERAL_BATCHES,
+                                     common.OUTER_FEELER_PERIPHERAL_BATCH_SIZE,
+            num_peripheral_batches: int =
+                                     common.OUTER_FEELER_PERIPHERAL_BATCHES,
     ):
 
         tf.keras.Model.__init__(self)
 
+        self.sample_params_inner_fn = sample_params_inner_fn
         self.sampling_distribution_fn = sampling_distribution_fn
         self.preprocess_params_fn = preprocess_params_fn
-        self.num_estimate = estimates_min_and_max.shape[0]
-        self.estimates_min = estimates_min_and_max[:, 0]
-        self.estimates_max = estimates_min_and_max[:, 1]
+        self.inside_inner_fn = inside_inner_fn
+
+        # TODO: Eventually decouple num_unknown_param from num_estimate
+        self.num_estimate = num_unknown_param
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
         self.num_param = num_unknown_param + num_known_param
@@ -112,29 +125,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
 
-        # We will draw our very first param sample from the estimates box,
-        #   since we are for starters assuming that the estimates are indeed
-        #   estimates of the params, so that's probably a good place to start.
-        self.first_params_min = tf.concat([
-            self.estimates_min,
-            tf.repeat(common.PARAMS_MIN, num_known_param),
-        ], axis=0)
-        self.first_params_widths = tf.concat([
-            self.estimates_max - self.estimates_min,
-            tf.repeat(common.PARAMS_MAX - common.PARAMS_MIN, num_known_param),
-        ], axis=0)
-
-        # See note 2 at the top of this script.  This computes an adjustment
-        # of 1 / .82 for a self.sample_size of 100
-        # self.sd_sampling_error_adjust = 1. / tf.sqrt(
-        #     tfp.distributions.Chi2(sample_size - 1).quantile(.005)
-        #     /
-        #     (sample_size - 1)
-        # )
-
-
-        # PHIL!!
-        self.sd_sampling_error_adjust = 1.
+        # https://eurekastatistics.com/beta-distribution-pdf-grapher/
+        self.beta = tfp.distributions.Beta(concentration1=1.,
+                                           concentration0=1.)
 
         # Set up all the tf.Variables that will be used to construct the chains
         def state_variable(shape_inner, dtype=tf.float32):
@@ -145,7 +138,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         def samples_variable(shape_inner, dtype=tf.float32):
             # Important to have chain length as first index (if a little
-            #   "wrong"-sounding, because we will want to index in by that).
+            #   "wrong"-sounding, because we will want to index in by that.
             shape = [self.chain_length, self.num_chains] + list(shape_inner)
             nans = tf.fill(shape, np.nan)
             var = tf.Variable(nans, dtype=dtype)
@@ -219,11 +212,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     ) -> Tuple[Tensor1[tf32, Params],
                Tensor1[tf32, Params]]:
 
-        valid_rows = tf.where(
-            self.is_inside_support_region(self.sampled_targets)
-        )[:, 0]
-        params_sampled_valid = tf.gather(self.sampled_params,
-                                         valid_rows, axis=0)
+        valid_mask = self.is_inside_support_region(self.sampled_targets)
+        params_sampled_valid = tf.boolean_mask(self.sampled_params, valid_mask)
         mins_sampled = tf.reduce_min(params_sampled_valid, axis=0)
         maxs_sampled = tf.reduce_max(params_sampled_valid, axis=0)
 
@@ -274,21 +264,18 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def initialise_for_training(self):
         self.iteration_num.assign(0)
 
-        u = tf.random.uniform((self.num_chains, self.num_param))
-        params = (u * self.first_params_widths[None, :] +
-                  self.first_params_min[None, :])
-        params_pp, mean, cov_chol, inv_chol, chol_det = \
+        params = self.sample_params_inner_fn(self.num_chains)
+        params_pp, mean, cov_chol, inv_chol, chol_det, hits_inner = \
             self.sample_statistics(params)
         importance_ingredients = self.importance_ingredients(params_pp,
-                                                             mean,
-                                                             cov_chol,
-                                                             chol_det)
+                                                             chol_det,
+                                                             hits_inner)
         importance = self.get_importance(importance_ingredients)
 
         # We want to store un-preprocessed params as current state from which
         #   to step from (this way we will naturally diffuse across different
         #   discrete possibilities) but we want to store for the long term the
-        #   discretized value params_pp (pp=preprocessed)_ for training our
+        #   discretized value params_pp (pp=preprocessed_ for training our
         #   nets with.
         self.assign_iteration_results(params, mean,
                                       cov_chol, inv_chol, chol_det,
@@ -302,7 +289,6 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         p = self.num_param
         e = self.num_estimate
         i = NUM_IMPORTANCE_INGREDIENTS
-        print("Constructing fake variables to load into")
         self.sampled_params = tf.Variable(tf.fill((n, p), np.nan),
                                           dtype=tf.float32)
         self.sampled_chols = tf.Variable(tf.fill((n, e, e), np.nan),
@@ -354,19 +340,32 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         chols = tf.TensorArray(tf.float32, b, element_shape=(ni, u, u))
         targets = tf.TensorArray(tf.float32, b, element_shape=(ni, imp))
 
-        for i in range(self.num_peripheral_batches):
+        for i in tqdm(range(self.num_peripheral_batches)):
             (pi, ci), ti = self.generate_peripheral_samples_batch(mins_valid,
                                                                   maxs_valid)
             params = params.write(i, pi)
             chols = chols.write(i, ci)
             targets = targets.write(i, ti)
 
-        params = tf.reshape(params.stack(), (b*ni, p))
-        chols = tf.reshape(chols.stack(), (b*ni, u, u))
-        targets = tf.reshape(targets.stack(), (b*ni, imp))
+        with tf.device("/CPU:0"):
+            params_cpu = tf.reshape(params.stack(), (b*ni, p))
+            chols_cpu = tf.reshape(chols.stack(), (b*ni, u, u))
+            targets_cpu = tf.reshape(targets.stack(), (b*ni, imp))
+
+        del params
+        del chols
+        del targets
+
+        with tf.device("/GPU:0"):
+            params = tf.identity(params_cpu)
+            chols = tf.identity(chols_cpu)
+            targets = tf.identity(targets_cpu)
 
         return (params, chols), targets
 
+    # TODO: Parts of the peripheral sampling had to be converted
+    #       non-tf.functions because there was some kind of memory leak.  Look
+    #       back at this again.
     def generate_peripheral_samples_batch(
             self,
             mins: Tensor1[tf32, Params],
@@ -376,7 +375,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         # Generate extra samples around the edges that force the
         #    probability of assigning non-zero probability at the edges
         #    down to zero.
-        # TODO: Make this fit more snugly to the countours of the original
+        # TODO: Make this fit more snugly to the contours of the original
         #       sample.
 
         diffs = maxs - mins
@@ -395,18 +394,20 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     ):
 
         new_params = self.random_params_step(self.params, self.cov_chol)
-        new_params_pp, new_mean, new_cov_chol, new_inv_chol, new_chol_det = \
-            self.sample_statistics(new_params)
+        (new_params_pp,
+         new_mean, new_cov_chol, new_inv_chol, new_chol_det,
+         new_hits_inner) = self.sample_statistics(new_params)
         prop_prob_new_given_old = self.params_proposal_pdf_proportional(
             new_params, self.params, self.inv_chol, self.chol_det,
         )
         prop_prob_old_given_new = self.params_proposal_pdf_proportional(
             self.params, new_params, new_inv_chol, new_chol_det,
         )
-        new_importance_ingredients = self.importance_ingredients(new_params_pp,
-                                                                 new_mean,
-                                                                 new_cov_chol,
-                                                                 new_chol_det)
+        new_importance_ingredients = self.importance_ingredients(
+            new_params_pp,
+            new_chol_det,
+            new_hits_inner
+        )
         new_importance = self.get_importance(new_importance_ingredients)
 
         acceptance_prob = tf.minimum(
@@ -456,7 +457,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         return new_params
 
-    @tf.function
+    # TODO: Parts of the peripheral sampling had to be converted
+    #       non-tf.functions because there was some kind of memory leak.  Look
+    #       back at this again.
     def sample_ingredients(
             self,
             params: Tensor2[tf32, Samples, Params],
@@ -466,30 +469,22 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         Tensor3[tf32, Samples, Estimates, Estimates],
     ]:
 
-        params_preproc, mean, cov_chol, inv_chol, chol_det = \
+        params_preproc, mean, cov_chol, inv_chol, chol_det, hits_inner = \
             self.sample_statistics(params)
         importance_ingredients = self.importance_ingredients(params_preproc,
-                                                             mean,
-                                                             cov_chol,
-                                                             chol_det)
+                                                             chol_det,
+                                                             hits_inner)
         return params_preproc, importance_ingredients, cov_chol
 
     @tf.function
     def importance_ingredients(
             self,
             params: Tensor2[tf32, Chains, Params],
-            centroid: Tensor2[tf32, Chains, Estimates],
-            cov_chol: Tensor3[tf32, Chains, Estimates, Estimates],
             chol_det: Tensor1[tf32, Chains],
+            hits_inner: Tensor1[tf32, Chains],
     ) -> Tensor2[tf32, Chains, ImportanceIngredients]:
 
         eps = common.SMALLEST_LOGABLE_NUMBER
-
-        # TODO: Since this will not anyway be the right way mathematically,
-        #       just putting this in as a quick method.  If we were to stay
-        #       with this approach, it should be possible to save effort
-        #       by computing both together.
-        overlaps = self.overlaps_estimates_box(centroid, cov_chol)
 
         known_params = params[:, self.num_unknown_param:]
         known_params_valid = tf.math.reduce_all(
@@ -503,7 +498,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         importance_ingredients_unlog = tf.stack([
             importance_if_overlaps,
-            overlaps * known_params_valid,
+            hits_inner * known_params_valid,
         ], axis=1)
 
         return tf.math.log(importance_ingredients_unlog + eps)                 # type: ignore
@@ -528,47 +523,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         return tf.math.exp(self.get_log_importance(importance_ingredients))
 
-    @tf.function
-    def overlaps_estimates_box(
-            self,
-            centroid: Tensor2[tf32, Chains, Estimates],
-            cov_chol: Tensor3[tf32, Chains, Estimates, Estimates],
-    ) -> Tensor1[tf32, Chains]:
-
-        # TODO: Quick substitution for now.  Instead of testing whether the
-        #       sample intersects with the estimates box using the Cholesky
-        #       factor, instead we just compare bounding boxes.  This will be
-        #       fast and quite alright for early examples.  But we will
-        #       probably need something more sophisticated as (i)
-        #       dimensionality grows and (ii) as we come on to more correlated
-        #       estimates.  (If we do not do this better, we will end up in
-        #       some cases spending *most* of our time sampling from extreme
-        #       cases that do not even produce samples within our region of
-        #       interest).
-
-        # Very crude Bonferroni adjusted bounding box for now.  Should be
-        #   fine for small number of parameters.
-        # TODO: Again, we need to look more carefully at this.  How do we make
-        #   sure we are sampling enough but not too much, to make sure we have
-        #   sufficient info?
-        tails_probability = 1. - common.SAMPLE_PARAM_IF_SAMPLE_PERCENTILE / 100
-        tails_probability_bonferroni = tails_probability / self.num_param
-        quantile = 1 - tails_probability_bonferroni / 2.
-        cutoff = tfp.distributions.Normal(0., 1.).quantile(quantile)
-        cutoff = cutoff * self.sd_sampling_error_adjust                        # See comment number 2. at top of page
-        sds = tf.sqrt(tf.reduce_sum(tf.square(cov_chol), axis=2))
-        bounding_box_lower = centroid - cutoff * sds
-        bounding_box_upper = centroid + cutoff * sds
-
-        param_is_above_low = bounding_box_lower <= self.estimates_max[None, :]
-        param_is_below_upp = bounding_box_upper >= self.estimates_min[None, :]
-        params_are_above_lower = tf.math.reduce_all(param_is_above_low, axis=1)
-        params_are_below_upper = tf.math.reduce_all(param_is_below_upp, axis=1)
-        overlaps = params_are_above_lower & params_are_below_upper
-
-        return tf.cast(overlaps, tf.float32)
-
-    @tf.function
+    # TODO: Parts of the peripheral sampling had to be converted
+    #       non-tf.functions because there was some kind of memory leak.  Look
+    #       back at this again.
     def sample_statistics(
             self,
             params: Tensor2[tf32, Chains, Params],
@@ -578,35 +535,30 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         Tensor3[tf32, Chains, Estimates, Estimates],
         Tensor3[tf32, Chains, Estimates, Estimates],
         Tensor1[tf32, Chains],
+        Tensor1[tf32, Chains],
     ]:
 
         num_chains, _ = params.shape
         params_pp = self.preprocess_params_fn(params)
-        estimates_grouped = self.draw_estimates_grouped(params_pp, num_chains)
+        params_repeated = tf.repeat(params_pp, self.sample_size, axis=0)
+        estimates = self.sampling_distribution_fn(params_repeated)
+
+        inside_inner = self.inside_inner_fn(estimates, params_repeated)
+        inside_inner_grouped = tf.reshape(inside_inner, (num_chains,
+                                                         self.sample_size))
+        hits_inner = tf.reduce_any(inside_inner_grouped, axis=1)
+        hits_inner = tf.cast(hits_inner, tf.float32)
+
+        estimates_grouped = tf.reshape(estimates, (num_chains,
+                                                   self.sample_size,
+                                                   self.num_estimate))
         xbar = tf.reduce_mean(estimates_grouped, axis=1)
         l = tfp.stats.cholesky_covariance(estimates_grouped, sample_axis=1)
         identity = tf.eye(self.num_estimate, batch_shape=(num_chains, ))
         inv_l = tf.linalg.triangular_solve(l, identity)
         det_l = tf.reduce_prod(tf.linalg.diag_part(l), axis=1)
 
-        return params_pp, xbar, l, inv_l, det_l
-
-    @tf.function
-    def draw_estimates_grouped(
-            self,
-            params_preprocessed: Tensor2[tf32, Chains, Params],
-            num_chains: int,
-    ) -> Tensor3[tf32, Chains, Samples, Estimates]:
-
-        params_repeated = tf.repeat(params_preprocessed,
-                                    self.sample_size,
-                                    axis=0)
-        estimates = self.sampling_distribution_fn(params_repeated)
-        estimates_grouped = tf.reshape(estimates, (num_chains,
-                                                   self.sample_size,
-                                                   self.num_estimate))
-
-        return estimates_grouped
+        return params_pp, xbar, l, inv_l, det_l, hits_inner
 
     @tf.function
     def covariance_cholesky_computation(
@@ -726,9 +678,6 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         del self.sampled_params
         del self.sampled_targets
         del self.sampled_chols
-
-        gc.collect()
-        tf.keras.backend.clear_session()
 
         self.sampled_params = params_cpu
         self.sampled_targets = targets_cpu

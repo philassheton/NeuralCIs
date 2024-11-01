@@ -32,7 +32,7 @@ class _ZNet(_SimulatorNet):
                 Tensor2[tf32, Samples, Ys]                        # -> ys
             ],
             param_sampling_fn: Callable[
-                [int],                                            # n
+                [int, int],                                       # n
                 Tensor2[tf32, Samples, Params]                    # -> params
             ],
             contrast_fn: Callable[
@@ -265,7 +265,10 @@ class _ZNet(_SimulatorNet):
             n: int,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        return self.param_sampling_fn(n)
+        assert n % 2 == 0
+        n_outer = n // 2
+        n_inner = n // 2
+        return self.param_sampling_fn(n_inner, n_outer)
 
     @tf.function
     def sample_ys_and_params(

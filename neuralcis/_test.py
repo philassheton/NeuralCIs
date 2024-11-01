@@ -13,8 +13,8 @@ def test_param_net_without_going_via_fn_interface(
         num_samples = 100000,
 ):
 
-    net_samples = cis.param_sampling_net.sample_params(num_samples)
-    importance_ingreds = cis.param_sampling_net.feeler_net.call_tf(net_samples)
+    net_samples = cis.param_sampler.sample_params(num_samples)
+    importance_ingreds = cis.param_sampler.feeler_net.call_tf(net_samples)
     samples_on_target = tf.reduce_sum(tf.cast(importance_ingreds[:, 1] > -10.,
                                               tf.int64))
     samples_in_inner = tf.reduce_sum(tf.cast(importance_ingreds[:, 2] > -10.,
@@ -30,35 +30,20 @@ def test_param_samples(
         y_name: str,
         z_name: str,
         num_samples: int = 1000,
-        in_inner_boundary: bool = True,
-        in_outer_boundary: bool = False,
+        outer: bool = True,
         colour_by_log_vol: bool = False,
         **params_high_low: Dict[str, Tuple[float, float]],
 ) -> None:
 
-    params = {n: [] for n in cis.param_names_in_net_order}
-    log_vols = []
     total_samples_selected = 0
     total_samples_tried = 0
     total_samples_inside_inner = 0
     total_samples_inside_outer = 0
+    params = {n: [] for n in cis.param_names_in_net_order}
     progress = tqdm(total=num_samples)
     while total_samples_selected < num_samples:
         total_samples_tried += 100000
-        trial_params = cis.sample_params(100000)
-        params_human = [trial_params[n] for n in cis.param_names_in_net_order]
-        params_net = cis._params_human_net_order_to_net(*params_human)
-
-        importance_ingredients = cis.param_sampling_net.feeler_net.call_tf(
-            (params_net, params_net)
-        )
-        is_in_outer = importance_ingredients[:, 1] > -3.
-        is_in_inner = importance_ingredients[:, 2] > -3.
-
-        total_samples_inside_inner += tf.reduce_sum(tf.cast(is_in_inner,
-                                                            tf.int64)).numpy()
-        total_samples_inside_outer += tf.reduce_sum(tf.cast(is_in_outer,
-                                                            tf.int64)).numpy()
+        trial_params = cis.sample_params(100000, outer)
 
         in_range = []
         for param_name, range in params_high_low.items():
@@ -68,13 +53,7 @@ def test_param_samples(
             )
 
         in_range = tf.reduce_all(tf.stack(in_range, axis=1), axis=1)
-
-        to_select = in_range
-        if in_inner_boundary:
-            to_select = to_select & is_in_inner
-        if in_outer_boundary:
-            to_select = to_select & is_in_outer
-        to_select = tf.where(to_select)[:, 0]
+        to_select = tf.where(in_range)[:, 0]
 
         num_to_select = tf.minimum(
             len(to_select),
@@ -85,8 +64,6 @@ def test_param_samples(
 
         for n in cis.param_names_in_net_order:
             params[n].append(tf.gather(trial_params[n], to_select, axis=0))
-        log_vols.append(tf.gather(importance_ingredients[:, 0], to_select,
-                                  axis=0))
         total_samples_selected += num_to_select
 
         progress.n = total_samples_selected.numpy()
@@ -96,11 +73,7 @@ def test_param_samples(
 
     params = {n: tf.concat(params[n], axis=0).numpy()
               for n in cis.param_names_in_net_order}
-    log_vols = tf.concat(log_vols, axis=0).numpy()
-    if colour_by_log_vol:
-        colours = log_vols
-    else:
-        colours = "black"
+    colours = "black"
 
     print("%.0f%% of samples were in inner and %.0f%% in outer" %
           (total_samples_inside_inner / total_samples_tried * 100,
@@ -129,14 +102,15 @@ def plot_generator_samples(
         z_lims: Optional[Tuple[float, float]] = None,
         max_samples: Optional[int] = None,
         valid_only: bool = True,
+        inner_only: bool = False,
         colour_by_log_vol: bool = False,
         **param_limits,
 ) -> None:
 
     if x_name is None:
         assert y_name is None and z_name is None
-        assert cis.num_param == 3
-        x_name, y_name, z_name = cis.param_names_in_net_order
+        assert cis.num_param >= 3
+        x_name, y_name, z_name = cis.param_names_in_net_order[0:3]
 
     if x_lims is not None:
         param_limits[x_name] = x_lims
@@ -145,7 +119,10 @@ def plot_generator_samples(
     if z_lims is not None:
         param_limits[z_name] = z_lims
 
-    generator = cis.param_sampling_net.feeler_net.feeler_data_generator
+    if inner_only:
+        generator = cis.param_sampler.inner_data_generator
+    else:
+        generator = cis.param_sampler.outer_data_generator
     params = generator.sampled_params
     names = cis.param_names_in_net_order
     if len(param_limits):
@@ -167,6 +144,8 @@ def plot_generator_samples(
     is_inside_outer_zone = tf.gather(valid, indices)
     if valid_only:
         indices = tf.boolean_mask(indices, is_inside_outer_zone)
+        is_inside_outer_zone = tf.boolean_mask(is_inside_outer_zone,
+                                               is_inside_outer_zone)
 
     if max_samples is not None and len(indices) > max_samples:
         indices = tf.random.shuffle(indices)[:max_samples]
@@ -176,20 +155,18 @@ def plot_generator_samples(
     to_plot = cis._params_net_to_human_in_net_order(to_plot_net)
     to_plot = {n: p for n, p in zip(names, to_plot)}
     targets = tf.gather(generator.sampled_targets, indices, axis=0)
-    is_inside_inner_zone = targets[:, 2] > common.NEGLIGIBLE_LOG
 
     if colour_by_log_vol:
         colours = targets[:, 0].numpy()
         vmin = colours.min()
         vmax = colours.max()
     else:
-        colour_case = (1 * tf.cast(is_inside_inner_zone, tf.int32) +
-                       2 * tf.cast(is_inside_outer_zone, tf.int32))
+        colour_case = (1 * tf.cast(is_inside_outer_zone, tf.int32))
 
         lookup_table = tf.lookup.StaticHashTable(
             initializer=tf.lookup.KeyValueTensorInitializer(
-                keys=tf.constant([0, 1, 2, 3]),  # input keys
-                values=tf.constant(["gray", "red", "orange", "green"])
+                keys=tf.constant([0, 1]),  # input keys
+                values=tf.constant(["gray", "red"])
             ),
             default_value=tf.constant("purple")
         )
@@ -197,8 +174,6 @@ def plot_generator_samples(
         colours = colours.numpy().astype(str)
         vmin = None
         vmax = None
-
-    number_in_inner = tf.reduce_sum(tf.cast(is_inside_inner_zone, tf.int64))
 
     axis_types = analyse.__get_axis_types(cis)
     fig, ax = plt.subplots(subplot_kw={"projection": "3d"})
@@ -220,5 +195,3 @@ def plot_generator_samples(
     if colour_by_log_vol:
         fig.colorbar(scatter, ax=ax, label="ln(Vol)")
     fig.show()
-
-    print(f"Number in inner zone: {number_in_inner}; in outer: {len(indices)}")

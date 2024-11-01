@@ -18,7 +18,7 @@ import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from neuralcis import NeuralCIs
+from neuralcis import NeuralCIs, common
 from neuralcis.distributions import Distribution
 from neuralcis.common import HAT
 
@@ -46,52 +46,11 @@ def __param_names_and_medians(
 def __sample_params_inner_zone(
         cis: NeuralCIs,
         num_samples: int,
-        batch_size: int = 100000,
-        verbose: bool = False,
 ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-    params = {n: [] for n in cis.param_names_in_net_order}
-    total_samples_selected = 0
-    total_samples_tried = 0
-    total_samples_inside_inner = 0
-    total_samples_inside_outer = 0
-    while total_samples_selected < num_samples:
-        total_samples_tried += batch_size
-        trial_params = cis.sample_params(batch_size)
-
-        # TODO: This might want to live in neuralcis object
-        params_human = [trial_params[n] for n in cis.param_names_in_net_order]
-        params_net = cis._params_human_net_order_to_net(*params_human)
-
-        importance_ingredients = cis.param_sampling_net.feeler_net.call_tf(
-            (params_net, params_net),
-        )
-        in_outer_boundary = importance_ingredients[:, 1] > -3.
-        in_inner_boundary = importance_ingredients[:, 2] > -3.
-
-        total_samples_inside_inner += tf.reduce_sum(tf.cast(in_inner_boundary,
-                                                            tf.int64)).numpy()
-        total_samples_inside_outer += tf.reduce_sum(tf.cast(in_outer_boundary,
-                                                            tf.int64)).numpy()
-
-        num_to_select = tf.minimum(
-            total_samples_inside_inner,
-            num_samples,
-        ) - total_samples_selected
-
-        selected = tf.where(in_inner_boundary)[:num_to_select, 0]
-        for n in cis.param_names_in_net_order:
-            params[n].append(tf.gather(trial_params[n], selected, axis=0))
-        total_samples_selected += num_to_select
-
-    params = {n: tf.concat(params[n], axis=0)
-              for n in cis.param_names_in_net_order}
-
-    if verbose:
-        print("%.0f%% of samples were in inner and %.0f%% in outer" %
-              (total_samples_inside_inner / total_samples_tried * 100,
-               total_samples_inside_outer / total_samples_tried * 100))
-
+    params_net = cis.param_sampler.sample_params(n_inner = num_samples)
+    params_human = cis._params_net_to_human_in_net_order(params_net)
+    params = {n: p for n, p in zip(cis.param_names_in_net_order, params_human)}
     return params
 
 
@@ -101,7 +60,7 @@ def __param_names_and_random_values(
         **value_overrides,
 ) -> Dict[str, float]:
 
-    random_params = __sample_params_inner_zone(cis, 1, batch_size=20)
+    random_params = __sample_params_inner_zone(cis, 1)
     param_values = {n: float(p.numpy()) for n, p in random_params.items()}
 
     return param_values
@@ -310,6 +269,16 @@ def __plot_3d_with_axis_types(
     return plot_return
 
 
+def __print_df(
+        df: pd.DataFrame,
+) -> None:
+
+    with pd.option_context("display.max_columns", None,
+                           "display.max_rows", None,
+                           "display.float_format", "{:.3f}".format):
+        print(df)
+
+
 def __make_pandas(
         estimates_and_params: Dict,
         sort_by: Optional[str] = None,
@@ -331,10 +300,7 @@ def __make_pandas(
                                                                     axis=1)
 
     if num_rows_to_print > 0:
-        with pd.option_context("display.max_columns", None,
-                               "display.max_rows", None,
-                               "display.float_format", "{:.3f}".format):
-            print(df.head(num_rows_to_print))
+        __print_df(df.head(num_rows_to_print))
 
     return df
 
@@ -589,6 +555,31 @@ def plot_p_value_cdfs(
     return pandas_sorted
 
 
+def add_param_measures_to_df(
+        cis: NeuralCIs,
+        df: pd.DataFrame,
+) -> pd.DataFrame:
+
+    params_human_net_order = [tf.constant(df[n], tf.float32)
+                              for n in cis.param_names_in_net_order]
+    params_net = cis._params_human_net_order_to_net(*params_human_net_order)
+    importance_ingredients_inner = cis.param_sampler.inner_feeler_net.call_tf(
+        (params_net, params_net),
+    )
+    importance_inner = cis.param_sampler.inner_feeler_net.get_log_importance_from_net(params_net)
+    importance_outer = cis.param_sampler.outer_feeler_net.get_log_importance_from_net(params_net)
+
+    include = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
+    df["inner_include"] = importance_ingredients_inner[:, include]
+    df["importance_inner"] = importance_inner
+    df["importance_outer"] = importance_outer
+
+    __print_df(df.head(100))
+    __print_df(df.tail(100))
+
+    return df
+
+
 def plot_p_value_distributions(
         cis: NeuralCIs,
         num_rows: int = 10,
@@ -728,8 +719,10 @@ def compare_power_at_h1(
              Tuple[Tensor1[tf32, Samples], ...]],  # **params
             Tensor1[tf32, Samples]                 # p-value
         ],
-        h0_params: Dict[str, float],
-        num_samples: int = 5000,
+        h0_df: Optional[pd.DataFrame] = None,
+        h0_df_row: int = 0,
+        h0_params: Optional[Dict[str, float]] = None,
+        num_samples: int = 100000,
         **h1_params_different_from_h0_params: float,
 ):
 
@@ -738,6 +731,15 @@ def compare_power_at_h1(
     if not isinstance(accurate_p_fn, TFFunction):
         accurate_p_fn = tf.function(accurate_p_fn)
 
+    if h0_params is None:
+        assert h0_df is not None
+        h0_params = h0_df.loc[h0_df_row,
+                              cis.param_names_in_net_order].to_dict()
+        print("Using df row:")
+        print(h0_df.iloc[h0_df_row, :])
+    else:
+        assert h0_df is None
+
     h1_params = copy.deepcopy(h0_params) | h1_params_different_from_h0_params
 
     h0_params = __repeat_params_tf(num_samples, **h0_params)
@@ -745,6 +747,9 @@ def compare_power_at_h1(
     estimates = cis.sampling_distribution_fn(**h1_params)
     ps_neural = cis.ps_and_cis(**(estimates | h0_params))["p"]
     ps_accurate = accurate_p_fn(**(estimates |h0_params))
+
+    tf.print(f"Power of traditional approach: {np.mean(ps_accurate < .05)};")
+    tf.print(f"Power of NeuralCIs:            {np.mean(ps_neural < .05)}.")
 
     fig, ax = plt.subplots(1, 2)
     ax[0].plot([0, 1], [0, 1], 'r-')
@@ -760,11 +765,8 @@ def compare_power_at_h1(
 
     fig.show()
 
-    tf.print(f"Power of traditional approach: {np.mean(ps_accurate < .05)};")
-    tf.print(f"Power of NeuralCIs:            {np.mean(ps_neural < .05)}.")
 
-
-def compare_techniques_within_estimates_box(
+def compare_with_exact(
         cis: NeuralCIs,
         accurate_p_fn: Callable[
             [Dict[str, Tensor1[tf32, Samples]],  # Dict of estimates
@@ -774,15 +776,11 @@ def compare_techniques_within_estimates_box(
         accurate_p_name: str = "Accurate Method",
         num_tries: int = 1000,
         apply_transform: bool = True,
-        **h0_params,
 ) -> pd.DataFrame:
 
-    dists = __estimate_and_param_names_and_distributions(cis)
-    rand_unif = lambda: tf.random.uniform((num_tries,))
-    estimates_and_params = {n: d.from_std_uniform_valid_estimates(rand_unif())
-                            for n, d in dists.items()}
-    estimates_and_params |= __sample_params_inner_zone(cis, num_tries)
-    estimates_and_params |= __repeat_params_tf(num_tries, **h0_params)
+    params = cis.sample_params(num_tries)
+    estimates = cis.sampling_distribution_fn(**params)
+    estimates_and_params = estimates | params
 
     ps_neural = cis.ps_and_cis(**estimates_and_params,
                                apply_transform=apply_transform)["p"]

@@ -6,7 +6,7 @@ import tensorflow as tf
 
 # Typing
 from typing import Tuple, Callable, Optional
-from neuralcis.common import Samples, Params, Zs, Us, Estimates, MinAndMax
+from neuralcis.common import Samples, Params, Zs, Us
 from neuralcis.common import NetTargetBlob, NetInputs, NetOutputs
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
@@ -23,40 +23,25 @@ class _ParamSamplingNet(_SimulatorNet):
 
     def __init__(
             self,
-            sampling_distribution_fn: Callable[
-                [Tensor2[tf32, Samples, Params]],                 # params
-                Tensor2[tf32, Samples, Estimates],                # -> ys
-            ],
+            feeler_net: _SamplingFeelerNet,
             preprocess_params_fn: Callable[
-                [Tensor2[tf32, Samples, Params]],
+                [Tensor2[tf32, Samples, Params], bool],
                 Tensor2[tf32, Samples, Params]
             ],
             num_unknown_param: int,
             num_known_param: int,
-            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
             **network_setup_args,
     ) -> None:
-
-        feeler_net = _SamplingFeelerNet(
-            estimates_min_and_max,
-            sampling_distribution_fn,
-            preprocess_params_fn,
-            num_unknown_param,
-            num_known_param,
-            **network_setup_args,
-        )
 
         super().__init__(
             num_inputs_for_each_net=(num_unknown_param + num_known_param,),
             num_outputs_for_each_net=(num_unknown_param,),
-            subobjects_to_save={'feelernet': feeler_net},
             **network_setup_args,
         )
 
         self.feeler_net = feeler_net
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
-        self.sampling_distribution_fn = sampling_distribution_fn
         self.preprocess_params_fn = preprocess_params_fn
 
     @tf.function
@@ -73,14 +58,16 @@ class _ParamSamplingNet(_SimulatorNet):
     def simulate_zs_and_us(
             self,
             n: int,
+            preprocess: bool = True,
     ) -> NetInputBlob:
-
 
         zs_unknown = tf.random.normal((n, self.num_unknown_param))
         us_known = tf.random.uniform((n, self.num_known_param),
                                      minval=common.PARAMS_MIN,
                                      maxval=common.PARAMS_MAX)
-        us_known = self.preprocess_params_fn(us_known, known_params_only=True)
+        if preprocess:
+            us_known = self.preprocess_params_fn(us_known,
+                                                 known_params_only=True)
 
         return zs_unknown, us_known
 
@@ -107,8 +94,8 @@ class _ParamSamplingNet(_SimulatorNet):
             inputs: NetInputBlob
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        us_unknown, us_known = inputs
-        net_inputs = tf.concat([us_unknown, us_known], axis=1)
+        zs_unknown, us_known = inputs
+        net_inputs = tf.concat([zs_unknown, us_known], axis=1)
         return (net_inputs,)
 
     def call_tf(
@@ -128,27 +115,19 @@ class _ParamSamplingNet(_SimulatorNet):
             input_blob: NetInputBlob
     ) -> NetOutputBlob:
 
-        us_unknown, us_known = input_blob
+        zs_unknown, us_known = input_blob
 
         with tf.GradientTape() as tape:  # type: ignore
-            tape.watch(us_unknown)
-            net_inputs = self.net_inputs((us_unknown,  us_known))
+            tape.watch(zs_unknown)
+            net_inputs = self.net_inputs((zs_unknown, us_known))
             params_unknown = self._call_tf(net_inputs, training=True)
 
-        jacobians = tape.batch_jacobian(params_unknown, us_unknown)
+        jacobians = tape.batch_jacobian(params_unknown, zs_unknown)
         jacobdets = tf.linalg.det(jacobians)
 
         params = tf.concat([params_unknown, us_known], axis=1)
 
         return params, jacobdets                                               # type: ignore
-
-    def fit(self, *args, **kwargs):
-        self.feeler_net.fit(*args, **kwargs)
-        super().fit(*args, **kwargs)
-
-    def compile(self, *args, **kwargs):
-        self.feeler_net.compile(*args, **kwargs)
-        super().compile(*args, **kwargs)
 
     @tf.function
     def num_param(self) -> int:
@@ -158,9 +137,10 @@ class _ParamSamplingNet(_SimulatorNet):
     def sample_params(
             self,
             n: int,
+            preprocess: bool = True,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        zs_us = self.simulate_zs_and_us(n)
+        zs_us = self.simulate_zs_and_us(n, preprocess)
         params = self.call_tf(zs_us)
 
         return params

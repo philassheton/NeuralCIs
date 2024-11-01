@@ -1,5 +1,6 @@
 from neuralcis._simulator_net_cached import _SimulatorNetCached
 from neuralcis._sampling_feeler_generator import _SamplingFeelerGenerator
+from neuralcis._outer_feeler_generator import _OuterFeelerGenerator
 from neuralcis._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
 from neuralcis import common
 
@@ -7,9 +8,9 @@ import tensorflow as tf
 import numpy as np
 
 # typing
-from typing import Callable, Tuple, Optional
-from neuralcis.common import Samples, Estimates, Indices, Params, UnknownParams
-from neuralcis.common import MinAndMax, ImportanceIngredients
+from typing import Tuple, Optional, Union
+from neuralcis.common import Samples, Indices, Params, UnknownParams
+from neuralcis.common import ImportanceIngredients
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
 
@@ -32,46 +33,19 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
     def __init__(
             self,
-            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
-            sampling_distribution_fn: Callable[
-                [Tensor2[tf32, Samples, Params]],  # params
-                Tensor2[tf32, Samples, Estimates],  # -> ys
-            ],
-            preprocess_params_fn: Callable[
-                [Tensor2[tf32, Samples, Params]],
-                Tensor2[tf32, Samples, Params]
-            ],
+            feeler_data_generator: Union[_SamplingFeelerGenerator,
+                                         _OuterFeelerGenerator],
             num_unknown_param: int,
             num_known_param: int,
-            sample_size: int = common.SAMPLES_PER_TEST_PARAM,
-            sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
-            num_chains: int = common.FEELER_NET_NUM_CHAINS,
-            chain_length: int = common.FEELER_NET_MARKOV_CHAIN_LENGTH,
-            peripheral_batch_size: int =
-                                       common.FEELER_NET_PERIPHERAL_BATCH_SIZE,
-            num_peripheral_batches: int = common.FEELER_NET_PERIPHERAL_BATCHES,
+            include_threshold: float,
+            include_boost: float = 1.,
             **network_setup_args,
     ) -> None:
-
-        feeler_data_generator = _SamplingFeelerGenerator(
-            estimates_min_and_max,
-            sampling_distribution_fn,
-            preprocess_params_fn,
-            num_unknown_param,
-            num_known_param,
-            sample_size,
-            sd_known,
-            num_chains,
-            chain_length,
-            peripheral_batch_size,
-            num_peripheral_batches,
-        )
 
         super().__init__(
             num_inputs_for_each_net=(num_unknown_param + num_known_param,
                                      num_unknown_param + num_known_param),
             num_outputs_for_each_net=(1, NUM_IMPORTANCE_INGREDIENTS - 1),
-            subobjects_to_save=({"feelergen": feeler_data_generator}),
             instance_tf_variables_to_save=('min_params_valid',
                                            'max_params_valid'),
             **network_setup_args
@@ -85,13 +59,13 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         self.min_params_valid = tf.Variable(tf.fill((self.num_param,), np.nan))
         self.max_params_valid = tf.Variable(tf.fill((self.num_param,), np.nan))
+        self.include_threshold = include_threshold
+        self.include_boost = include_boost
 
     def simulate_training_data_cache(
             self,
     ) -> Tuple[Tuple[NetInputSimulationBlob, NetTargetBlob],
-               Tensor1[ttf.float64, Indices]]:
-
-        self.feeler_data_generator.fit()
+               Tensor1[ttf.int64, Indices]]:
 
         mins, maxs = self.feeler_data_generator.mins_and_maxs_valid()
         self.min_params_valid.assign(mins)
@@ -105,7 +79,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             self
     ) -> Tuple[NetInputSimulationBlob,
                NetTargetBlob,
-               Tensor1[ttf.float64, Samples]]:
+               Tensor1[ttf.int64, Indices]]:
 
         sim_blob = (self.feeler_data_generator.sampled_params,
                     self.feeler_data_generator.sampled_chols)
@@ -200,8 +174,13 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         importance_ingredients = self.call_tf((params, params))
         vol = common.IMPORTANCE_INGREDIENTS_VOLUMES_INDEX
         include = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
-        importance_log = (tf.minimum(importance_ingredients[:, include], -3.) +
-                          importance_ingredients[:, vol])
+
+        # TODO: Since we are now using an arbitrary log max value, this should
+        #       instead be switched to be a non-logged value so that we can
+        #       interpret our threshold as a probability of overlapping.
+        include = tf.minimum(importance_ingredients[:, include],
+                             self.include_threshold) * self.include_boost
+        importance_log = (include + importance_ingredients[:, vol])            # type: ignore
 
         # Add a punitive amount for being outside the region sampled from
         param_too_low_by = tf.maximum(self.min_params_valid[None, :] - params,
@@ -215,7 +194,9 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         oob = tf.sign(greatest_out_of_bound)
         not_oob = 1. - oob
 
-        log_eps = tf.math.log(common.SMALLEST_LOGABLE_NUMBER)
+        # TODO: This could be made much cleaner.  (Only exists to increase the
+        #       gap between bottom and top when the threshold is very low)
+        log_eps = tf.math.log(common.SMALLEST_LOGABLE_NUMBER) * self.include_boost
         out_of_bounds_val = log_eps - greatest_out_of_bound
 
         return not_oob*importance_log + oob*out_of_bounds_val

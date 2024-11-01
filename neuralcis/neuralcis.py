@@ -4,7 +4,7 @@ import numpy as np
 
 from neuralcis import common
 from neuralcis import sampling
-from neuralcis._param_sampling_net import _ParamSamplingNet
+from neuralcis._param_sampler import _ParamSampler
 from neuralcis._p_net import _PNet
 from neuralcis._ci_net import _CINet
 from neuralcis._data_saver import _DataSaver
@@ -155,9 +155,7 @@ class NeuralCIs(_DataSaver):
         self.num_unknown_param = self.num_estimate
         self.num_known_param = self.num_param - self.num_unknown_param
 
-        self.net_to_contrast_order = self._align_contrast_fn_params(
-            param_distributions
-        )
+        self.net_to_contrast_order = self._align_contrast_fn_params()
 
         (
             self.has_transform,
@@ -184,12 +182,13 @@ class NeuralCIs(_DataSaver):
         known_param_indices = [
             i + self.num_unknown_param for i in range(self.num_known_param)
         ]
-        self.param_sampling_net = _ParamSamplingNet(
+        self.param_sampler = _ParamSampler(
+            estimates_min_and_max,
             self._sampling_dist_net_interface,
             self._preprocess_params_net_interface,
             self.num_unknown_param,
             self.num_known_param,
-            estimates_min_and_max,
+            known_param_indices,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
@@ -201,14 +200,14 @@ class NeuralCIs(_DataSaver):
             self.num_known_param,
             known_param_indices,
             num_params_remaining_after_transform,
-            self.param_sampling_net,
+            self.param_sampler,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
         self.cinet = _CINet(
             self.pnet,
             self._sampling_dist_net_interface,
-            self.param_sampling_net.sample_params,
+            self.param_sampler.sample_params,
             self.num_param,
             known_param_indices,
             train_initial_weights=train_initial_weights,
@@ -217,7 +216,7 @@ class NeuralCIs(_DataSaver):
 
         _DataSaver.__init__(
             self,
-            {"paramsampnet": self.param_sampling_net,
+            {"paramsampnet": self.param_sampler,
              "pnet": self.pnet,
              "cinet": self.cinet},
         )
@@ -271,7 +270,7 @@ class NeuralCIs(_DataSaver):
         :param callbacks: An array of callbacks to be used during training.
         """
 
-        self.param_sampling_net.fit(*args, **kwargs)
+        self.param_sampler.fit(*args, **kwargs)
         self.pnet.fit(*args, **kwargs)
         self.cinet.fit(*args, **kwargs)
 
@@ -416,8 +415,8 @@ class NeuralCIs(_DataSaver):
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        estimates_and_params_numpy ={k: np.array([v], dtype=np.float32)
-                                     for k, v in estimates_and_params.items()}
+        estimates_and_params_numpy = {k: np.array([v], dtype=np.float32)
+                                      for k, v in estimates_and_params.items()}
         conf_levels = np.array([conf_level], dtype=np.float32)
 
         ps_and_cis = self.ps_and_cis(conf_levels, **estimates_and_params_numpy)
@@ -551,7 +550,7 @@ class NeuralCIs(_DataSaver):
         transformed = self.transform_on_estimates_fn(**untransformed)
         for name, trans in transformed.items():
             if (isinstance(trans, float) or
-                isinstance(trans, tf.Tensor) and len(trans.shape) == 0):
+                    isinstance(trans, tf.Tensor) and len(trans.shape) == 0):
                 transformed[name] = tf.fill(untransformed[name].shape, trans)
 
         return transformed
@@ -573,7 +572,6 @@ class NeuralCIs(_DataSaver):
     #       sample size).
     #
     ###########################################################################
-
 
     @tf.function
     def _params_net_to_human_in_net_order(
@@ -769,7 +767,6 @@ class NeuralCIs(_DataSaver):
 
     def _align_contrast_fn_params(
             self,
-            param_distributions_named: dict,
     ) -> List[int]:
 
         # note that we only need transforms on the way in: since we look at
@@ -863,9 +860,13 @@ class NeuralCIs(_DataSaver):
     def sample_params(
             self,
             n: int,
+            outer: bool = False,
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        params_net = self.param_sampling_net.sample_params(n)
+        if outer:
+            params_net = self.param_sampler.sample_params(n_inner=0, n_outer=n)
+        else:
+            params_net = self.param_sampler.sample_params(n_inner=n, n_outer=0)
         params_human = self._params_net_to_human_in_net_order(params_net)
         params_dict = {n: p for n, p in zip(self.param_names_in_net_order,
                                             params_human)}
