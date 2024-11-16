@@ -10,8 +10,8 @@ import tensorflow as tf
 
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2, float32 as tf32
-from neuralcis.common import Samples, Estimates, Params, MinAndMax
-from typing import Callable, Sequence
+from neuralcis.common import Samples, Estimates, Params, KnownParams, MinAndMax
+from typing import Callable, Sequence, Union
 
 
 class _ParamSampler(_DataSaver):
@@ -159,9 +159,33 @@ class _ParamSampler(_DataSaver):
             self,
             n_inner: int,
             n_outer: int = 0,
+            known_mins_inner: Union[float,
+                                    Tensor2[tf32,
+                                            Samples,
+                                            KnownParams]] = common.PARAMS_MIN,
+            known_maxs_inner: Union[float,
+                                    Tensor2[tf32,
+                                            Samples,
+                                            KnownParams]] = common.PARAMS_MAX,
+            known_mins_outer: Union[float,
+                                    Tensor2[tf32,
+                                            Samples,
+                                            KnownParams]] = common.PARAMS_MIN,
+            known_maxs_outer: Union[float,
+                                    Tensor2[tf32,
+                                            Samples,
+                                            KnownParams]] = common.PARAMS_MAX,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        params_outer = self.outer_sampling_net.sample_params(n_outer)
-        params_inner = self.inner_sampling_net.sample_params(n_inner)
+        params_inner = self.inner_sampling_net.sample_params(
+            n_inner,
+            known_min_vals=known_mins_inner,
+            known_max_vals=known_maxs_inner
+        )
+        params_outer = self.outer_sampling_net.sample_params(
+            n_outer,
+            known_min_vals=known_mins_outer,
+            known_max_vals=known_maxs_outer
+        )
         params = tf.concat([params_inner, params_outer], axis=0)
         return params

@@ -46,24 +46,18 @@ def __param_names_and_medians(
 def __sample_params_inner_zone(
         cis: NeuralCIs,
         num_samples: int,
+        **known_param_ranges,
 ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-    params_net = cis.param_sampler.sample_params(n_inner = num_samples)
-    params_human = cis._params_net_to_human_in_net_order(params_net)
-    params = {n: p for n, p in zip(cis.param_names_in_net_order, params_human)}
-    return params
+    return cis.sample_params(num_samples, outer=False, **known_param_ranges)
 
 
 def __param_names_and_random_values(
         cis: NeuralCIs,
-        from_estimates_box_only: bool = False,
-        **value_overrides,
+        **fixed_known_params,
 ) -> Dict[str, float]:
 
-    random_params = __sample_params_inner_zone(cis, 1)
-    param_values = {n: float(p.numpy()) for n, p in random_params.items()}
-
-    return param_values
+    return __sample_params_inner_zone(cis, 1, **fixed_known_params)
 
 
 def __add_estimates_equal_to_params(
@@ -154,15 +148,12 @@ def __get_one_p_value_distribution(
         cis: NeuralCIs,
         num_samples: int,
         randomize_unspecified_params: bool,
-        from_estimates_box_only: bool,
         apply_transform: bool,
         **param_values: float,
 ) -> Dict[str, Union[np.ndarray, float]]:
 
     if randomize_unspecified_params:
-        param_values = __param_names_and_random_values(cis,
-                                                       from_estimates_box_only,
-                                                       **param_values)
+        param_values = __param_names_and_random_values(cis, **param_values)
     else:
         param_values = __param_names_and_medians(cis, **param_values)
 
@@ -420,12 +411,12 @@ def plot_p_value_cdfs(
         num_cdfs: int = 200,
         num_samples: int = 10000,
         randomize_unspecified_params: bool = True,
-        from_estimates_box_only: bool = True,
         sampling_dist_percent: float = 99,
         params_df: Optional[pd.DataFrame] = None,
         params_df_rows: Union[None, int, Sequence[int]] = None,
         apply_transform: bool = True,
-        **param_values: float,
+        plot: bool = True,
+        **known_param_values: float,
 ) -> pd.DataFrame:
 
     """Overlay CDFs of p-values at randomly selected parameter values.
@@ -489,7 +480,8 @@ def plot_p_value_cdfs(
 
     print("Generating CDFs; this may take a few seconds")
     alpha = 1. / np.sqrt(len(indices))
-    fig, axes = plt.subplots(1, 3)
+    if plot:
+        fig, axes = plt.subplots(1, 3)
     y = np.linspace(0., 1., num_samples)
     params = {n: np.array([]) for n in cis.param_names_in_net_order}
     ks = np.array([])
@@ -497,15 +489,14 @@ def plot_p_value_cdfs(
         if params_df is not None:
             params_i = (
                     params_df.loc[i, cis.param_names_in_net_order].to_dict() |
-                    param_values
+                    known_param_values
             )
         else:
-            params_i = param_values
+            params_i = known_param_values
 
         cdf_etc = __get_one_p_value_distribution(cis,
                                                  num_samples,
                                                  randomize_unspecified_params,
-                                                 from_estimates_box_only,
                                                  apply_transform,
                                                  **params_i)
         cdf = cdf_etc.pop("p")
@@ -518,20 +509,6 @@ def plot_p_value_cdfs(
         for name, value in cdf_etc.items():
             params[name] = np.append(params[name], value)
 
-    for ax in axes[0:2]:
-        ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Uniform")
-
-        ax.set_xlabel("p-Value")
-        ax.set_ylabel("CDF")
-        ax.set_aspect("equal")
-    axes[2].set_xlabel("p-Value")
-    axes[2].set_ylabel("Distance from uniform")
-    axes[2].set_ylim(-0.02, 0.02)
-    axes[2].set_box_aspect(1)
-
-    axes[1].plot([.01, 1], [0, .99], c="cyan", linestyle="--", label="+/- .01")
-    axes[1].plot([0, .99], [.01, 1], c="cyan", linestyle="--")
-
     x_pop = y
     se = np.sqrt((x_pop * (1. - x_pop)) / num_samples)
     tail_prob = (1 - sampling_dist_percent / 100.) / 2.
@@ -539,12 +516,28 @@ def plot_p_value_cdfs(
     lower = y - se*z
     upper = y + se*z
     dist_name = f"{sampling_dist_percent}% expected"
-    axes[1].plot(x_pop, lower, c="blue", linestyle="--", label=dist_name)
-    axes[1].plot(x_pop, upper, c="blue", linestyle="--")
-    axes[1].set_xlim(0., 0.1)
-    axes[1].set_ylim(0., 0.1)
-    axes[1].legend(loc="upper left")
-    fig.show()
+
+    if plot:
+        for ax in axes[0:2]:
+            ax.plot([0, 1], [0, 1], c="red", linestyle="--", label="Uniform")
+
+            ax.set_xlabel("p-Value")
+            ax.set_ylabel("CDF")
+            ax.set_aspect("equal")
+        axes[2].set_xlabel("p-Value")
+        axes[2].set_ylabel("Distance from uniform")
+        axes[2].set_ylim(-0.02, 0.02)
+        axes[2].set_box_aspect(1)
+
+        axes[1].plot([.01, 1], [0, .99], c="cyan", linestyle="--", label="+/- .01")
+        axes[1].plot([0, .99], [.01, 1], c="cyan", linestyle="--")
+
+        axes[1].plot(x_pop, lower, c="blue", linestyle="--", label=dist_name)
+        axes[1].plot(x_pop, upper, c="blue", linestyle="--")
+        axes[1].set_xlim(0., 0.1)
+        axes[1].set_ylim(0., 0.1)
+        axes[1].legend(loc="upper left")
+        fig.show()
 
     pandas_sorted = __make_pandas(
         estimates_and_params=params,

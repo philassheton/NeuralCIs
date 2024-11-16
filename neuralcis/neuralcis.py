@@ -179,7 +179,7 @@ class NeuralCIs(_DataSaver):
 
         if network_setup_args is None:
             network_setup_args = {}
-        known_param_indices = [
+        self.known_param_indices = [
             i + self.num_unknown_param for i in range(self.num_known_param)
         ]
         self.param_sampler = _ParamSampler(
@@ -188,7 +188,7 @@ class NeuralCIs(_DataSaver):
             self._preprocess_params_net_interface,
             self.num_unknown_param,
             self.num_known_param,
-            known_param_indices,
+            self.known_param_indices,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
@@ -198,7 +198,7 @@ class NeuralCIs(_DataSaver):
             self._transform_on_params_fn_net_interface,
             self.num_unknown_param,
             self.num_known_param,
-            known_param_indices,
+            self.known_param_indices,
             num_params_remaining_after_transform,
             self.param_sampler,
             train_initial_weights=train_initial_weights,
@@ -209,7 +209,7 @@ class NeuralCIs(_DataSaver):
             self._sampling_dist_net_interface,
             self.param_sampler.sample_params,
             self.num_param,
-            known_param_indices,
+            self.known_param_indices,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
@@ -859,14 +859,58 @@ class NeuralCIs(_DataSaver):
 
     def sample_params(
             self,
-            n: int,
+            num_samples: int,
             outer: bool = False,
+            **known_param_ranges: Union[float, Tensor1[tf32, Samples]],
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
+        # TODO: Tidy this sample_params function.  Too long, needs factoring.
+        def to_net(value, dist: Distribution):
+            if isinstance(value, float):
+                value = tf.fill((num_samples,), value)
+            else:
+                assert isinstance(value, tf.Tensor)
+                assert len(value.shape) == 1 and len(value) == num_samples
+            return dist.to_net(value)
+
+        known_param_min_values = []
+        known_param_max_values = []
+        known_param_names_in_net_order = [self.param_names_in_net_order[i]
+                                          for i in self.known_param_indices]
+        known_param_dists_in_net_order = [self.param_dists_in_net_order[i]
+                                          for i in self.known_param_indices]
+
+        for n, d in zip(known_param_names_in_net_order,
+                        known_param_dists_in_net_order):
+
+            if n in known_param_ranges:
+                min, max = known_param_ranges[n]
+                known_param_min_values.append(to_net(min, d))
+                known_param_max_values.append(to_net(max, d))
+            else:
+                known_param_min_values.append(tf.fill((num_samples,),
+                                                      common.PARAMS_MIN))
+                known_param_max_values.append(tf.fill((num_samples,),
+                                                      common.PARAMS_MAX))
+
+        known_param_min_values = tf.stack(known_param_min_values, axis=1)
+        known_param_max_values = tf.stack(known_param_max_values, axis=1)
+
         if outer:
-            params_net = self.param_sampler.sample_params(n_inner=0, n_outer=n)
+            params_net = self.param_sampler.sample_params(
+                n_inner=0,
+                n_outer=num_samples,
+                known_mins_outer=known_param_min_values,
+                known_maxs_outer=known_param_max_values,
+            )
         else:
-            params_net = self.param_sampler.sample_params(n_inner=n, n_outer=0)
+            params_net = self.param_sampler.sample_params(
+                n_inner=num_samples,
+                n_outer=0,
+                known_mins_inner=known_param_min_values,
+                known_maxs_inner=known_param_max_values,
+            )
+
         params_human = self._params_net_to_human_in_net_order(params_net)
         params_dict = {n: p for n, p in zip(self.param_names_in_net_order,
                                             params_human)}

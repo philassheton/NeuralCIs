@@ -5,8 +5,8 @@ from neuralcis import common
 import tensorflow as tf
 
 # Typing
-from typing import Tuple, Callable, Optional
-from neuralcis.common import Samples, Params, Zs, Us
+from typing import Tuple, Callable, Optional, Union
+from neuralcis.common import Samples, Params, KnownParams, Zs, Us
 from neuralcis.common import NetTargetBlob, NetInputs, NetOutputs
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
@@ -59,18 +59,23 @@ class _ParamSamplingNet(_SimulatorNet):
             self,
             n: int,
             preprocess: bool = True,
+            known_min_vals: Union[float, Tensor2[tf32, Samples, KnownParams]] =
+                                                             common.PARAMS_MIN,
+            known_max_vals: Union[float, Tensor2[tf32, Samples, KnownParams]] =
+                                                             common.PARAMS_MAX,
     ) -> NetInputBlob:
 
         zs_unknown = tf.random.normal((n, self.num_unknown_param))
         us_known = tf.random.uniform((n, self.num_known_param),
-                                     minval=common.PARAMS_MIN,
-                                     maxval=common.PARAMS_MAX)
+                                     minval=known_min_vals,
+                                     maxval=known_max_vals)
         if preprocess:
             us_known = self.preprocess_params_fn(us_known,
                                                  known_params_only=True)
 
         return zs_unknown, us_known
 
+    @tf.function
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
@@ -89,6 +94,7 @@ class _ParamSamplingNet(_SimulatorNet):
 
         return tf.math.reduce_mean(neg_log_likelihoods)
 
+    @tf.function
     def net_inputs(
             self,
             inputs: NetInputBlob
@@ -98,6 +104,7 @@ class _ParamSamplingNet(_SimulatorNet):
         net_inputs = tf.concat([zs_unknown, us_known], axis=1)
         return (net_inputs,)
 
+    @tf.function
     def call_tf(
             self,
             input_blob: NetInputBlob
@@ -110,6 +117,7 @@ class _ParamSamplingNet(_SimulatorNet):
 
         return params
 
+    @tf.function
     def call_tf_training(
             self,
             input_blob: NetInputBlob
@@ -138,9 +146,15 @@ class _ParamSamplingNet(_SimulatorNet):
             self,
             n: int,
             preprocess: bool = True,
+            known_min_vals: Union[float, Tensor2[tf32, Samples, KnownParams]] =
+                                                             common.PARAMS_MIN,
+            known_max_vals: Union[float, Tensor2[tf32, Samples, KnownParams]] =
+                                                                common.PARAMS_MAX,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        zs_us = self.simulate_zs_and_us(n, preprocess)
+        zs_us = self.simulate_zs_and_us(n, preprocess,
+                                        known_min_vals,
+                                        known_max_vals)
         params = self.call_tf(zs_us)
 
         return params
