@@ -112,6 +112,15 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
 
+        # Choosing alpha (concentration1) and beta (concentration2) makes
+        # our beta distribution here symmetric.  A value of 1. for both of
+        # these params will give us a uniform distribution; a value below 1.
+        # allows us to emphasise points at the edge of our distribution.
+        # https://eurekastatistics.com/beta-distribution-pdf-grapher/
+        beta_params = common.FEELER_GENERATOR_BETA_DISTRIBUTION_BETA_AND_ALPHA
+        self.beta = tfp.distributions.Beta(concentration1=beta_params,
+                                           concentration0=beta_params)
+
         # We will draw our very first param sample from the estimates box,
         #   since we are for starters assuming that the estimates are indeed
         #   estimates of the params, so that's probably a good place to start.
@@ -274,7 +283,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def initialise_for_training(self):
         self.iteration_num.assign(0)
 
-        u = tf.random.uniform((self.num_chains, self.num_param))
+        u = self.beta.sample((self.num_chains, self.num_param))
         params = (u * self.first_params_widths[None, :] +
                   self.first_params_min[None, :])
         params_pp, mean, cov_chol, inv_chol, chol_det = \

@@ -54,6 +54,7 @@ NUM_SAMPLES_FOR_IDEAL_ERROR_ESTIMATION = 5000
 GAP_BETWEEN_SAMPLES_FOR_PDF_ESTIMATION = 20
 
 # Param sampling
+FEELER_GENERATOR_BETA_DISTRIBUTION_BETA_AND_ALPHA = 1.                         # We want our beta distribution to be symmetric, so use the same value for alpha and beta.  A value below 1 will emphasise boundary points
 FEELER_NET_MARKOV_CHAIN_LENGTH = 10000
 FEELER_NET_NUM_CHAINS = 500
 FEELER_NET_PERIPHERAL_BATCH_SIZE = 50000                                       # Set as high as your GPU can handle
