@@ -170,7 +170,14 @@ def __get_one_p_value_distribution(
                                 apply_transform=apply_transform)
     ps = ps_and_cis["p"]
 
-    return {"p": ps} | param_values
+    params_human = [param_values[n] for n in cis.param_names_in_net_order]
+    params_net = cis._params_human_net_order_to_net(*params_human)
+    meanabsz = cis.pnet.znet.nets[2](params_net)
+    meanabsz_weight = cis.pnet.znet.get_mean_abs_weighting(meanabsz)
+
+    return {"p": ps,
+            "meanabsz": meanabsz,
+            "meanabsz_weight": meanabsz_weight} | param_values
 
 
 def __plot_p_value_distribution_once(
@@ -506,6 +513,8 @@ def plot_p_value_cdfs(
     y = np.linspace(0., 1., num_samples)
     params = {n: np.array([]) for n in cis.param_names_in_net_order}
     ks = np.array([])
+    meanabsz = np.array([])
+    meanabsz_weight = np.array([])
     for i in tqdm(indices):
         if params_df is not None:
             params_i = (
@@ -528,6 +537,9 @@ def plot_p_value_cdfs(
             axes[2].plot(cdf, y - cdf, alpha=alpha, c="black")
 
         ks = np.append(ks, np.max(np.abs(cdf - y)))
+        meanabsz = np.append(meanabsz, cdf_etc.pop("meanabsz"))
+        meanabsz_weight = np.append(meanabsz_weight,
+                                    cdf_etc.pop("meanabsz_weight"))
         for name, value in cdf_etc.items():
             params[name] = np.append(params[name], value)
 
@@ -561,9 +573,14 @@ def plot_p_value_cdfs(
         axes[1].legend(loc="upper left")
         fig.show()
 
+    print(ks.shape)
+    print(meanabsz.shape)
+
     pandas_sorted = __make_pandas(
         estimates_and_params=params,
         ks=ks,
+        meanabsz=meanabsz,
+        meanabsz_weight=meanabsz_weight,
         sort_by="ks",
     )
 
