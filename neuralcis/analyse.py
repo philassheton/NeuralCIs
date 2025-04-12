@@ -5,6 +5,8 @@ import pandas as pd
 import tensorflow as tf
 import numpy as np
 from scipy import stats
+from skimage import measure
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 from tqdm import tqdm
@@ -113,8 +115,14 @@ def __axis_linspace(
         name: str,
         lims: Optional[Sequence[float]] = None,                                # If None, use valid estimates range
         num_grid: int = 100,
+        dilate: float = 1.0,
 ):
-    std_unif_linspace = tf.constant(np.linspace(0., 1., num_grid), tf.float32)
+    zero = 0.5 - dilate*0.5
+    one = 0.5 + dilate*0.5
+    std_unif_linspace = tf.constant(
+        np.linspace(zero, one, num_grid),
+        tf.float32
+    )
     param_dists = __estimate_and_param_names_and_distributions(cis)
     if lims is None:
         u = std_unif_linspace
@@ -196,6 +204,44 @@ def __get_axis_types(cis: NeuralCIs) -> Dict[str, str]:
     return __add_estimates_equal_to_params(cis, param_axis_types)
 
 
+def __get_3d_fig_ax():
+    fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
+    return fig, ax
+
+
+def __transform_axis(
+        v: np.ndarray,
+        axis_type: str,
+        lims: Optional[Tuple[float, float]] = None,
+):
+
+    def round_log_scale_ticks(unrounded: np.ndarray, sig_figs=1):
+        orders_of_magnitude = np.floor(np.log10(unrounded))
+        rounding_factor = 10 ** (sig_figs - orders_of_magnitude - 1)
+        rounded = np.round(unrounded * rounding_factor) / rounding_factor
+        return rounded
+
+    if lims is not None:
+        min, max = lims
+    else:
+        min, max = v.min(), v.max()
+
+    if axis_type == "linear":
+        locator = matplotlib.ticker.AutoLocator()
+        tick_labels = locator.tick_values(min, max)
+        tick_points = tick_labels
+    elif axis_type == "log":
+        v = np.log(v)
+        tick_labels = np.exp(np.linspace(np.log(min), np.log(max), 5))         # TODO: This approach produced more pleasing results than matplotlib.ticker.LogLocator, but will produce odd results if we ever want a log parameter that starts high and only goes up a bit.
+        tick_labels = round_log_scale_ticks(tick_labels)
+        tick_points = np.log(tick_labels)
+    else:
+        raise Exception(("Currently can only handle log and linear "
+                         "axis_type"))
+
+    return v, tick_points, tick_labels
+
+
 # Because set_xscale does not work in 3d (grrr)
 def __plot_3d_with_axis_types(
         plot_fn: Callable,  # e.g. ax.plot_surface
@@ -205,43 +251,19 @@ def __plot_3d_with_axis_types(
         z: np.ndarray,
         x_axis_type: str,   # currently either "log" or "linear"
         y_axis_type: str,
-        z_axis_type: str = "linear",
+        z_axis_type: str,
         x_name: str = "",
         y_name: str = "",
         z_name: str = "",
-        z_axis_lims: Optional[Sequence[float]] = None,
+        x_lims: Optional[Tuple[float, float]] = None,
+        y_lims: Optional[Tuple[float, float]] = None,
+        z_lims: Optional[Tuple[float, float]] = None,
         **extra_args,
 ):
 
-    def round_log_scale_ticks(v: np.ndarray, sf=1):
-        orders_of_magnitude = np.floor(np.log10(v))
-        rounding_factor = 10 ** (sf - orders_of_magnitude - 1)
-        rounded = np.round(v * rounding_factor) / rounding_factor
-        return rounded
-
-    def transform_axis(v: np.ndarray, axis_type: str):
-        if axis_type == "linear":
-            locator = matplotlib.ticker.AutoLocator()
-            tick_labels = locator.tick_values(v.min(), v.max())
-            tick_points = tick_labels
-        elif axis_type == "log":
-            v = np.log(v)
-            tick_labels = np.exp(np.linspace(v.min(), v.max(), 5))             # TODO: This approach produced more pleasing results than matplotlib.ticker.LogLocator, but will produce odd results if we ever want a log parameter that starts high and only goes up a bit.
-            tick_labels = round_log_scale_ticks(tick_labels)
-            tick_points = np.log(tick_labels)
-        else:
-            raise Exception(("Currently can only handle log and linear "
-                             "axis_type"))
-
-        return v, tick_points, tick_labels
-
-    if z_axis_lims is not None:
-        z = np.maximum(z, z_axis_lims[0])
-        z = np.minimum(z, z_axis_lims[1])
-
-    x, x_ticks, x_tick_labels = transform_axis(x, x_axis_type)
-    y, y_ticks, y_tick_labels = transform_axis(y, y_axis_type)
-    z, z_ticks, z_tick_labels = transform_axis(z, z_axis_type)
+    x, x_ticks, x_tick_labels = __transform_axis(x, x_axis_type, x_lims)
+    y, y_ticks, y_tick_labels = __transform_axis(y, y_axis_type, y_lims)
+    z, z_ticks, z_tick_labels = __transform_axis(z, z_axis_type, z_lims)
 
     plot_return = plot_fn(x, y, z, **extra_args)
 
@@ -696,12 +718,16 @@ def cis_surface(
                                  return_also_axes=(x_name, y_name),
                                  **estimates_and_params)
 
-    fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
+    if z_lims is not None:
+        zs = np.maximum(zs, z_lims[0])
+        zs = np.minimum(zs, z_lims[1])
+
+    fig, ax = __get_3d_fig_ax()
     __plot_3d_with_axis_types(ax.plot_surface, ax,
                               xs, ys, zs,
                               axis_types[x_name], axis_types[y_name], "linear",
                               x_name, y_name, z_name,
-                              z_lims)
+                              x_lims, y_lims, z_lims)
     fig.show()
 
 
@@ -803,3 +829,191 @@ def compare_with_exact(
     )
 
     return sorted_pandas
+
+
+def iso_surface(
+        cis: NeuralCIs,
+        dilate: float = 1.0,                                                   # If you want the surface drawn e.g. twice as far as the dots reach
+        num_samples_per_group: int = 1000,
+        num_grid_for_surface: int = 100,
+        colours: Sequence[str] = ('red', 'orange', 'yellow', 'green', 'blue'),
+        **null_params,
+) -> None:
+
+    """Plot sampling distribution vs a contour surface of p.
+
+    Can only currently be used for a NeuralCIs with precisely three estimates.
+    Plots a 3D scatter of samples from the sampling distribution at various
+    null_params, and plots an iso surface of the p-value in this space for
+    comparison.  Iso surface is plotted for the FIRST set of null_params.
+
+    :param cis:  A NeuralCIs object to plot.
+    :param dilate:  A float (default 1.0).  At 1.0, will wrap the axes tightly
+        around the scatter of sampled values.
+    :param num_samples_per_group:  An int (default 1000).  How many samples to
+        be drawn and plotted for each set of null params.
+    :param num_grid_for_surface:  An int (default 100) number of grid points
+        in each dimension of the iso surface.
+    :param colours:  A list/tuple of str names of colours, describing
+        which colour each group should be.  Defaults to rainbow colours.
+    :param **null_params:  One list/tuple of floats for each parameter in the
+        sampling distribution.  Each list/tuple must be the same length as
+        every other.  Each element describes a different null to be sampled
+        from and plotted with a different colour.
+
+    Examples
+
+        iso_surface(cis, mu=[0., 0.], sigma=[1., 2.], n=[30., 30.])
+    """
+
+    def lims_from_samples(samples):
+        return tf.reduce_min(samples).numpy(), tf.reduce_max(samples).numpy()
+
+    def map_0_1_to_lims_transformed(
+            values_0_to_1,
+            value_of_0_and_1_untransformed,
+            axis_type,
+    ):
+        value_of_0_and_1_transformed, _, _ = __transform_axis(
+            np.array(value_of_0_and_1_untransformed),
+            axis_type,
+        )
+        transformed_min = value_of_0_and_1_transformed[0]
+        transformed_width = value_of_0_and_1_transformed[1] - transformed_min
+        return values_0_to_1 * transformed_width + transformed_min
+
+    def long_and_thin_tensor(X: np.ndarray):
+        x_tensor = tf.convert_to_tensor(X, dtype=tf.float32)
+        return tf.reshape(x_tensor, (-1,))
+
+    def get_p_surface_vertices(
+            cis: NeuralCIs,
+            x_name: str,
+            y_name: str,
+            z_name: str,
+            x_lims: Tuple[float, float],
+            y_lims: Tuple[float, float],
+            z_lims: Tuple[float, float],
+            x_axis_type: str,
+            y_axis_type: str,
+            z_axis_type: str,
+            dilate: float,
+            num_grid: int,
+            **null_params,
+    ):
+
+        X, Y, Z = np.meshgrid(
+            __axis_linspace(cis, x_name, x_lims, num_grid, dilate),
+            __axis_linspace(cis, y_name, y_lims, num_grid, dilate),
+            __axis_linspace(cis, z_name, z_lims, num_grid, dilate),
+            indexing='ij',
+        )
+        x = long_and_thin_tensor(X)
+        y = long_and_thin_tensor(Y)
+        z = long_and_thin_tensor(Z)
+
+        x_lims_dilated = (X.min(), X.max())
+        y_lims_dilated = (Y.min(), Y.max())
+        z_lims_dilated = (Z.min(), Z.max())
+
+        estimates_and_params = __repeat_params_tf(len(x), **null_params)
+        estimates_and_params[x_name] = x
+        estimates_and_params[y_name] = y
+        estimates_and_params[z_name] = z
+
+        ps_and_cis = cis.ps_and_cis(**estimates_and_params)
+        P = np.reshape(ps_and_cis['p'], X.shape)
+
+        # Compute isosurface
+        verts, faces, _, _ = measure.marching_cubes(P, level=0.05)
+
+        verts = (verts + 0.5) / num_grid
+
+        verts[:, 0] = map_0_1_to_lims_transformed(verts[:, 0],
+                                                  x_lims_dilated,
+                                                  x_axis_type)
+        verts[:, 1] = map_0_1_to_lims_transformed(verts[:, 1],
+                                                  y_lims_dilated,
+                                                  y_axis_type)
+        verts[:, 2] = map_0_1_to_lims_transformed(verts[:, 2],
+                                                  z_lims_dilated,
+                                                  z_axis_type)
+
+        return verts[faces], x_lims_dilated, y_lims_dilated, z_lims_dilated
+
+    def get_estimate_samples(
+            null_params,
+            estimate_names,
+            num_samples_per_group
+    ) -> Tuple[
+        Dict[str, np.ndarray],
+        np.ndarray[str],
+    ]:
+
+        samples = {name: [] for name in estimate_names}
+        colours_repeated = []
+        num_groups = np.min([len(v) for v in null_params.values()])
+        for i in range(num_groups):
+            null_params_i = {name: value[i] for name, value in
+                             null_params.items()}
+            null_params_repeated_i = __repeat_params_tf(num_samples_per_group,
+                                                        **null_params_i)
+            samples_i = cis.sampling_distribution_fn(**null_params_repeated_i)
+
+            for name in estimate_names:
+                samples[name].append(samples_i[name])
+            colours_repeated.append(
+                np.repeat(colours[i], num_samples_per_group))
+
+        for name, value in samples.items():
+            samples[name] = np.concatenate(value)
+        colours_repeated = np.concatenate(colours_repeated)
+        return samples, colours_repeated
+
+    if len(cis.estimate_names) != 3:
+        raise Exception('ISO surface can only currently be plotted for models'
+                        ' with three estimates!!')
+
+    estimate_names = cis.estimate_names
+    x_name, y_name, z_name = estimate_names
+
+    samples, colours = get_estimate_samples(null_params,
+                                            estimate_names,
+                                            num_samples_per_group)
+
+    x_lims = lims_from_samples(samples[x_name])
+    y_lims = lims_from_samples(samples[y_name])
+    z_lims = lims_from_samples(samples[z_name])
+
+    axis_types = __get_axis_types(cis)
+    verts, x_lims, y_lims, z_lims = get_p_surface_vertices(
+        cis,
+        x_name, y_name, z_name,
+        x_lims, y_lims, z_lims,
+        axis_types[x_name], axis_types[y_name], axis_types[z_name],
+        dilate,
+        num_grid_for_surface,
+        **{name: v[0] for name, v in null_params.items()},
+    )
+
+    fig, ax = __get_3d_fig_ax()
+    __plot_3d_with_axis_types(ax.scatter, ax,
+                              samples[x_name],
+                              samples[y_name],
+                              samples[z_name],
+                              axis_types[x_name],
+                              axis_types[y_name],
+                              axis_types[z_name],
+                              x_name,
+                              y_name,
+                              z_name,
+                              x_lims,
+                              y_lims,
+                              z_lims,
+                              c=colours)
+    mesh = Poly3DCollection(verts, alpha=0.6, facecolor='gray')
+    ax.add_collection3d(mesh)
+    ax.set_xlabel(x_name)
+    ax.set_ylabel(y_name)
+    ax.set_zlabel(z_name)
+    fig.show()
