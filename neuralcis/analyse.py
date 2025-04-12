@@ -22,11 +22,10 @@ from plotly.subplots import make_subplots
 
 from neuralcis import NeuralCIs, common
 from neuralcis.distributions import Distribution
-from neuralcis.common import HAT
 
 from typing import Sequence, Dict, Optional, Callable, Tuple, Union, Any
 from tensor_annotations.tensorflow import Tensor1, float32 as tf32
-from neuralcis.common import Samples
+from neuralcis.common import Samples, One
 
 
 def __param_names_and_medians(
@@ -57,7 +56,7 @@ def __sample_params_inner_zone(
 def __param_names_and_random_values(
         cis: NeuralCIs,
         **fixed_known_params,
-) -> Dict[str, float]:
+) -> Dict[str, Tensor1[tf32, One]]:
 
     return __sample_params_inner_zone(cis, 1, **fixed_known_params)
 
@@ -523,9 +522,10 @@ def plot_p_value_cdfs(
                                                  **params_i)
         cdf = cdf_etc.pop("p")
         cdf.sort()
-        for ax in axes[0:2]:
-            ax.plot(cdf, y, alpha=alpha, c="black")
-        axes[2].plot(cdf, y - cdf, alpha=alpha, c="black")
+        if plot:
+            for ax in axes[0:2]:
+                ax.plot(cdf, y, alpha=alpha, c="black")
+            axes[2].plot(cdf, y - cdf, alpha=alpha, c="black")
 
         ks = np.append(ks, np.max(np.abs(cdf - y)))
         for name, value in cdf_etc.items():
@@ -765,7 +765,7 @@ def compare_power_at_h1(
     h1_params = __repeat_params_tf(num_samples, **h1_params)
     estimates = cis.sampling_distribution_fn(**h1_params)
     ps_neural = cis.ps_and_cis(**(estimates | h0_params))["p"]
-    ps_accurate = accurate_p_fn(**(estimates |h0_params))
+    ps_accurate = accurate_p_fn(**(estimates | h0_params))
 
     tf.print(f"Power of traditional approach: {np.mean(ps_accurate < .05)};")
     tf.print(f"Power of NeuralCIs:            {np.mean(ps_neural < .05)}.")
