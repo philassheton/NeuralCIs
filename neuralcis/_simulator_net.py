@@ -258,9 +258,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                               verbose=verbose,
                               callbacks=callbacks)
 
-        print(f"{datetime.datetime.now()}: Restoring best")
-        lr_scheduler.restore_best()
-
         return history
 
     def compile(

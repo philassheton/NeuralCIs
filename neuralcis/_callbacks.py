@@ -70,40 +70,62 @@ class _ReduceLROnPlateauTrackBest(tf.keras.callbacks.ReduceLROnPlateau):
         self.optimizer_config = self.model.optimizer.get_config()
         self.initialize_optimizer(self.learning_rate_initial)
 
+    def current_loss(self, logs):
+        return logs.get(self.monitor)
+
     def on_epoch_end(
             self,
             epoch: int,
             logs=None,
     ) -> None:
 
-        current = logs.get(self.monitor)
+        current_loss = self.current_loss(logs)
         best_before_call = self.best
         wait_before_call = self.wait
-        lr_old = backend.get_value(self.model.optimizer.lr)
 
-        super().on_epoch_end(epoch, logs)
+        if epoch is not None:
+            super().on_epoch_end(epoch, logs)
 
         if self.in_cooldown():
             return
 
-        if self.monitor_op(current, best_before_call):
+        if self.monitor_op(current_loss, best_before_call):
             self.backup_values()
         elif wait_before_call + 1 >= self.patience:
-            if self.tolerate_abs_not_rel_increase:
-                increase_vs_best = current - best_before_call
-            else:
-                increase_vs_best = current / best_before_call
+            self.restore_if_increase_intolerable(current_loss,
+                                                 wipe_momentum_on_restore=True)
 
-            loss_up_too_much = increase_vs_best > self.loss_increase_tol
+    def restore_if_increase_intolerable(
+            self,
+            current_loss: float,
+            wipe_momentum_on_restore: bool = False,
+    ):
 
-            if loss_up_too_much:
-                tf.print(f"Restoring old ({best_before_call} beats {current})."
-                         f"  Increase: {increase_vs_best},"
-                         f"  vs tolerable: {self.loss_increase_tol}")
-                self.restore_best()
-                self.initialize_optimizer(lr_old * self.factor)
+        if self.tolerate_abs_not_rel_increase:
+            increase_vs_best = current_loss - self.best
+        else:
+            increase_vs_best = current_loss / self.best
 
-            else:
-                tf.print(f"Tolerating this increase."
-                         f"  Increase: {increase_vs_best},"
-                         f"  vs tolerable: {self.loss_increase_tol}")
+        loss_up_too_much = increase_vs_best > self.loss_increase_tol
+
+        if loss_up_too_much:
+            tf.print(f"Restoring old ({self.best} beats {current_loss})."
+                     f"  Increase: {increase_vs_best},"
+                     f"  vs tolerable: {self.loss_increase_tol}")
+            self.restore_best()
+            if wipe_momentum_on_restore:
+                lr = backend.get_value(self.model.optimizer.lr)
+                self.initialize_optimizer(lr)
+
+        else:
+            tf.print(f"Tolerating this increase."
+                     f"  Increase: {increase_vs_best},"
+                     f"  vs tolerable: {self.loss_increase_tol}")
+
+    def on_train_end(
+            self,
+            logs=None,
+    ):
+
+        current_loss = self.current_loss(logs)
+        self.restore_if_increase_intolerable(current_loss)
