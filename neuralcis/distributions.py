@@ -185,13 +185,12 @@ class SampleSize(PositiveCount):
             max_value: int,
     ) -> None:
 
-        assert min_value >= 3
         super().__init__(min_value - 0.5, max_value + 0.5)
 
     @tf.function
     def to_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
-        return tf.math.log(x - 2.)                                             # type: ignore
+        return tf.math.log(x)                                                  # type: ignore
 
     @tf.function
     def from_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
-        return tf.math.exp(x) + 2.                                             # type: ignore
+        return tf.math.exp(x)                                                  # type: ignore
