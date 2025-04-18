@@ -528,6 +528,8 @@ def plot_p_value_cdfs(
     y = np.linspace(0., 1., num_samples)
     params = {n: np.array([]) for n in cis.param_names_in_net_order}
     ks = np.array([])
+    alpha05 = np.array([])
+    alpha01 = np.array([])
     for i in tqdm(indices):
         if params_df is not None:
             params_i = (
@@ -553,6 +555,8 @@ def plot_p_value_cdfs(
             axes[2].plot(cdf_mini, y_mini - cdf_mini, alpha=alpha, c="black")
 
         ks = np.append(ks, np.max(np.abs(cdf - y)))
+        alpha05 = np.append(alpha05, np.mean(cdf < .05))
+        alpha01 = np.append(alpha01, np.mean(cdf < .01))
         for name, value in cdf_etc.items():
             params[name] = np.append(params[name], value)
 
@@ -589,6 +593,8 @@ def plot_p_value_cdfs(
     pandas_sorted = __make_pandas(
         estimates_and_params=params,
         ks=ks,
+        alpha05=alpha05,
+        alpha01=alpha01,
         sort_by="ks",
     )
 
