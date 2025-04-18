@@ -1,6 +1,6 @@
 from neuralcis._data_saver import _DataSaver
 from neuralcis._sequential_net import _SequentialNet
-from neuralcis import common, _layers, _callbacks
+from neuralcis import common, _layers, _callbacks, _adamw_schedulefree
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
@@ -120,6 +120,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         self.loss_tracker = tf.keras.metrics.Mean(name='loss')
         self.simnet_weights = None
         self.train_initial_weights = train_initial_weights
+        self.schedule_free = None
 
         _DataSaver.__init__(
             self,
@@ -223,7 +224,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             steps_per_epoch: int = common.STEPS_PER_EPOCH,
             epochs: int = common.EPOCHS,
             verbose: Union[int, str] = 2,
-            learning_rate_initial: int = common.LEARNING_RATE_INITIAL,
+            learning_rate_adam_initial: Optional[int] = None,
             callbacks: Sequence[tf.keras.callbacks.Callback] = None,
             *args,
     ):
@@ -236,21 +237,33 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         print(f"{datetime.datetime.now()}: Training {self.__class__.__name__}")
 
-        lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
-            self.simnet_weights,
-            monitor=self.loss_to_watch,
-            learning_rate_initial=learning_rate_initial,
-            factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU,
-            patience=common.LEARNING_RATE_PLATEAU_PATIENCE,
-            min_lr=common.LEARNING_RATE_MINIMUM,
-            absolute_loss_increase_tol=self.absolute_loss_increase_tol,
-            relative_loss_increase_tol=self.relative_loss_increase_tol,
-        )
-
         if callbacks is None:
-            callbacks = [lr_scheduler]
+            callbacks = []
         else:
-            callbacks = [lr_scheduler] + list(callbacks)
+            callbacks = list(callbacks)
+
+        if self.schedule_free:
+            if learning_rate_adam_initial is not None:
+                raise Exception('You cannot pass learning_rate_initial_adam'
+                                ' if you are using schedule free learning!')
+            train_mode_callback = _adamw_schedulefree.ChangeModeCallback(
+                steps_per_epoch=steps_per_epoch,
+            )
+            callbacks += [train_mode_callback]
+        else:
+            if learning_rate_adam_initial is None:
+                learning_rate_adam_initial = common.LEARNING_RATE_INITIAL_ADAM
+            lr_scheduler = _callbacks._ReduceLROnPlateauTrackBest(
+                self.simnet_weights,
+                monitor=self.loss_to_watch,
+                learning_rate_initial=learning_rate_adam_initial,
+                factor=common.LEARNING_RATE_DECAY_RATIO_ON_PLATEAU_ADAM,
+                patience=common.LEARNING_RATE_PLATEAU_PATIENCE_ADAM,
+                min_lr=common.LEARNING_RATE_MINIMUM_ADAM,
+                absolute_loss_increase_tol=self.absolute_loss_increase_tol,
+                relative_loss_increase_tol=self.relative_loss_increase_tol,
+            )
+            callbacks += [lr_scheduler]
 
         history = super().fit(x=self.dataset_generator(),
                               steps_per_epoch=steps_per_epoch,
@@ -263,16 +276,30 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     def compile(
             self,
             optimizer=None,
-            default_use_ams_grad=common.AMS_GRAD,
+            default_use_ams_grad_adam=common.AMS_GRAD_ADAM,
+            schedule_free=common.SCHEDULE_FREE,
             *args,
             **kwargs,
     ) -> None:
 
+        if default_use_ams_grad_adam and schedule_free:
+            raise Exception('Cannot currently use both AMS Grad *and* schedule'
+                            ' free learning at the same time.')
+
         if optimizer is None:
-            if default_use_ams_grad:
+            if schedule_free:
+                optimizer = _adamw_schedulefree.AdamWScheduleFree(
+                    learning_rate=common.LEARNING_RATE_SCHEDULE_FREE,
+                    warmup_steps=common.LEARNING_WARMUP_STEPS_SCHEDULE_FREE,
+                )
+                optimizer.build(self.simnet_weights)
+                self.schedule_free = True
+            elif default_use_ams_grad_adam:
                 optimizer = tf.keras.optimizers.Adam(amsgrad=True)
+                self.schedule_free = False
             else:
                 optimizer = tf.keras.optimizers.Nadam()
+                self.schedule_free = False
 
         tf.keras.Model.compile(self, optimizer, loss=None, *args, **kwargs)
 
