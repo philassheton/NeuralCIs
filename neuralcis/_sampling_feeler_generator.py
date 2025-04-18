@@ -135,15 +135,11 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         # See note 2 at the top of this script.  This computes an adjustment
         # of 1 / .82 for a self.sample_size of 100
-        # self.sd_sampling_error_adjust = 1. / tf.sqrt(
-        #     tfp.distributions.Chi2(sample_size - 1).quantile(.005)
-        #     /
-        #     (sample_size - 1)
-        # )
-
-
-        # PHIL!!
-        self.sd_sampling_error_adjust = 1.
+        self.sd_sampling_error_adjust = 1. / tf.sqrt(
+            tfp.distributions.Chi2(sample_size - 1).quantile(.005)
+            /
+            (sample_size - 1)
+        )
 
         # Set up all the tf.Variables that will be used to construct the chains
         def state_variable(shape_inner, dtype=tf.float32):

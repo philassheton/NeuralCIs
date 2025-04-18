@@ -508,7 +508,8 @@ class NeuralCIs(_DataSaver):
         inputs = self._reorder(estimates_human + params_human,
                                self.net_to_transform_order)
 
-        outputs = self.transform_on_params_fn(*inputs).values()
+        outputs_dict = self.transform_on_params_fn(*inputs)
+        outputs = list(outputs_dict.values())
 
         estimates_human = self._reorder(outputs,
                                         self.fn_to_net_estimates_order)

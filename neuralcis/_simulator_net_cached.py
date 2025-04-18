@@ -28,9 +28,9 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
 
         super().get_ready_for_training()
         if self.cache is None:
-            self.cache, indices = self.simulate_training_data_cache()
+            cache, indices = self.simulate_training_data_cache()
             random_order = tf.random.shuffle(indices)
-            self.cache = self.pick_indices_from_cache(self.cache, random_order)
+            self.cache = self.pick_indices_from_cache(cache, random_order)
             self.cache_size = len(indices)
 
     @tf.function
