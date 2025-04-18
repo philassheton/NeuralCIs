@@ -151,6 +151,21 @@ def __summarize_values(
     return title
 
 
+def __get_one_p_value_distribution_chunk(
+        cis: NeuralCIs,
+        num_samples: int,
+        apply_transform: bool,
+        **param_values: float,
+) -> np.ndarray:
+
+    param_tensors = __repeat_params_tf(num_samples, **param_values)
+    estimates = cis.sampling_distribution_fn(**param_tensors)
+    ps_and_cis = cis.ps_and_cis(**(estimates | param_tensors),
+                                apply_transform=apply_transform)
+    ps = ps_and_cis["p"]
+    return ps
+
+
 def __get_one_p_value_distribution(
         cis: NeuralCIs,
         num_samples: int,
@@ -164,11 +179,17 @@ def __get_one_p_value_distribution(
     else:
         param_values = __param_names_and_medians(cis, **param_values)
 
-    param_tensors = __repeat_params_tf(num_samples, **param_values)
-    estimates = cis.sampling_distribution_fn(**param_tensors)
-    ps_and_cis = cis.ps_and_cis(**(estimates | param_tensors),
-                                apply_transform=apply_transform)
-    ps = ps_and_cis["p"]
+    num_samples_remaining = num_samples
+    ps = []
+    while num_samples_remaining > 0:
+        num_samples_to_request = np.minimum(num_samples_remaining,
+                                            common.MAX_SAMPLES_AT_A_TIME)
+        ps.append(__get_one_p_value_distribution_chunk(cis,
+                                                       num_samples_to_request,
+                                                       apply_transform,
+                                                       **param_values))
+        num_samples_remaining -= num_samples_to_request
+    ps = np.concatenate(ps)
 
     return {"p": ps} | param_values
 
@@ -437,6 +458,7 @@ def plot_p_value_cdfs(
         params_df_rows: Union[None, int, Sequence[int]] = None,
         apply_transform: bool = True,
         plot: bool = True,
+        num_plot: int = 1000,
         **known_param_values: float,
 ) -> pd.DataFrame:
 
@@ -523,9 +545,12 @@ def plot_p_value_cdfs(
         cdf = cdf_etc.pop("p")
         cdf.sort()
         if plot:
+            y_mini = np.linspace(0., 1., num_plot)
+            cdf_mini = np.array([chunk.mean() for chunk in np.split(cdf,
+                                                                    num_plot)])
             for ax in axes[0:2]:
-                ax.plot(cdf, y, alpha=alpha, c="black")
-            axes[2].plot(cdf, y - cdf, alpha=alpha, c="black")
+                ax.plot(cdf_mini, y_mini, alpha=alpha, c="black")
+            axes[2].plot(cdf_mini, y_mini - cdf_mini, alpha=alpha, c="black")
 
         ks = np.append(ks, np.max(np.abs(cdf - y)))
         for name, value in cdf_etc.items():
