@@ -11,7 +11,7 @@ from neuralcis import common
 
 # typing
 from typing import Callable, Tuple
-from neuralcis.common import Samples, Estimates, Params, UnknownParams
+from neuralcis.common import Samples, Stats, Params, UnknownParams
 from neuralcis.common import ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
@@ -82,14 +82,14 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             ],
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
-                Tensor2[tf32, Samples, Estimates],  # -> ys
+                Tensor2[tf32, Samples, Stats],  # -> ys
             ],
             preprocess_params_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Params]
             ],
             inside_inner_fn: Callable[
-                [Tensor2[tf32, Samples, Estimates],
+                [Tensor2[tf32, Samples, Stats],
                  Tensor2[tf32, Samples, Params]],
                 Tensor1[ttf.bool, Samples],
             ],
@@ -438,7 +438,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     def random_params_step(
             self,
             params: Tensor2[tf32, Chains, Params],
-            cov_chol: Tensor3[tf32, Chains, Estimates, Estimates],
+            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
     ) -> Tensor2[tf32, Chains, Params]:
 
         # TODO: Nothing currently to stop a step into an invalid param
@@ -466,7 +466,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     ) -> Tuple[
         Tensor2[tf32, Samples, Params],
         Tensor2[tf32, Samples, ImportanceIngredients],
-        Tensor3[tf32, Samples, Estimates, Estimates],
+        Tensor3[tf32, Samples, Stats, Stats],
     ]:
 
         params_preproc, mean, cov_chol, inv_chol, chol_det, hits_inner = \
@@ -531,9 +531,9 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             params: Tensor2[tf32, Chains, Params],
     ) -> Tuple[
         Tensor2[tf32, Chains, Params],
-        Tensor2[tf32, Chains, Estimates],
-        Tensor3[tf32, Chains, Estimates, Estimates],
-        Tensor3[tf32, Chains, Estimates, Estimates],
+        Tensor2[tf32, Chains, Stats],
+        Tensor3[tf32, Chains, Stats, Stats],
+        Tensor3[tf32, Chains, Stats, Stats],
         Tensor1[tf32, Chains],
         Tensor1[tf32, Chains],
     ]:
@@ -563,9 +563,9 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def covariance_cholesky_computation(
             self,
-            estimates: Tensor3[tf32, Chains, Samples, Estimates],
-            estimates_mean: Tensor2[tf32, Chains, Estimates],
-    ) -> Tensor3[tf32, Chains, Estimates, Estimates]:
+            estimates: Tensor3[tf32, Chains, Samples, Stats],
+            estimates_mean: Tensor2[tf32, Chains, Stats],
+    ) -> Tensor3[tf32, Chains, Stats, Stats]:
 
         # TODO: Check if tfp.stats.cholesky_covariance produces stable enough
         #       output consistently to remove this function.  Currently unused
@@ -584,7 +584,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             self,
             x: Tensor2[tf32, Chains, Params],
             mu: Tensor2[tf32, Chains, Params],
-            sigma_chol_inv: Tensor3[tf32, Chains, Estimates, Estimates],
+            sigma_chol_inv: Tensor3[tf32, Chains, Stats, Stats],
             sigma_chol_det: Tensor1[tf32, Chains],
     ) -> Tensor1[tf32, Chains]:
 
@@ -623,9 +623,9 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     def get_smoothing_regions(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols: Tensor3[tf32, Samples, Estimates, Estimates],
+            chols: Tensor3[tf32, Samples, Stats, Stats],
             targets_peripheral: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols_peripheral: Tensor3[tf32, Samples, Estimates, Estimates],
+            chols_peripheral: Tensor3[tf32, Samples, Stats, Stats],
             mins: Tensor1[tf32, Params],
             maxs: Tensor1[tf32, Params],
     ) -> Tuple[

@@ -9,7 +9,7 @@ from neuralcis import common
 
 # typing
 from typing import Callable, Tuple
-from neuralcis.common import Samples, Estimates, Params, UnknownParams
+from neuralcis.common import Samples, Stats, Params, UnknownParams
 from neuralcis.common import MinAndMax, ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
@@ -74,10 +74,10 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def __init__(
             self,
-            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
+            estimates_min_and_max: Tensor2[tf32, Stats, MinAndMax],
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
-                Tensor2[tf32, Samples, Estimates],  # -> ys
+                Tensor2[tf32, Samples, Stats],  # -> ys
             ],
             preprocess_params_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
@@ -442,7 +442,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def random_params_step(
             self,
             params: Tensor2[tf32, Chains, Params],
-            cov_chol: Tensor3[tf32, Chains, Estimates, Estimates],
+            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
     ) -> Tensor2[tf32, Chains, Params]:
 
         # TODO: Nothing currently to stop a step into an invalid param
@@ -468,7 +468,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     ) -> Tuple[
         Tensor2[tf32, Samples, Params],
         Tensor2[tf32, Samples, ImportanceIngredients],
-        Tensor3[tf32, Samples, Estimates, Estimates],
+        Tensor3[tf32, Samples, Stats, Stats],
     ]:
 
         params_preproc, mean, cov_chol, inv_chol, chol_det = \
@@ -483,8 +483,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def importance_ingredients(
             self,
             params: Tensor2[tf32, Chains, Params],
-            centroid: Tensor2[tf32, Chains, Estimates],
-            cov_chol: Tensor3[tf32, Chains, Estimates, Estimates],
+            centroid: Tensor2[tf32, Chains, Stats],
+            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
             chol_det: Tensor1[tf32, Chains],
     ) -> Tensor2[tf32, Chains, ImportanceIngredients]:
 
@@ -536,8 +536,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def overlaps_estimates_box(
             self,
-            centroid: Tensor2[tf32, Chains, Estimates],
-            cov_chol: Tensor3[tf32, Chains, Estimates, Estimates],
+            centroid: Tensor2[tf32, Chains, Stats],
+            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
     ) -> Tensor1[tf32, Chains]:
 
         # TODO: Quick substitution for now.  Instead of testing whether the
@@ -579,9 +579,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             params: Tensor2[tf32, Chains, Params],
     ) -> Tuple[
         Tensor2[tf32, Chains, Params],
-        Tensor2[tf32, Chains, Estimates],
-        Tensor3[tf32, Chains, Estimates, Estimates],
-        Tensor3[tf32, Chains, Estimates, Estimates],
+        Tensor2[tf32, Chains, Stats],
+        Tensor3[tf32, Chains, Stats, Stats],
+        Tensor3[tf32, Chains, Stats, Stats],
         Tensor1[tf32, Chains],
     ]:
 
@@ -601,7 +601,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             self,
             params_preprocessed: Tensor2[tf32, Chains, Params],
             num_chains: int,
-    ) -> Tensor3[tf32, Chains, Samples, Estimates]:
+    ) -> Tensor3[tf32, Chains, Samples, Stats]:
 
         params_repeated = tf.repeat(params_preprocessed,
                                     self.sample_size,
@@ -616,9 +616,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def covariance_cholesky_computation(
             self,
-            estimates: Tensor3[tf32, Chains, Samples, Estimates],
-            estimates_mean: Tensor2[tf32, Chains, Estimates],
-    ) -> Tensor3[tf32, Chains, Estimates, Estimates]:
+            estimates: Tensor3[tf32, Chains, Samples, Stats],
+            estimates_mean: Tensor2[tf32, Chains, Stats],
+    ) -> Tensor3[tf32, Chains, Stats, Stats]:
 
         # TODO: Check if tfp.stats.cholesky_covariance produces stable enough
         #       output consistently to remove this function.  Currently unused
@@ -637,7 +637,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             self,
             x: Tensor2[tf32, Chains, Params],
             mu: Tensor2[tf32, Chains, Params],
-            sigma_chol_inv: Tensor3[tf32, Chains, Estimates, Estimates],
+            sigma_chol_inv: Tensor3[tf32, Chains, Stats, Stats],
             sigma_chol_det: Tensor1[tf32, Chains],
     ) -> Tensor1[tf32, Chains]:
 
@@ -676,9 +676,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def get_smoothing_regions(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols: Tensor3[tf32, Samples, Estimates, Estimates],
+            chols: Tensor3[tf32, Samples, Stats, Stats],
             targets_peripheral: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols_peripheral: Tensor3[tf32, Samples, Estimates, Estimates],
+            chols_peripheral: Tensor3[tf32, Samples, Stats, Stats],
             mins: Tensor1[tf32, Params],
             maxs: Tensor1[tf32, Params],
     ) -> Tuple[

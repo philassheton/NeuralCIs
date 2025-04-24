@@ -8,10 +8,10 @@ from neuralcis._data_saver import _DataSaver
 from typing import Callable, Tuple, Sequence
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Estimates, Params, KnownParams
+from neuralcis.common import Samples, Stats, Params, KnownParams
 
 NetInputBlob = Tuple[
-    Tensor2[tf32, Samples, Estimates],
+    Tensor2[tf32, Samples, Stats],
     Tensor2[tf32, Samples, Params],
 ]
 
@@ -21,16 +21,16 @@ class _PNet(_DataSaver):
             self,
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
-                Tensor2[tf32, Samples, Estimates]
+                Tensor2[tf32, Samples, Stats]
             ],
             contrast_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
             transform_on_params_fn: Callable[
-                [Tensor2[tf32, Samples, Estimates],
+                [Tensor2[tf32, Samples, Stats],
                  Tensor2[tf32, Samples, Params]],
-                Tuple[Tensor2[tf32, Samples, Estimates],
+                Tuple[Tensor2[tf32, Samples, Stats],
                       Tensor2[tf32, Samples, Params]]
             ],
             num_unknown_param: int,
@@ -71,7 +71,7 @@ class _PNet(_DataSaver):
     @tf.function
     def p(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
             params_null: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
@@ -81,7 +81,7 @@ class _PNet(_DataSaver):
     @tf.function
     def p_from_contrast(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
             contrast: Tensor1[tf32, Samples],
             known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor1[tf32, Samples]:
@@ -107,7 +107,7 @@ class _PNet(_DataSaver):
     @tf.function
     def p_workings(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
             params_null: Tensor2[tf32, Samples, Params],
     ):
 

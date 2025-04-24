@@ -7,14 +7,14 @@ import tensorflow_probability as tfp                                           #
 import numpy as np
 
 from typing import Callable, Tuple, Sequence
-from neuralcis.common import (Params, KnownParams, Estimates, Samples)
+from neuralcis.common import (Params, KnownParams, Stats, Samples)
 from neuralcis.common import NetInputs
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 tf32 = ttf.float32
 
 
-NetInputBlob = Tuple[Tensor2[tf32, Samples, Estimates],
+NetInputBlob = Tuple[Tensor2[tf32, Samples, Stats],
                      Tensor2[tf32, Samples, KnownParams]]
 NetTargetBlob = Tensor1[tf32, Samples]                 # 0
 NetOutputBlob = Tensor1[tf32, Samples]                 # Is inside
@@ -27,7 +27,7 @@ class _IsInsideNet(_SimulatorNet):
             self,
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],                # params
-                Tensor2[tf32, Samples, Estimates]                # -> estimates
+                Tensor2[tf32, Samples, Stats]                # -> estimates
             ],
             param_sampling_net: _ParamSamplingNet,
             preprocess_params_fn: Callable[
@@ -183,7 +183,7 @@ class _IsInsideNet(_SimulatorNet):
     @tf.function
     def is_inside_sampled_region(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
             known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor1[ttf.bool, Samples]:
 

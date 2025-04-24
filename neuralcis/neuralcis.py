@@ -512,7 +512,7 @@ class NeuralCIs(_DataSaver):
     def _sampling_dist_net_interface(
             self,
             params_net: Tensor2[tf32, Samples, Params],
-    ) -> Tensor2[tf32, Samples, Estimates]:
+    ) -> Tensor2[tf32, Samples, Stats]:
 
         params_human = self._params_net_to_human(params_net)
         stats_human = self.kwargs.sampling_distribution_fn(**params_human)
@@ -534,9 +534,9 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _transform_on_params_fn_net_interface(
             self,
-            estimates_net: Tensor2[tf32, Samples, Estimates],
+            stats_net: Tensor2[tf32, Samples, Stats],
             params_net: Tensor2[tf32, Samples, Params],
-    ) -> Tuple[Tensor2[tf32, Samples, Estimates],
+    ) -> Tuple[Tensor2[tf32, Samples, Stats],
                Tensor2[tf32, Samples, Params]]:
 
         if not self.has_transform:

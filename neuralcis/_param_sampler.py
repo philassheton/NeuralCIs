@@ -10,17 +10,17 @@ import tensorflow as tf
 
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2, float32 as tf32
-from neuralcis.common import Samples, Estimates, Params, KnownParams, MinAndMax
+from neuralcis.common import Samples, Stats, Params, KnownParams, MinAndMax
 from typing import Callable, Sequence, Union
 
 
 class _ParamSampler(_DataSaver):
     def __init__(
             self,
-            estimates_min_and_max: Tensor2[tf32, Estimates, MinAndMax],
+            estimates_min_and_max: Tensor2[tf32, Stats, MinAndMax],
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
-                Tensor2[tf32, Samples, Estimates],  # -> ys
+                Tensor2[tf32, Samples, Stats],  # -> ys
             ],
             preprocess_params_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
@@ -132,7 +132,7 @@ class _ParamSampler(_DataSaver):
     @tf.function
     def is_inside(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[ttf.bool, Samples]:
 

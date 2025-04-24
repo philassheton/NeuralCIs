@@ -7,17 +7,17 @@ import neuralcis.common as common
 # typing imports
 from typing import Callable, Tuple, List, Sequence
 from tensor_annotations.tensorflow import Tensor1, Tensor2
-from neuralcis.common import Samples, Params, Estimates, NetInputs, NetOutputs
+from neuralcis.common import Samples, Params, Stats, NetInputs, NetOutputs
 from neuralcis.common import KnownParams
 import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
 
 
-NetInputBlob = Tuple[Tensor2[tf32, Samples, Estimates],
+NetInputBlob = Tuple[Tensor2[tf32, Samples, Stats],
                      Tensor2[tf32, Samples, KnownParams],
                      Tensor1[tf32, Samples]]                         # p-values
 NetOutputBlob = Tensor2[tf32, Samples, NetOutputs]
-NetTargetBlob = Tuple[Tensor2[tf32, Samples, Estimates],
+NetTargetBlob = Tuple[Tensor2[tf32, Samples, Stats],
                       Tensor2[tf32, Samples, Params],
                       Tensor1[tf32, Samples]]                        # p-values
 
@@ -29,7 +29,7 @@ class _CINet(_SimulatorNet):
             pnet: _PNet,               # TODO: make a protocol for PNets
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
-                Tensor2[tf32, Samples, Estimates]
+                Tensor2[tf32, Samples, Stats]
             ],
             sample_params_fn: Callable[
                 [int],
@@ -126,7 +126,7 @@ class _CINet(_SimulatorNet):
     @tf.function
     def p_from_pnet(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
             contrast: Tensor1[tf32, Samples],
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
@@ -138,7 +138,7 @@ class _CINet(_SimulatorNet):
     def output_activation(
             self,
             net_outputs: Tensor2[tf32, Samples, NetOutputs],
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
     ) -> Tuple[
         Tensor1[tf32, Samples],
         Tensor1[tf32, Samples],
@@ -152,7 +152,7 @@ class _CINet(_SimulatorNet):
     @tf.function
     def ci(
             self,
-            estimates: Tensor2[tf32, Samples, Estimates],
+            estimates: Tensor2[tf32, Samples, Stats],
             known_params: Tensor2[tf32, Samples, KnownParams],
             target_p: Tensor1[tf32, Samples],
     ) -> Tuple[Tensor2[tf32, Samples, Params], Tensor2[tf32, Samples, Params]]:
