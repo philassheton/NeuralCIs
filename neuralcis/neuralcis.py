@@ -7,19 +7,19 @@ from neuralcis import sampling
 from neuralcis._param_sampler import _ParamSampler
 from neuralcis._p_net import _PNet
 from neuralcis._ci_net import _CINet
+from neuralcis._neuralcis_kwargs import _NeuralCIsKWArgs
 from neuralcis._data_saver import _DataSaver
-from neuralcis.common import HAT
 
 # for typing
 from typing import Tuple, Union, Callable, List, Sequence, Dict, Optional
+from typing import TypeVar, Type
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Estimates, Params
-from neuralcis.distributions import Distribution
+from neuralcis.common import Samples, Stats, Params
+from neuralcis.variables import Variable
 
 
-def no_transform(estimates, params):
-    return estimates, params
+T = TypeVar("T", bound="NeuralCIs")
 
 
 class NeuralCIs(_DataSaver):
@@ -29,40 +29,68 @@ class NeuralCIs(_DataSaver):
 
     :param sampling_distribution_fn: Generate samples from the sampling
         distribution.  This function will be fed 1D Tensorflow Tensors, where
-         the elements of each Tensor at a given index represent the
-         parameter values at one given sample, and should return 1D Tensors
-         of the same length, in the same order.  The return value should be
-         a dict, whose values are estimates of the parameters (except for
-         any parameters that are known *a priori*), and whose keys are the
-         names of those parameters (and exactly the same as the names used
-         in the function signature).  See example below.
-    :param transform_on_params_fn: An optional function that maps the estimate
+        the elements of each Tensor at a given index represent the
+        parameter values at one given sample, and should return 1D Tensors
+        of the same length, each in the same order.  The return value should
+        be a dict, whose values are the statistics from a randomly generated
+        sample.  The statistics must have different names than the parameters
+        (e.g. if there is a parameter called 'mu', you may have a statistic
+        called 'mu_hat', but not called 'mu').  See example below.
+    :param contrast_fn:  This function will be fed the same 1D Tensorflow
+        Tensors as the sampling_distribution_fn, and should compute from
+        those parameters, the parameter value to be estimated.  See example
+        below.
+    :param unknown_param_names:  A list or tuple of strs.  Gives the names of
+        params that should match those in the arguments of the sampling and
+        contrast functions, which are NOT known a priori and therefore must
+        be either estimated or removed as nuisance parameters.  (For example,
+        for a t-test, this might be ['mu', 'sigma'].
+    :param stat_names:  A list or tuple of strs.  Gives the names of
+        estimates that are returned by the sampling_distribution_fn. (For
+        example, for a t-test, this might be ['mu_hat', 'sigma_hat'].)
+    :param known_param_names:  An optional list or tuple of strs.  Gives the
+        names any of the params (should match those in the arguments of the
+        sampling and contrast functions) which ARE known a priori and
+        therefore can simply be conditioned upon. (For example, for a t-test,
+        this might be ['n'].)
+    :param transform_on_params_fn: An optional function that maps the stat
         and param tensors (passed as named arguments) to transformed values
         that are expected to give the same p-value.  These transforms should
-        be based ONLY on the PARAM values.  Transformed estimate and
-        parameters are returned in a dict.
+        be based ONLY on the PARAM values.  Transformed stat and
+        parameters are returned in a dict.  The transformed parameters may
+        be given new names, in which case they can be differently transformed
+        in the model, which can be beneficial.
 
-        If provided, `transform_on_estimates_fn` MUST also be provided.
+        If provided, `transform_on_stats_fn` MUST also be provided.
 
         For example, for a t-test, we could divide all values (except n) by
         our parameter sigma and end up with the same geometry, just rescaled.
 
         IMPORTANT: This function is only used during training; the
-        `transform_on_estimates_fn` is then used during inference.
-    :param transform_on_estimates_fn: An optional function that maps the
-        estimate and param tensors (passed as named arguments) to transformed
+        `transform_on_stats_fn` is then used during inference.
+    :param transform_on_stats_fn: An optional function that maps the
+        stat and param tensors (passed as named arguments) to transformed
         values that are expected to give the same p-value.  This function
-        should base these transforms ONLY on the ESTIMATE values.  Transformed
-        estimate and parameters are returned in a dict.
+        should base these transforms ONLY on the STAT values.  Transformed
+        stat and parameters are returned in a dict.  Each may be either a
+        Tensor, or a Python float (for any statistics that have been made
+        constant during the transform; for example, in a t-test, we might
+        divide all values by sigma_hat; in this case, sigma_hat is equal to
+        one and we might have {'sigma_hat': 1.0, 'sigma': sigma / sigma_hat}.
 
         If provided, `transform_on_params_fn` MUST also be provided.
 
         For example, for a t-test, we could divide all values (except n) by
-        our estimated of sigma and end up with the same geometry, just
+        our estimates of sigma and end up with the same geometry, just
         rescaled.
 
         IMPORTANT: This function is only used during inference; the
         `transform_on_params_fn` is then used during inference.
+    :param transform_on_params_param_names: An optional list or tuple of strs.
+        Required if transform functions are supplied.  Gives the names of
+        parameters as returned by the transform function.  (Statistics are
+        currently assumed to be returned under the same names, but this may
+        be relaxed in later versions.)
     :param foldername: Optional string; will load network weights from a
         previous training session.
     :param train_initial_weights:  A bool (default True) that controls whether
@@ -71,8 +99,8 @@ class NeuralCIs(_DataSaver):
         e.g. monotonic layers, whose values can easily blow up without careful
         initialisation.
     :param **param_distributions: For each parameter to the
-        sampling_distribution_fn a parameter sampling distribution object
-        needs to be passed in by name (same name as in the sampling function).
+        sampling_distribution_fn a parameter Variable definition object
+        needs to be passed in by name (same names as used above).
 
     Once an instance of the new class is instantiated, the following members
     allow the model to be fit, and for p-values and confidence intervals to
@@ -90,13 +118,20 @@ class NeuralCIs(_DataSaver):
     def normal_sampling_fn(mu, sigma, n):
         std_normal = tf.random.normal(tf.shape(mu))
         mu_hat = std_normal * sigma / tf.math.sqrt(n) + mu
-        return {"mu": mu_hat}
+        return {"mu_hat": mu_hat}
+
+    def contrast_fn(mu, sigma, n):
+        return mu
 
     cis = neuralcis.NeuralCIs(
         normal_sampling_fn,
-        mu=   neuralcis.Uniform(  -2., 2.  ),
-        sigma=neuralcis.LogUniform(.1, 10. ),
-        n=    neuralcis.LogUniform(3., 300.)
+        contrast_fn,
+        unknown_param_names=['mu'],
+        known_param_names=['sigma', 'n'],
+        stat_names=['mu_hat'],
+        mu=neuralcis.Location(-2., 2.),
+        sigma=neuralcis.Scale(.1, 10.),
+        n=neuralcis.SampleSize(3., 300.),
     )
 
     cis.fit()
@@ -113,64 +148,69 @@ class NeuralCIs(_DataSaver):
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Tensor1[tf32, Samples]
             ],
-            transform_on_params_fn: Callable[
+            unknown_param_names: Sequence[str],
+            stat_names: Sequence[str],
+            known_param_names: Sequence[str] = (),
+            transform_on_params_fn: Optional[Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]]
-            ] = None,
-            transform_on_estimates_fn: Callable[
+            ]] = None,
+            transform_on_stats_fn: Optional[Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]],
-            ] = None,
-            foldername: Optional[str] = None,
+            ]] = None,
+            transform_on_params_param_names: Optional[Sequence[str]] = None,
+            foldername = None,
             train_initial_weights: bool = True,
             network_setup_args: Optional[Dict] = None,
-            **param_distributions: Distribution,
+            **variable_defs: Variable,
     ) -> None:
 
-        if foldername is not None:
-            train_initial_weights = False
-
         if ((transform_on_params_fn is None) !=
-            (transform_on_estimates_fn is None)):
+            (transform_on_stats_fn is None)):
             raise Exception("If you provide a transform_on_params_fn, you MUST"
-                            " also provide a transform_on_estimates_fn and"
+                            " also provide a transform_on_stats_fn and"
                             " vice versa.")
 
-        self.sampling_distribution_fn = self.tf_fun(sampling_distribution_fn)
-        self.contrast_fn = self.tf_fun(contrast_fn)
-        self.transform_on_params_fn = self.tf_fun(transform_on_params_fn)
-        self.transform_on_estimates_fn = self.tf_fun(transform_on_estimates_fn)
+        # store input arguments in a format suitable for serialization:
+        self.kwargs = _NeuralCIsKWArgs(
+            sampling_distribution_fn,
+            contrast_fn,
+            unknown_param_names,
+            stat_names,
+            known_param_names,
+            transform_on_params_fn,
+            transform_on_stats_fn,
+            transform_on_params_param_names,
+            network_setup_args,
+            variable_defs,
+        )
 
-        (
-            self.param_names_in_net_order,
-            self.estimate_names,
-            self.sim_to_net_order,
-            self.net_to_sim_order,
-            self.param_dists_in_net_order,
-            self.estimate_dists_in_net_order,
-        ) = self._align_simulation_params(param_distributions)
+        # TODO: look at adding variable defs for contrast also
+        # TODO: look at allowing estimates also to have different variable defs
+        #       after transform
 
-        self.num_param = len(self.param_dists_in_net_order)
-        self.num_estimate = len(self.estimate_dists_in_net_order)
-        self.num_unknown_param = self.num_estimate
-        self.num_known_param = self.num_param - self.num_unknown_param
+        self.num_unknown_param = len(self.kwargs.unknown_param_names)
+        self.num_known_param = len(self.kwargs.known_param_names)
+        self.num_param = self.num_unknown_param + self.num_known_param
+        self.num_stat = len(self.stat_names())
 
-        self.net_to_contrast_order = self._align_contrast_fn_params()
+        self.has_transform = self.kwargs.transform_on_params_fn is not None
+        has_stat_transform = self.kwargs.transform_on_stats_fn is not None
+        if self.has_transform != has_stat_transform:
+            raise Exception("If you enter a transform_on_params_fn, you MUST"
+                            " enter a transform_on_stats_fn and vice versa!")
 
-        (
-            self.has_transform,
-            self.net_to_transform_order,
-            self.fn_to_net_estimates_order,
-            self.fn_to_net_params_order,
-            num_params_remaining_after_transform,
-        ) = self._align_transform_by_params_fn_inputs()
+        # TODO: Add checks for other functions too.
+        self._check_simulation_names()
+        self._check_transform_on_params_fn_names()
 
-        estimates_min_and_max_std_uniform = tf.stack([
-            dist.min_and_max_std_uniform
-            for dist in self.estimate_dists_in_net_order
+        stats_min_and_max_std_uniform = tf.stack([
+            self.variable_defs()[stat].min_and_max_std_uniform
+            for stat in self.stat_names()
         ], axis=0)
-        estimates_min_and_max = sampling.uniform_from_std_uniform(
-            estimates_min_and_max_std_uniform,
+        stats_min_and_max = sampling.uniform_from_std_uniform(
+            stats_min_and_max_std_uniform,
             common.PARAMS_MIN, common.PARAMS_MAX
         )
 
@@ -183,7 +223,7 @@ class NeuralCIs(_DataSaver):
             i + self.num_unknown_param for i in range(self.num_known_param)
         ]
         self.param_sampler = _ParamSampler(
-            estimates_min_and_max,
+            stats_min_and_max,
             self._sampling_dist_net_interface,
             self._preprocess_params_net_interface,
             self.num_unknown_param,
@@ -199,7 +239,7 @@ class NeuralCIs(_DataSaver):
             self.num_unknown_param,
             self.num_known_param,
             self.known_param_indices,
-            num_params_remaining_after_transform,
+            len(self.kwargs.transform_on_params_param_names),
             self.param_sampler,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
@@ -222,19 +262,27 @@ class NeuralCIs(_DataSaver):
         )
 
         if foldername is not None:
-            _DataSaver.load(self, foldername, common.CIS_FILE_START)
+            _DataSaver._load_data(self, foldername, common.CIS_FILE_START)
 
     @staticmethod
-    def tf_fun(
-            func: Union[None, Callable, TFFunction]
-    ) -> Optional[TFFunction]:
+    def wrap_up_kwargs(**kwargs):
+        return kwargs
 
-        if func is None:
-            return None
-        elif isinstance(func, TFFunction):
-            return func
-        else:
-            return tf.function(func)
+    def param_names(self) -> List[str]:
+        return (list(self.kwargs.unknown_param_names)
+                + list(self.kwargs.known_param_names))
+
+    def stat_names(self) -> List[str]:
+        return list(self.kwargs.stat_names)
+
+    def stat_param_names(self) -> List[str]:
+        return self.stat_names() + self.param_names()
+
+    def variable_defs(self) -> Dict[str, Variable]:
+        return self.kwargs.variable_defs
+
+    def defined_vars(self) -> List[str]:
+        return list(self.kwargs.variable_defs.keys())
 
     def fit(self, *args, **kwargs) -> None:
 
@@ -278,22 +326,21 @@ class NeuralCIs(_DataSaver):
             self,
             value_names: Sequence[str] = ("p",),
             return_also_axes: Sequence[str] = (),
-            **estimates_and_params: Union[np.ndarray, tf.Tensor, float],
+            **stats_and_params: Union[np.ndarray, tf.Tensor, float],
     ) -> List[np.ndarray]:
 
-        """Calculate the p-value across a grid of estimates and/or params.
+        """Calculate the p-value across a grid of stats and/or params.
 
-        For each estimate and param, either a single fixed value or a
-        range/sequence of values must be entered via the two dicts, estimates
-        and params.  The p-value is then computed at all combinations of each
-        of these values.
+        For each stat and param, either a single fixed value or a
+        range/sequence of values must be entered as a named argument. The
+        p-value is then computed at all combinations of each of these values.
 
-        :param **estimates_and_params: Named arguments mapping each estimate
+        :param **stats_and_params: Named arguments mapping each stat
          and param name to either a range/sequence of values, or to a single
          fixed value.
         :param value_names: Sequence of strs (default contains only "p");
          list of values to be returned.  Currently also supports "z0", "z1",
-         etc., as well as "{estimate_name}_lower" and "{estimate_name}_upper".
+         etc., as well as "{stat_name}_lower" and "{stat_name}_upper".
         :param return_also_axes: A sequence of str values: the names of the
          axes that should also be returned.  If this is not empty, the return
          type will be a list with these axes first, and the output values
@@ -302,27 +349,27 @@ class NeuralCIs(_DataSaver):
         :return:
         """
 
-        all_names = self.estimate_names + self.param_names_in_net_order
-        all_values = [tf.constant(estimates_and_params[n], dtype=tf.float32)
+        all_names = self.stat_names() + self.param_names()
+        all_values = [tf.constant(stats_and_params[n], dtype=tf.float32)
                       for n in all_names]
         all_grids = tf.meshgrid(*all_values)
         shape = all_grids[0].shape
         all_grids_flattened = [tf.reshape(x, [-1]) for x in all_grids]
 
-        estimates_params_flattened = {n: v
-                                      for n, v in zip(all_names,
-                                                      all_grids_flattened)}
+        stats_params_flattened = {n: v
+                                  for n, v in zip(all_names,
+                                                  all_grids_flattened)}
         values_dict = self.ps_and_cis(
             extra_values_names=value_names,
-            **estimates_params_flattened,
+            **stats_params_flattened,
         )
         values_seq = [np.squeeze(np.reshape(values_dict[n], shape))
                       for n in value_names]
 
         if len(return_also_axes) > 0:
-            estimates_params_grids = {n: g for n, g in zip(all_names,
-                                                           all_grids)}
-            return_grids = [np.squeeze(estimates_params_grids[n])
+            stats_params_grids = {n: g for n, g in zip(all_names,
+                                                       all_grids)}
+            return_grids = [np.squeeze(stats_params_grids[n])
                             for n in return_also_axes]
             return return_grids + values_seq
         else:
@@ -333,14 +380,14 @@ class NeuralCIs(_DataSaver):
             conf_levels: Optional[np.ndarray] = None,
             extra_values_names: Sequence[str] = (),
             apply_transform: bool = True,
-            **estimates_and_params: Union[Tensor1[tf32, Samples], np.ndarray],
+            **stats_and_params: Union[Tensor1[tf32, Samples], np.ndarray],
     ) -> Dict[str, np.ndarray]:
 
         """Calculate the p-values and confidence intervals for a series of
         novel cases.
 
-        :param **estimates_and_params: A set of named params, giving values
-            for the estimates and null hypothesis params (named as per their
+        :param **stats_and_params: A set of named params, giving values
+            for the stats and null hypothesis params (named as per their
             naming in the simulation function).  Each of these may be a
             Tensor, numpy.ndarray or a sequence of floats.
         :param conf_levels: An optional list of floats (default .95).
@@ -351,35 +398,33 @@ class NeuralCIs(_DataSaver):
             extra values to be returned from the p-net.  Currently, supports
             "z0", "z1", ...  up to the number of zs but may be expanded later.
         :param apply_transform: A bool, default True.  If False, the
-            transform_on_estimates function will be bypassed.  For testing
+            transform_on_stats function will be bypassed.  For testing
             purposes only.
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        estimates_and_params_tf = {k: tf.constant(v, tf.float32)
-                                   for k, v in estimates_and_params.items()}
+        stats_and_params_tf = {k: tf.constant(v, tf.float32)
+                               for k, v in stats_and_params.items()}
 
         if apply_transform:
-            estimates_and_params_tf = self._transform_on_estimates(
-                **estimates_and_params_tf
+            stats_and_params_tf = self._transform_on_stats(
+                **stats_and_params_tf
             )
 
-        estimates_tf = [estimates_and_params_tf[n]
-                        for n in self.estimate_names]
-        params_tf = [estimates_and_params_tf[n] for
-                     n in self.param_names_in_net_order]
+        stats_tf = {n: stats_and_params_tf[n] for n in self.stat_names()}
+        params_tf = {n: stats_and_params_tf[n] for n in self.param_names()}
 
-        estimates_net = self._estimates_human_net_order_to_net(*estimates_tf)
-        params_net = self._params_human_net_order_to_net(*params_tf)
+        stats_net = self._stats_human_to_net(**stats_tf)
+        params_net = self._params_human_to_net(**params_tf)
 
         # TODO: This should probably live here and be passed down.
         known_params = self.cinet.known_params(params_net)
         if len(extra_values_names) > 0:
-            values = self.pnet.p_workings(estimates_net, params_net)
+            values = self.pnet.p_workings(stats_net, params_net)
             values = {"p": values["p"].numpy()} | \
                      {k: values[k].numpy() for k in extra_values_names}
         else:
-            p = self.pnet.p(estimates_net, params_net)
+            p = self.pnet.p(stats_net, params_net)
             values = {'p': p.numpy()}
 
         if conf_levels is not None:
@@ -387,7 +432,7 @@ class NeuralCIs(_DataSaver):
             #       (Could actually do that to give it unif probability too!)
             #       And if so, then it would need to be de-transformed here.
             target_p = tf.constant(1. - conf_levels)
-            lower, upper = self.cinet.ci(estimates_net, known_params, target_p)
+            lower, upper = self.cinet.ci(stats_net, known_params, target_p)
 
             values["lower"] = lower.numpy()
             values["upper"] = upper.numpy()
@@ -397,17 +442,17 @@ class NeuralCIs(_DataSaver):
     def p_and_ci(
             self,
             conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL,
-            **estimates_and_params: Tensor1[tf32, Samples],
+            **stats_and_params: Tensor1[tf32, Samples],
     ) -> Dict[str, float]:
 
         """Calculate the p-value and confidence interval for a novel case.
 
         This is the "user-friendly" interface to the network.  Pass in a
-        single estimate, null parameter value, and known parameters, and
+        single stat, null parameter value, and known parameters, and
         it will return p-value, lower bound, upper bound.
 
-        :param: **estimates_and_params, a set of named parameters, all floats,
-            giving values for the estimates and null hypothesis params for
+        :param: **stats_and_params, a set of named parameters, all floats,
+            giving values for the stats and null hypothesis params for
             which a single p-value is to be calculated.  Naming should be the
             same as in the simulation function.
         :param conf_level: A float (default .95).  Confidence level for the
@@ -415,47 +460,44 @@ class NeuralCIs(_DataSaver):
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        estimates_and_params_numpy = {k: np.array([v], dtype=np.float32)
-                                      for k, v in estimates_and_params.items()}
+        stats_and_params_numpy = {k: np.array([v], dtype=np.float32)
+                                  for k, v in stats_and_params.items()}
         conf_levels = np.array([conf_level], dtype=np.float32)
 
-        ps_and_cis = self.ps_and_cis(conf_levels, **estimates_and_params_numpy)
+        ps_and_cis = self.ps_and_cis(conf_levels, **stats_and_params_numpy)
 
         p_and_ci = {k: v[0].tolist() for k, v in ps_and_cis.items()}
 
         return p_and_ci
 
-    def load(self, *args) -> None:
+    @classmethod
+    def load(
+            cls: Type[T],
+            foldername,
+            network_setup_args: Optional[dict] = None,
+            network_setup_arg_overrides: Optional[dict] = None,
+    ) -> T:
 
-        """Loading weights from a pre-constructed net is now disabled.
-
-        To load a previously saved NeuralCIs object, you need to pass the
-        `foldername` to the constructor, when first constructing the net.
-        """
-
-        raise Exception("To load a previously saved NeuralCIs object, you "
-                        "need to pass a foldername to the constructor.")
+        kwargs_object = _NeuralCIsKWArgs.load(foldername)
+        kwargs = kwargs_object.kwargs()
+        if network_setup_args is not None:
+            kwargs["network_setup_args"] = network_setup_args
+        if network_setup_arg_overrides is not None:
+            kwargs["network_setup_args"] = (kwargs["network_setup_args"]
+                                            | network_setup_arg_overrides)
+        cis = cls(
+            train_initial_weights=False,
+            **kwargs,
+        )
+        cis._load_data(foldername, common.CIS_FILE_START)
+        return cis
 
     def save(
             self,
-            foldername: str,
-            *args
+            foldername: str
     ) -> None:
-
-        """Save weights and neural architectures stored to disk into self.
-
-        NB this does NOT currently save the sampling or contrast functions,
-        and these must still be supplied before reloading the network weights.
-
-        :param foldername: A str, the folder in which the weights and
-            configurations are to be stored.
-        """
-
-        if len(args):
-            raise Exception("NeuralCIs only allows you to provide a foldername"
-                            " when saving.")
-
-        super().save(foldername, common.CIS_FILE_START)
+        self.kwargs.save(foldername)
+        self._save_data(foldername, common.CIS_FILE_START)
 
     ###########################################################################
     #
@@ -472,12 +514,11 @@ class NeuralCIs(_DataSaver):
             params_net: Tensor2[tf32, Samples, Params],
     ) -> Tensor2[tf32, Samples, Estimates]:
 
-        params_human = self._params_net_to_human_in_net_order(params_net)
-        params = self._reorder(params_human, self.net_to_sim_order)
-        estimates = self.sampling_distribution_fn(*params).values()
-        estimates_net = self._estimates_human_net_order_to_net(*estimates)
+        params_human = self._params_net_to_human(params_net)
+        stats_human = self.kwargs.sampling_distribution_fn(**params_human)
+        stats_net = self._stats_human_to_net(**stats_human)
 
-        return estimates_net
+        return stats_net
 
     @tf.function
     def _contrast_fn_net_interface(
@@ -485,9 +526,8 @@ class NeuralCIs(_DataSaver):
             params_net: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
-        params_human = self._params_net_to_human_in_net_order(params_net)
-        params = self._reorder(params_human, self.net_to_contrast_order)
-        contrasts = self.contrast_fn(*params)
+        params_human = self._params_net_to_human(params_net)
+        contrasts = self.kwargs.contrast_fn(**params_human)
 
         return contrasts
 
@@ -500,26 +540,18 @@ class NeuralCIs(_DataSaver):
                Tensor2[tf32, Samples, Params]]:
 
         if not self.has_transform:
-            return estimates_net, params_net
+            return stats_net, params_net
 
-        estimates_human = \
-                    self._estimates_net_to_human_in_net_order(estimates_net)
-        params_human = self._params_net_to_human_in_net_order(params_net)
-        inputs = self._reorder(estimates_human + params_human,
-                               self.net_to_transform_order)
+        stats_human = self._stats_net_to_human(stats_net)
+        params_human = self._params_net_to_human(params_net)
 
-        outputs_dict = self.transform_on_params_fn(*inputs)
-        outputs = list(outputs_dict.values())
+        inputs = stats_human | params_human
+        outputs = self.kwargs.transform_on_params_fn(**inputs)
 
-        estimates_human = self._reorder(outputs,
-                                        self.fn_to_net_estimates_order)
-        params_human = self._reorder(outputs, self.fn_to_net_params_order)
+        stats_net = self._stats_human_to_net(**outputs)
+        params_net = self._params_transformed_human_to_net(**outputs)
 
-        estimates_net = \
-                       self._estimates_human_net_order_to_net(*estimates_human)
-        params_net = self._params_human_net_order_to_net(*params_human)
-
-        return estimates_net, params_net
+        return stats_net, params_net
 
     @tf.function
     def _preprocess_params_net_interface(
@@ -528,27 +560,27 @@ class NeuralCIs(_DataSaver):
             known_params_only: bool = False,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        params_human_preprocessed = self._params_net_to_human_in_net_order(
+        params_human_preprocessed = self._params_net_to_human(
             params_net,
             known_params_only=known_params_only,
             preprocess=True,
         )
-        params_net_preprocessed = self._params_human_net_order_to_net(
-            *params_human_preprocessed,
+        params_net_preprocessed = self._params_human_to_net(
             known_params_only=known_params_only,
+            **params_human_preprocessed,
         )
         return params_net_preprocessed
 
-    def _transform_on_estimates(
+    def _transform_on_stats(
             self,
-            **estimates_and_params: Tensor1[tf32, Samples],
+            **stats_and_params: Tensor1[tf32, Samples],
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        if self.transform_on_estimates_fn is None:
-            return estimates_and_params
+        if self.kwargs.transform_on_stats_fn.is_none():
+            return stats_and_params
 
-        untransformed = estimates_and_params
-        transformed = self.transform_on_estimates_fn(**untransformed)
+        untransformed = stats_and_params
+        transformed = self.kwargs.transform_on_stats_fn(**untransformed)
         for name, trans in transformed.items():
             if (isinstance(trans, float) or
                     isinstance(trans, tf.Tensor) and len(trans.shape) == 0):
@@ -562,93 +594,110 @@ class NeuralCIs(_DataSaver):
     #   format used by the user-provided sampling function.  These two formats
     #   differ in two key ways:
     #
-    #   (1) Before we pass estimates or parameters to the net, we transform
+    #   (1) Before we pass stats or parameters to the net, we transform
     #       them in such a way that they should be closer to uniform
     #       distributed (e.g. by log-transforming scale variables).
     #
     #   (2) The net assumes a particular order to the parameters, whereas the
     #       inputs to the sampling function could be in any order.  The order
-    #       assumed by the net is: (i) parameters to be estimated,
+    #       assumed by the net is: (i) parameters to be statd,
     #       (ii) nuisance parameters and then (iii) known parameters (e.g.
     #       sample size).
     #
     ###########################################################################
 
     @tf.function
-    def _params_net_to_human_in_net_order(
+    def _human_to_net(
+            self,
+            names_in_net_order: Sequence[str],
+            **values_human: Tensor1[tf32, Samples],
+    ):
+
+        # VERY important that this loops over names_in_net_order and not
+        #   over the dict **human, because it must be in the right order!
+        vars = self.variable_defs()
+        values_net_split = [vars[name].to_net(values_human[name])
+                            for name in names_in_net_order]
+        values_net = tf.stack(values_net_split, axis=1)
+        return values_net
+
+    @tf.function
+    def _net_to_human(
+            self,
+            names_in_net_order: Sequence[str],
+            num_param: int,
+            values_net: Tensor2,
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
+
+        values_net_split = tf.unstack(values_net, num=num_param, axis=1)
+        vars = self.variable_defs()
+        values_human = {name: vars[name].from_net(values)
+                        for name, values in zip(names_in_net_order,
+                                                values_net_split)}
+        return values_human
+
+    @tf.function
+    def _params_net_to_human(
             self,
             params_net: Tensor2[tf32, Samples, Params],
             known_params_only: bool = False,
             preprocess: bool = False,
-    ) -> List[Tensor1[tf32, Samples]]:
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
 
         if known_params_only:
             num_param = self.num_known_param
-            param_dists = self.param_dists_in_net_order[-num_param:]
+            param_names = self.kwargs.known_param_names
         else:
             num_param = self.num_param
-            param_dists = self.param_dists_in_net_order
+            param_names = self.param_names()
 
-        params_net_split = tf.unstack(params_net, num=num_param, axis=1)
-        params_human_net_order = [d.from_net(p)
-                                  for d, p in zip(param_dists,
-                                                  params_net_split)]
+        params_human = self._net_to_human(param_names, num_param, params_net)
 
         if preprocess:
-            params_human_net_order = [d.preprocess(p)
-                                      for d, p in zip(param_dists,
-                                                      params_human_net_order)]
+            vars = self.variable_defs()
+            params_human = {name: vars[name].preprocess(param)
+                            for name, param in params_human.items()}
 
-        return params_human_net_order
+        return params_human
 
     @tf.function
-    def _params_human_net_order_to_net(
+    def _params_human_to_net(
             self,
-            *params_human: Tensor1[tf32, Samples],
             known_params_only: bool = False,
+            **params_human: Tensor1[tf32, Samples],
     ) -> Tensor2[tf32, Samples, Params]:
 
         if known_params_only:
-            param_dists = self.param_dists_in_net_order[-self.num_known_param:]
+            param_names = self.kwargs.known_param_names
         else:
-            param_dists = self.param_dists_in_net_order
+            param_names = self.param_names()
 
-        params_net_split = [d.to_net(p)
-                            for d, p in zip(param_dists, params_human)]
-        params_net = tf.stack(params_net_split, axis=1)
-
-        return params_net
+        return self._human_to_net(param_names, **params_human)
 
     @tf.function
-    def _estimates_net_to_human_in_net_order(
+    def _stats_net_to_human(
             self,
-            estimates_net: Tensor2[tf32, Samples, Estimates],
-    ) -> List[Tensor1[tf32, Samples]]:
+            stats_net: Tensor2[tf32, Samples, Stats],
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        estimates_net_split = tf.unstack(estimates_net,
-                                         num=self.num_estimate, axis=1)
-        estimates_human_net_order = [d.from_net(p) for d, p in
-                                     zip(self.estimate_dists_in_net_order,
-                                         estimates_net_split)]
-        return estimates_human_net_order
+        return self._net_to_human(self.stat_names(), self.num_stat, stats_net)
 
     @tf.function
-    def _estimates_human_net_order_to_net(
+    def _stats_human_to_net(
             self,
-            *estimates_human: Tensor1[tf32, Samples],
-    ) -> Tensor2[tf32, Samples, Estimates]:
+            **stats_human: Dict[str, Tensor1[tf32, Samples]],
+    ) -> Tensor2[tf32, Samples, Stats]:
 
-        estimates_net_split = [d.to_net(p) for d, p in
-                               zip(self.estimate_dists_in_net_order,
-                                   estimates_human)]
-        estimates_net = tf.stack(estimates_net_split, axis=1)
-        return estimates_net
+        return self._human_to_net(self.stat_names(), **stats_human)
 
     @tf.function
-    def _reorder(self, tensors: List[Tensor1], order: List[int]) \
-            -> List[Tensor1]:
+    def _params_transformed_human_to_net(
+            self,
+            **params_transformed_human: Tensor1[tf32, Samples],
+    ) -> Tensor2[tf32, Samples, Params]:
 
-        return [tensors[i] for i in order]
+        return self._human_to_net(self.kwargs.transform_on_params_param_names,
+                                  **params_transformed_human)
 
     @staticmethod
     def _tensor1_first_elem_to_float(
@@ -665,170 +714,120 @@ class NeuralCIs(_DataSaver):
     #
     ###########################################################################
 
-    def _get_estimates_names(
+    def _get_stats_names(
             self,
-            param_distributions_named: Dict[str, Distribution],
     ) -> List[str]:
 
-        test_params = self._generate_params_test_sample(
-            param_distributions_named,
-            common.BATCH_SIZE,
-        )
-        estimates = self.sampling_distribution_fn(*test_params)
-        estimate_names = list(estimates.keys())
-        if not np.all([e.endswith(HAT) for e in estimate_names]):
-            raise Exception(f"All estimate names must end with '{HAT}'!!")
-        return estimate_names
-
-    def _estimate_names_dehatted(
-            self,
-            estimate_names: Optional[List[str]] = None,
-    ) -> List[str]:
-
-        if estimate_names is None:
-            estimate_names = self.estimate_names
-        return [e.removesuffix(HAT) for e in estimate_names]
+        test_params = self._generate_params_test_sample()
+        stats = self.kwargs.sampling_distribution_fn(**test_params)
+        stat_names = list(stats.keys())
+        return stat_names
 
     def _generate_params_test_sample(
             self,
-            param_distributions_named: Dict[str, Distribution],
-            n: int,
-    ) -> List[Tensor1[tf32, Samples]]:
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        sim_params = self._get_tf_params(self.sampling_distribution_fn)
-        dists = [param_distributions_named[p] for p in sim_params]
-        params = [d.from_std_uniform(tf.random.uniform((n,))) for d in dists]
+        n = common.BATCH_SIZE
+        vars = self.kwargs.variable_defs
+        params = {name: vars[name].from_std_uniform(tf.random.uniform((n,)))
+                  for name in self.param_names()}
         return params
 
-    @staticmethod
-    def _get_tf_params(
-            tf_function: TFFunction,
-    ) -> List[str]:
-
-        return tf_function.function_spec.arg_names
-
-    def _align_simulation_params(
+    def _check_simulation_names(
             self,
-            param_distributions_named: dict,
-    ) -> Tuple[
-        List[str],
-        List[str],
-        List[int],
-        List[int],
-        List[Distribution],
-        List[Distribution],
-    ]:
+    ) -> None:
 
-        sim_order_names = self._get_tf_params(self.sampling_distribution_fn)
-        n = len(param_distributions_named)
+        param_names = self.kwargs.sampling_distribution_fn.arg_names()
+        stat_names = self._get_stats_names()
 
-        estimate_names = self._get_estimates_names(param_distributions_named)
-        estimate_names_dehatted = self._estimate_names_dehatted(estimate_names)
+        missing = np.setdiff1d(param_names, self.param_names())
+        if len(missing):
+            raise Exception(f"The following input to your simulation fn cannot"
+                            f" be found in either unknown or known params"
+                            f" list: {missing}")
+        missing = np.setdiff1d(self.kwargs.unknown_param_names, param_names)
+        if len(missing):
+            raise Exception(f"The following is in your unknown param names,"
+                            f" but does not appear as an input to your"
+                            f" simulation fn!!  {missing}")
+        missing = np.setdiff1d(self.kwargs.known_param_names, param_names)
+        if len(missing):
+            raise Exception(f"The following is in your known param names,"
+                            f" but does not appear as an input to your"
+                            f" simulation fn!!  {missing}")
+        missing = np.setdiff1d(self.param_names(), self.defined_vars())
+        if len(missing):
+            raise Exception(f"The following input to your simulation fn cannot"
+                            f" be found in the variable definitions!"
+                            f" {missing}")
+        missing = np.setdiff1d(stat_names, self.stat_names())
+        if len(missing):
+            raise Exception(f"The following output from your simulation fn"
+                            f" cannot be found in stat_names list: {missing}")
+        missing = np.setdiff1d(self.stat_names(), stat_names)
+        if len(missing):
+            raise Exception(f"The following is in your stat names,"
+                            f" but does not appear as an output from your"
+                            f" simulation fn!!  {missing}")
 
-        if np.any([p.endswith(HAT) for p in param_distributions_named.keys()]):
-            raise Exception(f"None of your param names may end with {HAT}!!")
-        if np.any([p.endswith(HAT) for p in sim_order_names]):
-            raise Exception(f"None of your simulation params may end with"
-                            f" {HAT}!!")
-        if not np.all([e.endswith(HAT) for e in estimate_names]):
-            raise Exception(f"All of your estimate names MUST end with {HAT}!")
-
-        assert (
-            sorted(param_distributions_named.keys()) == sorted(sim_order_names)
-        )
-
-        # pull the estimated param(s) to the start to match the convention
-        #   within the networks
-        unknown_param_indices_in_sim_pars = \
-            [sim_order_names.index(e) for e in estimate_names_dehatted]
-        known_param_indices_in_sim_pars = \
-            [i for i in range(n) if i not in unknown_param_indices_in_sim_pars]
-        sim_to_net_order = \
-            unknown_param_indices_in_sim_pars + known_param_indices_in_sim_pars
-
-        sorted_inds_and_net_to_sim = sorted(zip(sim_to_net_order, range(n)))
-        net_to_sim_order = [x[1] for x in sorted_inds_and_net_to_sim]
-        net_order_names = [sim_order_names[i] for i in sim_to_net_order]
-
-        param_transforms_in_net_order = [
-            param_distributions_named[i] for i in net_order_names
-        ]
-        estimate_transforms_in_net_order = [
-            param_distributions_named[i] for i in estimate_names_dehatted
-        ]
-
-        return (
-            net_order_names,
-            estimate_names,
-            sim_to_net_order,
-            net_to_sim_order,
-            param_transforms_in_net_order,
-            estimate_transforms_in_net_order,
-        )
-
-    def _align_contrast_fn_params(
+    def _check_transform_on_params_fn_names(
             self,
-    ) -> List[int]:
+    ) -> None:
 
-        # note that we only need transforms on the way in: since we look at
-        #   each contrast in isolation, and since we only care about how the
-        #   derivs are proportioned to each other, any further transform will
-        #   only multiply the derivs by a constant term.
-        # TODO: Look at whether we might also want to allow distributions for
-        #       the contrasts, to keep them in a good range.  (see comment
-        #       above).
+        if self.kwargs.transform_on_params_fn.is_none():
+            return
 
-        fn_order_params = self._get_tf_params(self.contrast_fn)
-        net_order_params = self.param_names_in_net_order
+        # Check inputs to the function are every single param and stat name
+        fn_args = self.kwargs.transform_on_params_fn.arg_names()
 
-        net_to_con_order = [fn_order_params.index(p) for p in net_order_params]
+        unexpected = np.setdiff1d(fn_args, self.param_names()
+                                           + self.stat_names())
+        if len(unexpected):
+            raise Exception(f"Your transform_on_params_fn should only have"
+                            f" argument names matching inputs or outputs"
+                            f" of the sampling_distribution_fn.  Unexpected:"
+                            f" {unexpected}.")
+        missing = np.setdiff1d(self.param_names(), fn_args)
+        if len(missing):
+            raise Exception(f"Your transform_on_params_fn must take every"
+                            f" single param as argument, even if it does not"
+                            f" modify it.  Yours is missing: {missing}")
+        missing = np.setdiff1d(self.stat_names(), fn_args)
+        if len(missing):
+            raise Exception(f"Your transform_on_params_fn must take every"
+                            f" single stat as argument, even if it does"
+                            f" not modify it.  Yours is missing: {missing}")
 
-        return net_to_con_order
+        # Now analyse outputs of the function
+        test_inputs = {name: tf.random.uniform((common.BATCH_SIZE,))
+                       for name in fn_args}
+        test_outputs = self.kwargs.transform_on_params_fn(**test_inputs)
+        output_names = list(test_outputs.keys())
 
-    def _align_transform_by_params_fn_inputs(
-            self,
-    ) -> Tuple[bool,
-               List[int],
-               List[int],
-               List[int],
-               int]:
+        missing = np.setdiff1d(self.stat_names(), output_names)
+        if len(missing):
+            raise Exception(f"Your transform_on_params_fn must return every"
+                            f" stat after the transform.  Missing:"
+                            f" {missing}.")
+        missing = np.setdiff1d(self.kwargs.transform_on_params_param_names,
+                               output_names)
+        if len(missing):
+            raise Exception(f"Your transform_on_params_fn must return every"
+                            f" param in transform_on_params_param_names. "
+                            f" Missing: {missing}.")
 
-        if self.transform_on_params_fn is None:
-            return False, [], [], [], self.num_param
-
-        # TODO: there is a lot duplicated here from functions above.  Need to
-        #       find a neat framework for this all to work cleanly.  Also this
-        #       is very much a quick dirty test-it-out first draft.  Tidy!!
-        fn_order_inputs = self._get_tf_params(self.transform_on_params_fn)
-        net_order_params = self.param_names_in_net_order
-        net_order_estimates = self.estimate_names
-
-        test_inputs = [tf.random.uniform((common.BATCH_SIZE,))
-                       for _ in fn_order_inputs]
-        test_outputs = self.transform_on_params_fn(*test_inputs)
-        fn_order_outputs = [n for n in test_outputs.keys()]
-
-        num_estimate = len(net_order_estimates)
-        net_order_params_estimates = (
-            {n: i for i, n in enumerate(net_order_estimates)} |
-            {n: i + num_estimate for i, n in enumerate(net_order_params)}
-        )
-
-        net_to_fn_order = [net_order_params_estimates[n]
-                           for n in fn_order_inputs]
-        fn_to_net_estimates_order = [fn_order_outputs.index(e)
-                                     for e in net_order_estimates]
-        fn_to_net_params_order = [fn_order_outputs.index(p)
-                                  for p in net_order_params
-                                  if p in fn_order_outputs]
-
-        num_params_remaining = len(fn_to_net_params_order)
-
-        return (True,
-                net_to_fn_order,
-                fn_to_net_estimates_order,
-                fn_to_net_params_order,
-                num_params_remaining)
+        expected_outputs = (self.stat_names()
+                            + self.kwargs.transform_on_params_param_names)
+        unexpected = np.setdiff1d(output_names, expected_outputs)
+        if len(unexpected):
+            raise Exception(f"Your transform_on_params_fn must return only"
+                            f" variables with variable definitions. "
+                            f" Unexpected: {unexpected}.")
+        unexpected = np.setdiff1d(output_names, self.defined_vars())
+        if len(unexpected):
+            raise Exception(f"Your transform_on_params_fn must return only"
+                            f" variables with variable definitions." 
+                            f" Unexpected: {unexpected}.")
 
     ###########################################################################
     #
@@ -846,8 +845,8 @@ class NeuralCIs(_DataSaver):
             common.PARAMS_MIN,
             common.PARAMS_MAX,
         )
-        params_human = self._params_net_to_human_in_net_order(params_net)
-        params_net_again = self._params_human_net_order_to_net(*params_human)
+        params_human = self._params_net_to_human(params_net)
+        params_net_again = self._params_human_to_net(**params_human)
         errors = tf.math.abs(params_net_again - params_net)
 
         return tf.math.reduce_max(errors)
@@ -866,28 +865,22 @@ class NeuralCIs(_DataSaver):
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
         # TODO: Tidy this sample_params function.  Too long, needs factoring.
-        def to_net(value, dist: Distribution):
+        def resize(value):
             if isinstance(value, float):
                 value = tf.fill((num_samples,), value)
             else:
                 assert isinstance(value, tf.Tensor)
                 assert len(value.shape) == 1 and len(value) == num_samples
-            return dist.to_net(value)
+            return value
 
         known_param_min_values = []
         known_param_max_values = []
-        known_param_names_in_net_order = [self.param_names_in_net_order[i]
-                                          for i in self.known_param_indices]
-        known_param_dists_in_net_order = [self.param_dists_in_net_order[i]
-                                          for i in self.known_param_indices]
-
-        for n, d in zip(known_param_names_in_net_order,
-                        known_param_dists_in_net_order):
-
-            if n in known_param_ranges:
-                min, max = known_param_ranges[n]
-                known_param_min_values.append(to_net(min, d))
-                known_param_max_values.append(to_net(max, d))
+        vars = self.variable_defs()
+        for name in self.kwargs.known_param_names:
+            if name in known_param_ranges:
+                min, max = known_param_ranges[name]
+                known_param_min_values.append(vars[name].to_net(resize(min)))
+                known_param_max_values.append(vars[name].to_net(resize(max)))
             else:
                 known_param_min_values.append(tf.fill((num_samples,),
                                                       common.PARAMS_MIN))
@@ -912,7 +905,5 @@ class NeuralCIs(_DataSaver):
                 known_maxs_inner=known_param_max_values,
             )
 
-        params_human = self._params_net_to_human_in_net_order(params_net)
-        params_dict = {n: p for n, p in zip(self.param_names_in_net_order,
-                                            params_human)}
-        return params_dict
+        params_human = self._params_net_to_human(params_net)
+        return params_human

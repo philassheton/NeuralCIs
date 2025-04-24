@@ -4,7 +4,8 @@ import tensorflow as tf
 from neuralcis._sequential_net import _SequentialNet
 
 from typing import Optional, List, Sequence, Dict
-from neuralcis.common import INSTANCE_VARS, SEQUENTIAL
+from neuralcis.common import INSTANCE_VARS
+from neuralcis.common import SEQUENTIAL, KWARGS
 
 
 class _DataSaver:
@@ -41,7 +42,7 @@ class _DataSaver:
 
         return os.path.join(foldername, filename)
 
-    def save(
+    def _save_data(
             self,
             foldername: str,
             filename_start_internal: str,
@@ -57,7 +58,7 @@ class _DataSaver:
             object_filename = self.construct_filename(filename_start_internal,
                                                       suffix)
             print(f'saving {object_filename}')
-            obj.save(foldername, object_filename)
+            obj._save_data(foldername, object_filename)
 
         if len(self.instance_tf_variables_to_save):
             tf.raw_ops.Save(
@@ -67,7 +68,7 @@ class _DataSaver:
                       self.instance_tf_variables_to_save]
             )
 
-    def load(
+    def _load_data(
             self,
             foldername: str,
             filename_start_internal: str,
@@ -81,7 +82,7 @@ class _DataSaver:
         for suffix, obj in self.subobjects_to_save.items():
             object_filename = self.construct_filename(filename_start_internal,
                                                       suffix)
-            obj.load(foldername, object_filename)
+            obj._load_data(foldername, object_filename)
 
         for var_name in self.instance_tf_variables_to_save:
             var = getattr(self, var_name)
@@ -99,6 +100,10 @@ class _DataSaver:
     @staticmethod
     def instance_variables_filename(filename: str) -> str:
         return _DataSaver.construct_filename(filename, INSTANCE_VARS)
+
+    @staticmethod
+    def kwargs_filename(filename: str) -> str:
+        return _DataSaver.construct_filename(filename, KWARGS)
 
     @staticmethod
     def sequential_filename(filename: str, index: int) -> str:

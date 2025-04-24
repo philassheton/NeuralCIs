@@ -21,28 +21,33 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from neuralcis import NeuralCIs, common
-from neuralcis.distributions import Distribution
+from neuralcis.variables import Variable
 
 from typing import Sequence, Dict, Optional, Callable, Tuple, Union, Any
 from tensor_annotations.tensorflow import Tensor1, float32 as tf32
 from neuralcis.common import Samples, One
 
 
+def __medians_for_names(
+        cis: NeuralCIs,
+        names: Sequence[str],
+        **value_overrides: float,
+) -> Dict[str, float]:
+
+    vars = cis.variable_defs()
+    overrides_for_names = {name: value_overrides[name]
+                           for name in names
+                           if name in value_overrides}
+    medians_for_names = {name: vars[name].from_std_uniform(0.5).numpy()
+                         for name in names}
+    return medians_for_names | overrides_for_names
+
 def __param_names_and_medians(
         cis: NeuralCIs,
         **value_overrides: float,
 ) -> Dict[str, float]:
 
-    param_values = {n: value_overrides[n]
-                    for n in cis.param_names_in_net_order
-                    if n in value_overrides}
-    for name, dist in zip(cis.param_names_in_net_order,
-                          cis.param_dists_in_net_order):
-        if name not in param_values:
-            param_values[name] = dist.from_std_uniform(0.5).numpy()
-
-    return param_values
-
+    return __medians_for_names(cis, cis.param_names(), **value_overrides)
 
 def __sample_params_inner_zone(
         cis: NeuralCIs,
@@ -61,30 +66,12 @@ def __param_names_and_random_values(
     return __sample_params_inner_zone(cis, 1, **fixed_known_params)
 
 
-def __add_estimates_equal_to_params(
+def __estimate_and_param_names_and_definitions(
         cis: NeuralCIs,
-        param_values: Dict[str, Any],
-        **value_overrides,
-) -> Dict[str, Any]:
+) -> Dict[str, Variable]:
 
-    estimate_values = {name: param_values[dehat]
-                       for name, dehat in zip(cis.estimate_names,
-                                              cis._estimate_names_dehatted())}
-    for estimate_name in estimate_values.keys():
-        if estimate_name in value_overrides:
-            estimate_values[estimate_name] = value_overrides[estimate_name]
-
-    return estimate_values | param_values
-
-
-def __estimate_and_param_names_and_distributions(
-        cis: NeuralCIs,
-) -> Dict[str, Distribution]:
-
-    param_dists = {name: dist
-                   for name, dist in zip(cis.param_names_in_net_order,
-                                         cis.param_dists_in_net_order)}
-    return __add_estimates_equal_to_params(cis, param_dists)
+    vars = cis.variable_defs()
+    return {name: vars[name] for name in cis.stat_param_names()}
 
 
 def __repeat_params_np(
@@ -122,7 +109,7 @@ def __axis_linspace(
         np.linspace(zero, one, num_grid),
         tf.float32
     )
-    param_dists = __estimate_and_param_names_and_distributions(cis)
+    param_dists = __estimate_and_param_names_and_definitions(cis)
     if lims is None:
         u = std_unif_linspace
         linspace = param_dists[name].from_std_uniform_valid_estimates(u)
@@ -159,7 +146,7 @@ def __get_one_p_value_distribution_chunk(
 ) -> np.ndarray:
 
     param_tensors = __repeat_params_tf(num_samples, **param_values)
-    estimates = cis.sampling_distribution_fn(**param_tensors)
+    estimates = cis.kwargs.sampling_distribution_fn(**param_tensors)
     ps_and_cis = cis.ps_and_cis(**(estimates | param_tensors),
                                 apply_transform=apply_transform)
     ps = ps_and_cis["p"]
@@ -218,10 +205,8 @@ def __plot_p_value_distribution_once(
 
 
 def __get_axis_types(cis: NeuralCIs) -> Dict[str, str]:
-    param_axis_types = {name: dist.axis_type
-                        for name, dist in zip(cis.param_names_in_net_order,
-                                              cis.param_dists_in_net_order)}
-    return __add_estimates_equal_to_params(cis, param_axis_types)
+    vars = cis.variable_defs()
+    return {name: vars[name].axis_type for name in cis.stat_param_names()}
 
 
 def __get_3d_fig_ax():
@@ -359,7 +344,7 @@ def visualize_sampling_fn(
     param_overrides = __param_names_and_medians(cis, **param_overrides)
     params_tensors = __repeat_params_tf(num_points, **param_overrides)
 
-    estimates = cis.sampling_distribution_fn(**params_tensors)
+    estimates = cis.kwargs.sampling_distribution_fn(**params_tensors)
     num_estimates = len(estimates)
     fig, ax = plt.subplots(num_estimates, num_estimates)
     for i_x, name_x in enumerate(estimates):
@@ -417,9 +402,9 @@ def plot_params_vs_estimates(
     """
 
     if param_names is None:
-        param_names = cis.param_names_in_net_order
+        param_names = cis.param_names()
     if estimate_names is None:
-        estimate_names = cis.estimate_names
+        estimate_names = cis.stat_names()
 
     param_values = __param_names_and_medians(cis, **param_values)
     param_defaults = __repeat_params_tf(num_points, **param_values)
@@ -432,7 +417,7 @@ def plot_params_vs_estimates(
     fig, ax = plt.subplots(len(estimate_names), len(param_names))
     for col, param in enumerate(param_names):
         this_params = param_defaults | {param: param_samples[param]}
-        this_estimates = cis.sampling_distribution_fn(**this_params)
+        this_estimates = cis.kwargs.sampling_distribution_fn(**this_params)
         for row, estimate in enumerate(estimate_names):
             ax[row][col].scatter(this_params[param], this_estimates[estimate])
             ax[row][col].set_xscale(axis_types[param])
@@ -526,14 +511,14 @@ def plot_p_value_cdfs(
     if plot:
         fig, axes = plt.subplots(1, 3)
     y = np.linspace(0., 1., num_samples)
-    params = {n: np.array([]) for n in cis.param_names_in_net_order}
+    params = {n: np.array([]) for n in cis.param_names()}
     ks = np.array([])
     alpha05 = np.array([])
     alpha01 = np.array([])
     for i in tqdm(indices):
         if params_df is not None:
             params_i = (
-                    params_df.loc[i, cis.param_names_in_net_order].to_dict() |
+                    params_df.loc[i, cis.param_names()].to_dict() |
                     known_param_values
             )
         else:
@@ -607,13 +592,15 @@ def add_param_measures_to_df(
 ) -> pd.DataFrame:
 
     params_human_net_order = [tf.constant(df[n], tf.float32)
-                              for n in cis.param_names_in_net_order]
-    params_net = cis._params_human_net_order_to_net(*params_human_net_order)
+                              for n in cis.param_names()]
+    params_net = cis._params_human_to_net(*params_human_net_order)
     importance_ingredients_inner = cis.param_sampler.inner_feeler_net.call_tf(
         (params_net, params_net),
     )
-    importance_inner = cis.param_sampler.inner_feeler_net.get_log_importance_from_net(params_net)
-    importance_outer = cis.param_sampler.outer_feeler_net.get_log_importance_from_net(params_net)
+    inner_feeler = cis.param_sampler.inner_feeler_net
+    outer_feeler = cis.param_sampler.outer_feeler_net
+    importance_inner = inner_feeler.get_log_importance_from_net(params_net)
+    importance_outer = outer_feeler.get_log_importance_from_net(params_net)
 
     include = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
     df["inner_include"] = importance_ingredients_inner[:, include]
@@ -730,14 +717,10 @@ def cis_surface(
     """
 
     if value_overrides is None:
-        param_values = __param_names_and_medians(cis)
-    else:
-        param_values = __param_names_and_medians(cis, **value_overrides)
-
+        value_overrides = {}
+    estimates_and_params = __medians_for_names(cis, cis.stat_param_names(),
+                                               **value_overrides)
     axis_types = __get_axis_types(cis)
-
-    estimates_and_params = __add_estimates_equal_to_params(cis, param_values,
-                                                           **value_overrides)
 
     x_linspace = __axis_linspace(cis, x_name, x_lims, num_grid)
     y_linspace = __axis_linspace(cis, y_name, y_lims, num_grid)
@@ -784,7 +767,7 @@ def compare_power_at_h1(
     if h0_params is None:
         assert h0_df is not None
         h0_params = h0_df.loc[h0_df_row,
-                              cis.param_names_in_net_order].to_dict()
+                              cis.param_names()].to_dict()
         print("Using df row:")
         print(h0_df.iloc[h0_df_row, :])
     else:
@@ -794,7 +777,7 @@ def compare_power_at_h1(
 
     h0_params = __repeat_params_tf(num_samples, **h0_params)
     h1_params = __repeat_params_tf(num_samples, **h1_params)
-    estimates = cis.sampling_distribution_fn(**h1_params)
+    estimates = cis.kwargs.sampling_distribution_fn(**h1_params)
     ps_neural = cis.ps_and_cis(**(estimates | h0_params))["p"]
     ps_accurate = accurate_p_fn(**(estimates | h0_params))
 
@@ -829,7 +812,7 @@ def compare_with_exact(
 ) -> pd.DataFrame:
 
     params = cis.sample_params(num_tries)
-    estimates = cis.sampling_distribution_fn(**params)
+    estimates = cis.kwargs.sampling_distribution_fn(**params)
     estimates_and_params = estimates | params
 
     ps_neural = cis.ps_and_cis(**estimates_and_params,
@@ -989,7 +972,9 @@ def iso_surface(
                              null_params.items()}
             null_params_repeated_i = __repeat_params_tf(num_samples_per_group,
                                                         **null_params_i)
-            samples_i = cis.sampling_distribution_fn(**null_params_repeated_i)
+            samples_i = cis.kwargs.sampling_distribution_fn(
+                **null_params_repeated_i
+            )
 
             for name in estimate_names:
                 samples[name].append(samples_i[name])
@@ -1001,11 +986,11 @@ def iso_surface(
         colours_repeated = np.concatenate(colours_repeated)
         return samples, colours_repeated
 
-    if len(cis.estimate_names) != 3:
+    if len(cis.stat_names()) != 3:
         raise Exception('ISO surface can only currently be plotted for models'
                         ' with three estimates!!')
 
-    estimate_names = cis.estimate_names
+    estimate_names = cis.stat_names()
     x_name, y_name, z_name = estimate_names
 
     samples, colours = get_estimate_samples(null_params,

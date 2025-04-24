@@ -301,7 +301,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                                       params_pp, importance_ingredients,
                                       cov_chol)
 
-    def load(self, *args, **kwargs) -> None:
+    def _load_data(self, *args, **kwargs) -> None:
         n = (self.num_chains * self.chain_length +
              self.num_peripheral_batches * self.peripheral_batch_size)
         p = self.num_param
@@ -314,7 +314,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                                          dtype=tf.float32)
         self.sampled_targets = tf.Variable(tf.fill((n, i), np.nan),
                                            dtype=tf.float32)
-        super().load(*args, **kwargs)
+        super()._load_data(*args, **kwargs)
 
     @tf.function
     def assign_iteration_results(

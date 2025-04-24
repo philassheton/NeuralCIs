@@ -10,8 +10,7 @@ CIS_FILE_START = "cis"
 INSTANCE_VARS = "instancevars"
 WEIGHTS = "weights"
 SEQUENTIAL = "seq"
-
-HAT = "_hat"
+KWARGS = "kwargs"
 
 # model construction
 NUM_HIDDEN_LAYERS = 7
@@ -94,6 +93,7 @@ MIN_ALLOWED_JACOBDET_IN_COORDINET = -50.
 SMALLEST_LOGABLE_NUMBER = 1e-37
 NEGLIGIBLE_LOG = -5.
 SOFT_FLOOR_CEILING = 1e-10
+MAX_SAMPLES_AT_A_TIME = 500000
 
 
 # axis labels for TensorFlow typing
