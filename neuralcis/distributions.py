@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import tensorflow as tf
+from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 
 from typing import Optional, Union
 from neuralcis.common import Samples
@@ -10,7 +11,7 @@ from tensor_annotations.tensorflow import float32 as tf32
 AnyTensor = Union[Tensor0, Tensor1]
 
 
-class Distribution(ABC):
+class Variable(ABC):
     axis_type = "linear"
     known_param_only = False
 
@@ -24,6 +25,8 @@ class Distribution(ABC):
         self.estimate_max = estimate_max
         min_and_max = tf.constant([estimate_min, estimate_max])
         self.min_and_max_std_uniform = self.to_std_uniform(min_and_max)
+        self.tf_function_methods = None
+        self.track_tf_functions()
 
     @abstractmethod
     def to_std_uniform(
@@ -83,8 +86,20 @@ class Distribution(ABC):
 
         return std_uniform_tensor
 
+    def track_tf_functions(self):
+        self.tf_function_methods = []
+        for attr_name in dir(self):
+            func = getattr(self, attr_name)
+            if isinstance(func, TFFunction):
+                self.tf_function_methods.append(attr_name)
 
-class TransformUniformDistribution(Distribution):
+    def reapply_tf_functions(self):
+        for method_name in self.tf_function_methods:
+            method = getattr(self, method_name)
+            setattr(self, method_name, tf.function(method))
+
+
+class TransformUniformVariable(Variable):
     uniform_min: Tensor0
     uniform_max: Tensor0
 
@@ -143,7 +158,7 @@ class TransformUniformDistribution(Distribution):
         return params
 
 
-class LogUniform(TransformUniformDistribution):
+class LogUniform(TransformUniformVariable):
     axis_type = "log"
 
     @tf.function
@@ -155,7 +170,7 @@ class LogUniform(TransformUniformDistribution):
         return tf.math.exp(x)                                                  # type: ignore
 
 
-class Uniform(TransformUniformDistribution):
+class Uniform(TransformUniformVariable):
     @tf.function
     def to_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
         return x
@@ -194,3 +209,7 @@ class SampleSize(PositiveCount):
     @tf.function
     def from_uniform_mapping(self, x: AnyTensor) -> AnyTensor:
         return tf.math.exp(x)                                                  # type: ignore
+
+
+Scale = LogUniform
+Location = Uniform
