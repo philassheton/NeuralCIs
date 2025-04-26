@@ -444,6 +444,7 @@ def plot_p_value_cdfs(
         apply_transform: bool = True,
         plot: bool = True,
         num_plot: int = 1000,
+        store_onto_neuralcis_object: bool = True,
         **known_param_values: float,
 ) -> pd.DataFrame:
 
@@ -482,6 +483,9 @@ def plot_p_value_cdfs(
         is passed in, all rows of the DataFrame will be used; if None and no
         `params_df` is passed in, `num_cdf` random parameters will be used.
         If `params_df` is None, this must also be None.
+    :param store_onto_neuralcis_object: An optional bool (default False).  If
+        True, the generated collapsed (num_plot length) CDFs will be stored
+        into the neuralcis object so they can be rapidly accessed next time.
     :param **param_values:  A set of float overrides used to set a given
         parameter to a given fixed value in all histograms.
 
@@ -515,6 +519,7 @@ def plot_p_value_cdfs(
     ks = np.array([])
     alpha05 = np.array([])
     alpha01 = np.array([])
+    cdf_minis = []
     for i in tqdm(indices):
         if params_df is not None:
             params_i = (
@@ -531,10 +536,11 @@ def plot_p_value_cdfs(
                                                  **params_i)
         cdf = cdf_etc.pop("p")
         cdf.sort()
+        y_mini = np.linspace(0., 1., num_plot)
+        cdf_mini = np.array([chunk.mean()
+                             for chunk in np.split(cdf, num_plot)])
+        cdf_minis.append(cdf_mini)
         if plot:
-            y_mini = np.linspace(0., 1., num_plot)
-            cdf_mini = np.array([chunk.mean() for chunk in np.split(cdf,
-                                                                    num_plot)])
             for ax in axes[0:2]:
                 ax.plot(cdf_mini, y_mini, alpha=alpha, c="black")
             axes[2].plot(cdf_mini, y_mini - cdf_mini, alpha=alpha, c="black")
@@ -582,6 +588,25 @@ def plot_p_value_cdfs(
         alpha01=alpha01,
         sort_by="ks",
     )
+
+    if store_onto_neuralcis_object:
+        cdf_minis = np.stack(cdf_minis, axis=1)
+        kwargs = {
+            'num_cdfs': num_cdfs,
+            'num_samples': num_samples,
+            'randomize_unspecified_params': randomize_unspecified_params,
+            'sampling_dist_percent': 99,
+            'params_df': params_df,
+            'params_df_rows': params_df_rows,
+            'apply_transform': apply_transform,
+            'num_plot': num_plot,
+        } | known_param_values
+        to_store = {
+            'kwargs': kwargs,
+            'results_df': pandas_sorted,
+            'cdfs_compressed_to_num_plot': cdf_minis,
+        }
+        cis.store_data('cdfs', str(num_samples), to_store)
 
     return pandas_sorted
 

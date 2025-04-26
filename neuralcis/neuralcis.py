@@ -163,6 +163,7 @@ class NeuralCIs(_DataSaver):
             foldername = None,
             train_initial_weights: bool = True,
             network_setup_args: Optional[Dict] = None,
+            optional_data_to_store: Optional[Dict] = None,
             **variable_defs: Variable,
     ) -> None:
 
@@ -184,6 +185,7 @@ class NeuralCIs(_DataSaver):
 
         # store input arguments in a format suitable for serialization:
         self.kwargs = _NeuralCIsKWArgs(
+            variable_defs,
             sampling_distribution_fn,
             contrast_fn,
             unknown_param_names,
@@ -193,7 +195,7 @@ class NeuralCIs(_DataSaver):
             transform_on_stats_fn,
             transform_on_params_param_names,
             network_setup_args,
-            variable_defs,
+            optional_data_to_store,
         )
 
         # TODO: look at adding variable defs for contrast also
@@ -917,3 +919,12 @@ class NeuralCIs(_DataSaver):
 
         params_human = self._params_net_to_human(params_net)
         return params_human
+
+    def store_data(
+            self,
+            main_key: str,
+            sub_key: str,
+            data_dict: Dict,
+    ) -> None:
+
+        self.kwargs.store_data(main_key, sub_key, data_dict)

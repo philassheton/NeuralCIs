@@ -1,6 +1,7 @@
 import tensorflow as tf
 import pickle
 import os
+from datetime import datetime
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 from neuralcis.variables import Variable
 
@@ -84,6 +85,7 @@ class _TFFn(tf.Module):
 class _NeuralCIsKWArgs():
     def __init__(
             self,
+            variable_defs: Dict[str, Variable],
             sampling_distribution_fn: Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]]
@@ -105,8 +107,11 @@ class _NeuralCIsKWArgs():
             ]],
             transform_on_params_param_names: Sequence[str],
             network_setup_args: Optional[Dict],
-            variable_defs: Dict[str, Variable],
+            optional_data_to_store: Optional[Dict],
     ) -> None:
+
+        if optional_data_to_store is None:
+            optional_data_to_store = {}
 
         self.sampling_distribution_fn = _TFFn.get(sampling_distribution_fn)
         self.contrast_fn = _TFFn.get(contrast_fn)
@@ -120,6 +125,7 @@ class _NeuralCIsKWArgs():
         self.transform_on_params_param_names = transform_on_params_param_names
 
         self.network_setup_args = network_setup_args
+        self.optional_data_to_store = optional_data_to_store
         self.variable_defs = variable_defs
 
     def kwargs(self) -> Dict:
@@ -134,6 +140,7 @@ class _NeuralCIsKWArgs():
             transform_on_params_param_names =
                                         self.transform_on_params_param_names,
             network_setup_args = self.network_setup_args,
+            optional_data_to_store = self.optional_data_to_store,
         ) | self.variable_defs
 
     @staticmethod
@@ -163,7 +170,8 @@ class _NeuralCIsKWArgs():
                       "known_param_names": self.known_param_names,
                       "transform_on_params_param_names":
                                         self.transform_on_params_param_names,
-                      "network_setup_args": self.network_setup_args}
+                      "network_setup_args": self.network_setup_args,
+                      "optional_data_to_store": self.optional_data_to_store}
         self._save_pickle(foldername, "other_args", other_args)
 
     @classmethod
@@ -216,3 +224,17 @@ class _NeuralCIsKWArgs():
         path = os.path.join(foldername, filename)
         with open(path, 'wb') as f:
             pickle.dump(thing_to_save, f)
+
+    def store_data(
+            self,
+            main_key: str,
+            sub_key: str,
+            data_dict: Dict,
+    ) -> None:
+
+        if main_key not in self.optional_data_to_store:
+            self.optional_data_to_store[main_key] = {}
+        if sub_key not in self.optional_data_to_store[main_key]:
+            self.optional_data_to_store[main_key][sub_key] = {}
+        now = str(datetime.now())
+        self.optional_data_to_store[main_key][sub_key][now] = data_dict
