@@ -39,7 +39,10 @@ class _TFFn(tf.Module):
         elif isinstance(func, _TFFn):
             return func
         elif _TFFn.is_reloaded_TFFn(func):
-            return _TFFn(func.underlying_fn)
+            if hasattr(func, "underlying_fn"):
+                return _TFFn(func.underlying_fn)
+            else:
+                return _TFFn(None)
         else:
             return _TFFn(tf.function(func))
 
@@ -47,17 +50,20 @@ class _TFFn(tf.Module):
     def is_reloaded_TFFn(obj):
         cls = obj.__class__
         return (
-                hasattr(obj, "underlying_fn") and
                 cls.__name__ == "_UserObject" and
                 cls.__module__.startswith("tensorflow.python.saved_model.load")
         )
 
     def save(self, foldername, filename):
-        spec = [tf.TensorSpec([None], tf.float32)
-                for _ in range(self.num_args())]
-        concrete = self.underlying_fn.get_concrete_function(*spec)
         path = os.path.join(foldername, filename)
-        tf.saved_model.save(self, path, signatures={'underlying_fn': concrete})
+        if self.underlying_fn is None:
+            tf.saved_model.save(self, path)
+        else:
+            spec = [tf.TensorSpec([None], tf.float32)
+                    for _ in range(self.num_args())]
+            concrete = self.underlying_fn.get_concrete_function(*spec)
+            tf.saved_model.save(self, path,
+                                signatures={'underlying_fn': concrete})
 
     @classmethod
     def load(cls, foldername, filename):
@@ -97,7 +103,7 @@ class _NeuralCIsKWArgs():
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]],
             ]],
-            transform_on_params_param_names: Optional[Sequence[str]],
+            transform_on_params_param_names: Sequence[str],
             network_setup_args: Optional[Dict],
             variable_defs: Dict[str, Variable],
     ) -> None:

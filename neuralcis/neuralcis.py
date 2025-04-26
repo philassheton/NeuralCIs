@@ -172,6 +172,16 @@ class NeuralCIs(_DataSaver):
                             " also provide a transform_on_stats_fn and"
                             " vice versa.")
 
+        if transform_on_params_fn is None:
+            if (transform_on_params_param_names is not None
+                and len(transform_on_params_param_names) > 0):
+                raise Exception(f"Your transform_on_params_param_names must be"
+                                f" either empty or None if you do not enter"
+                                f" a transform_on_params_fn!!  You entered"
+                                f" {transform_on_params_param_names}.")
+            transform_on_params_param_names = (known_param_names
+                                               + unknown_param_names)
+
         # store input arguments in a format suitable for serialization:
         self.kwargs = _NeuralCIsKWArgs(
             sampling_distribution_fn,
@@ -195,8 +205,8 @@ class NeuralCIs(_DataSaver):
         self.num_param = self.num_unknown_param + self.num_known_param
         self.num_stat = len(self.stat_names())
 
-        self.has_transform = self.kwargs.transform_on_params_fn is not None
-        has_stat_transform = self.kwargs.transform_on_stats_fn is not None
+        self.has_transform = not self.kwargs.transform_on_params_fn.is_none()
+        has_stat_transform = not self.kwargs.transform_on_stats_fn.is_none()
         if self.has_transform != has_stat_transform:
             raise Exception("If you enter a transform_on_params_fn, you MUST"
                             " enter a transform_on_stats_fn and vice versa!")
