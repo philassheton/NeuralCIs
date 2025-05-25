@@ -1084,3 +1084,68 @@ def iso_surface(
     ax.set_ylabel(y_name)
     ax.set_zlabel(z_name)
     fig.show()
+
+
+def plot_stored_model_cdf_summaries(
+        cis: NeuralCIs,
+        alt_name: str = 'Alternative method',
+        min_cdf_length: int = 1,
+        max_cdf_length: int = np.inf,
+        earliest_date_time: str = '1980-01-01',
+        latest_date_time: str = '2080-12-31 23:59:59',
+        log_y_scale: bool = False,
+) -> None:
+
+    # TODO: First cut.  Still needs:
+    #  - error checking (e.g. no CDFs found)
+    #  - printout of available possibilities.
+    #  - docstring
+
+    cdfs = cis.kwargs.optional_data_to_store['cdfs']
+    cdf_lengths = [int(s) for s in cdfs.keys()]
+    include_lengths = [l >= min_cdf_length and l <= max_cdf_length
+                       for l in cdf_lengths]
+    included_cdfs = [cdf
+                     for cdf, include in zip(cdfs.values(), include_lengths)
+                     if include_lengths]
+    included_cdfs = [v
+                     for cdfs_dict in included_cdfs
+                     for k, v in cdfs_dict.items()
+                     if k >= earliest_date_time and k <= latest_date_time]
+
+    results_dfs = [cdf['results_df'] for cdf in included_cdfs]
+    results_df = pd.concat(results_dfs, axis=0)
+
+    fig, ax = plt.subplots(3, 1)
+    ax[0].hist(results_df.alpha05, color='black', bins=30,
+               alpha=0.5, label='NeuralCIs', density=True)
+    ax[0].hist(results_df.alpha05_alt, color='red', bins=30,
+               alpha=0.5, label=alt_name, density=True)
+
+    ax[1].hist(results_df.alpha01, color='black', bins=30,
+               alpha=0.5, label='NeuralCIs', density=True)
+    ax[1].hist(results_df.alpha01_alt, color='red', bins=30,
+               alpha=0.5, label=alt_name, density=True)
+
+    ax[2].hist(results_df.ks, color='black', bins=30,
+               alpha=0.5, label='NeuralCIs', density=True)
+    ax[2].hist(results_df.ks_alt, color='red', bins=30,
+               alpha=0.5, label=alt_name, density=True)
+
+    ax[0].set_xlabel('False Positives')
+    ax[1].set_xlabel('False Positives')
+    ax[2].set_xlabel('Kolmogorov-Smirnov Distance')
+
+    ax[0].set_title('Alpha = 0.05')
+    ax[1].set_title('Alpha = 0.01')
+    ax[2].set_title('Distance from Uniform')
+
+    if log_y_scale:
+        ax[0].set_yscale('log')
+        ax[1].set_yscale('log')
+        ax[2].set_yscale('log')
+
+    ax[0].legend()
+    ax[1].legend()
+    ax[2].legend()
+    fig.show()
