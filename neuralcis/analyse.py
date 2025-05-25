@@ -142,14 +142,21 @@ def __get_one_p_value_distribution_chunk(
         cis: NeuralCIs,
         num_samples: int,
         apply_transform: bool,
+        p_value_fns: Optional[Sequence[Callable]] = None,
         **param_values: float,
 ) -> np.ndarray:
 
+    if p_value_fns is None:
+        p_value_fns = (cis.ps_and_cis,)
+
     param_tensors = __repeat_params_tf(num_samples, **param_values)
     estimates = cis.kwargs.sampling_distribution_fn(**param_tensors)
-    ps_and_cis = cis.ps_and_cis(**(estimates | param_tensors),
-                                apply_transform=apply_transform)
-    ps = ps_and_cis["p"]
+    ps = []
+    for fn in p_value_fns:
+        ps_and_cis = fn(**(estimates | param_tensors),
+                        apply_transform=apply_transform)
+        ps.append(ps_and_cis["p"])
+    ps = np.stack(ps, axis=1)
     return ps
 
 
@@ -158,6 +165,7 @@ def __get_one_p_value_distribution(
         num_samples: int,
         randomize_unspecified_params: bool,
         apply_transform: bool,
+        p_value_fns: Optional[Sequence[Callable]] = None,
         **param_values: float,
 ) -> Dict[str, Union[np.ndarray, float]]:
 
@@ -174,9 +182,10 @@ def __get_one_p_value_distribution(
         ps.append(__get_one_p_value_distribution_chunk(cis,
                                                        num_samples_to_request,
                                                        apply_transform,
+                                                       p_value_fns,
                                                        **param_values))
         num_samples_remaining -= num_samples_to_request
-    ps = np.concatenate(ps)
+    ps = np.concatenate(ps, axis=0)
 
     return {"p": ps} | param_values
 
@@ -195,7 +204,7 @@ def __plot_p_value_distribution_once(
     ps = __get_one_p_value_distribution(cis, num_samples,
                                         randomize_unspecified_params,
                                         from_estimates_box_only,
-                                        **param_values)["p"]
+                                        **param_values)["p"][:, 0]
     title = __summarize_values(**param_values)
     fig.add_trace(
         go.Histogram(x=ps, hovertext=title),
@@ -445,6 +454,7 @@ def plot_p_value_cdfs(
         plot: bool = True,
         num_plot: int = 1000,
         store_onto_neuralcis_object: bool = True,
+        comparison_p_value_fn: Optional[Callable] = None,
         **known_param_values: float,
 ) -> pd.DataFrame:
 
@@ -510,15 +520,22 @@ def plot_p_value_cdfs(
             raise Exception("params_df_rows can only be None, int or"
                             " Sequence[int]!!!")
 
+    if comparison_p_value_fn is None:
+        p_value_fns = (cis.ps_and_cis,)
+        num_fns = 1
+    else:
+        p_value_fns = (cis.ps_and_cis, comparison_p_value_fn)
+        num_fns = 2
+
     print("Generating CDFs; this may take a few seconds")
     alpha = 1. / np.sqrt(len(indices))
     if plot:
         fig, axes = plt.subplots(1, 3)
     y = np.linspace(0., 1., num_samples)
     params = {n: np.array([]) for n in cis.param_names()}
-    ks = np.array([])
-    alpha05 = np.array([])
-    alpha01 = np.array([])
+    ks = np.zeros((0, num_fns))
+    alpha05 = np.zeros((0, num_fns))
+    alpha01 = np.zeros((0, num_fns))
     cdf_minis = []
     for i in tqdm(indices):
         if params_df is not None:
@@ -533,21 +550,24 @@ def plot_p_value_cdfs(
                                                  num_samples,
                                                  randomize_unspecified_params,
                                                  apply_transform,
+                                                 p_value_fns,
                                                  **params_i)
         cdf = cdf_etc.pop("p")
-        cdf.sort()
+        cdf.sort(axis=0)
         y_mini = np.linspace(0., 1., num_plot)
-        cdf_mini = np.array([chunk.mean()
-                             for chunk in np.split(cdf, num_plot)])
+        cdf_mini = np.array([chunk.mean(axis=0)
+                             for chunk in np.split(cdf, num_plot, axis=0)])
         cdf_minis.append(cdf_mini)
         if plot:
             for ax in axes[0:2]:
-                ax.plot(cdf_mini, y_mini, alpha=alpha, c="black")
-            axes[2].plot(cdf_mini, y_mini - cdf_mini, alpha=alpha, c="black")
+                ax.plot(cdf_mini[:, 0], y_mini,
+                        alpha=alpha, c="black")
+            axes[2].plot(cdf_mini[:, 0], y_mini - cdf_mini[:, 0],
+                         alpha=alpha, c="black")
 
-        ks = np.append(ks, np.max(np.abs(cdf - y)))
-        alpha05 = np.append(alpha05, np.mean(cdf < .05))
-        alpha01 = np.append(alpha01, np.mean(cdf < .01))
+        ks = np.append(ks, np.max(np.abs(cdf - y[:, None]), axis=0)[None, :], axis=0)
+        alpha05 = np.append(alpha05, np.mean(cdf < .05, axis=0)[None, :], axis=0)
+        alpha01 = np.append(alpha01, np.mean(cdf < .01, axis=0)[None, :], axis=0)
         for name, value in cdf_etc.items():
             params[name] = np.append(params[name], value)
 
@@ -581,16 +601,22 @@ def plot_p_value_cdfs(
         axes[1].legend(loc="upper left")
         fig.show()
 
-    pandas_sorted = __make_pandas(
-        estimates_and_params=params,
-        ks=ks,
-        alpha05=alpha05,
-        alpha01=alpha01,
-        sort_by="ks",
-    )
+    pandas_args = {
+        "estimates_and_params": params,
+        "ks": ks[:, 0],
+        "alpha05": alpha05[:, 0],
+        "alpha01":  alpha01[:, 0],
+        "sort_by": "ks",
+    }
+    if num_fns == 2:
+        pandas_args["ks_alt"] = ks[:, 1]
+        pandas_args["alpha05_alt"] = alpha05[:, 1]
+        pandas_args["alpha01_alt"] = alpha01[:, 1]
+
+    pandas_sorted = __make_pandas(**pandas_args)
 
     if store_onto_neuralcis_object:
-        cdf_minis = np.stack(cdf_minis, axis=1)
+        cdf_minis = np.stack(cdf_minis, axis=2)
         kwargs = {
             'num_cdfs': num_cdfs,
             'num_samples': num_samples,
