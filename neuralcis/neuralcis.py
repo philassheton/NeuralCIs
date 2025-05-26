@@ -2,21 +2,21 @@ import tensorflow as tf
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 import numpy as np
 
-from neuralcis import common
-from neuralcis import sampling
-from neuralcis._param_sampler import _ParamSampler
-from neuralcis._p_net import _PNet
-from neuralcis._ci_net import _CINet
-from neuralcis._neuralcis_kwargs import _NeuralCIsKWArgs
-from neuralcis._data_saver import _DataSaver
+from . import common
+from . import sampling
+from ._param_sampler import _ParamSampler
+from ._p_net import _PNet
+from ._ci_net import _CINet
+from ._neuralcis_kwargs import _NeuralCIsKWArgs
+from ._data_saver import _DataSaver
 
 # for typing
 from typing import Tuple, Union, Callable, List, Sequence, Dict, Optional
 from typing import TypeVar, Type
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Stats, Params
-from neuralcis.variables import Variable
+from .common import Samples, Stats, Params
+from .variables import Variable
 
 
 T = TypeVar("T", bound="NeuralCIs")

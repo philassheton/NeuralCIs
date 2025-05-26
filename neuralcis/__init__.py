@@ -1,2 +1,2 @@
-from neuralcis.neuralcis import NeuralCIs
-from neuralcis.variables import Location, Scale, PositiveCount, SampleSize
+from .neuralcis import NeuralCIs
+from .variables import Location, Scale, PositiveCount, SampleSize

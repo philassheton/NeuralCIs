@@ -1,14 +1,13 @@
 import tensorflow as tf
 
-from neuralcis._p_net import _PNet
-from neuralcis._simulator_net import _SimulatorNet
-import neuralcis.common as common
+from ._p_net import _PNet
+from ._simulator_net import _SimulatorNet
+from . import common
 
 # typing imports
 from typing import Callable, Tuple, List, Sequence
 from tensor_annotations.tensorflow import Tensor1, Tensor2
-from neuralcis.common import Samples, Params, Stats, NetInputs, NetOutputs
-from neuralcis.common import KnownParams
+from .common import Samples, Params, Stats, NetInputs, NetOutputs, KnownParams
 import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
 

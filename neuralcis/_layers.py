@@ -1,4 +1,4 @@
-import neuralcis.common as common
+from . import common
 
 import numpy as np
 import tensorflow as tf
@@ -7,7 +7,7 @@ import inspect
 
 # Typing
 from typing import List, Tuple, Type
-from neuralcis.common import Samples, LayerInputs, LayerOutputs, Ys, Params
+from .common import Samples, LayerInputs, LayerOutputs, Ys, Params
 from tensor_annotations.tensorflow import Tensor2
 import tensor_annotations.tensorflow as ttf
 

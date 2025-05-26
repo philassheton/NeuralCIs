@@ -1,13 +1,12 @@
-from neuralcis._simulator_net import _SimulatorNet
-from neuralcis import _utils
-from neuralcis import common
+from ._simulator_net import _SimulatorNet
+from . import _utils, common
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 
 from typing import Callable, Tuple, Sequence, Optional
-from neuralcis.common import Params, KnownParams, Ys, Zs, Samples
-from neuralcis.common import NetInputs, NetOutputs
+from .common import Params, KnownParams, Ys, Zs, Samples
+from .common import NetInputs, NetOutputs
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 tf32 = ttf.float32

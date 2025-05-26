@@ -1,16 +1,16 @@
-from neuralcis._sampling_feeler_generator import _SamplingFeelerGenerator
-from neuralcis._sampling_feeler_net import _SamplingFeelerNet
-from neuralcis._outer_feeler_generator import _OuterFeelerGenerator
-from neuralcis._param_sampling_net import _ParamSamplingNet
-from neuralcis._is_inside_net import _IsInsideNet
-from neuralcis._data_saver import _DataSaver
-from neuralcis import common
+from ._sampling_feeler_generator import _SamplingFeelerGenerator
+from ._sampling_feeler_net import _SamplingFeelerNet
+from ._outer_feeler_generator import _OuterFeelerGenerator
+from ._param_sampling_net import _ParamSamplingNet
+from ._is_inside_net import _IsInsideNet
+from ._data_saver import _DataSaver
+from . import common
 
 import tensorflow as tf
 
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2, float32 as tf32
-from neuralcis.common import Samples, Stats, Params, KnownParams, MinAndMax
+from .common import Samples, Stats, Params, KnownParams, MinAndMax
 from typing import Callable, Sequence, Union
 
 

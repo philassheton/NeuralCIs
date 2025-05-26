@@ -1,13 +1,12 @@
-from neuralcis._simulator_net import _SimulatorNet
-from neuralcis._sampling_feeler_net import _SamplingFeelerNet
-from neuralcis import _utils
-from neuralcis import common
+from ._simulator_net import _SimulatorNet
+from ._sampling_feeler_net import _SamplingFeelerNet
+from . import _utils, common
 import tensorflow as tf
 
 # Typing
 from typing import Tuple, Callable, Optional, Union
-from neuralcis.common import Samples, Params, KnownParams, Zs, Us
-from neuralcis.common import NetTargetBlob, NetInputs, NetOutputs
+from .common import Samples, Params, KnownParams, Zs, Us
+from .common import NetTargetBlob, NetInputs, NetOutputs
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 tf32 = ttf.float32

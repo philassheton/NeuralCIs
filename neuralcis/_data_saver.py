@@ -1,11 +1,11 @@
 import os
 import tensorflow as tf
 
-from neuralcis._sequential_net import _SequentialNet
+from ._sequential_net import _SequentialNet
 
-from typing import Optional, List, Sequence, Dict
-from neuralcis.common import INSTANCE_VARS
-from neuralcis.common import SEQUENTIAL, KWARGS
+from typing import Optional, Sequence, Dict
+from .common import INSTANCE_VARS
+from .common import SEQUENTIAL, KWARGS
 
 
 class _DataSaver:

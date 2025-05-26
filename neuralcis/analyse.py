@@ -20,12 +20,12 @@ import plotly
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from neuralcis import NeuralCIs, common
-from neuralcis.variables import Variable
+from . import NeuralCIs, common
+from .variables import Variable
 
 from typing import Sequence, Dict, Optional, Callable, Tuple, Union, Any
 from tensor_annotations.tensorflow import Tensor1, float32 as tf32
-from neuralcis.common import Samples, One
+from .common import Samples, One
 
 
 def __medians_for_names(

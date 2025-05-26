@@ -1,14 +1,14 @@
 import tensorflow as tf
 
-from neuralcis._simulator_net import _SimulatorNet
+from ._simulator_net import _SimulatorNet
 
 from abc import ABC, abstractmethod
 
 from typing import Tuple, Optional
 from tensor_annotations import tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1
-from neuralcis.common import NetInputBlob, NetTargetBlob
-from neuralcis.common import NetInputSimulationBlob, Indices
+from .common import NetInputBlob, NetTargetBlob, NetInputSimulationBlob
+from .common import Indices
 
 
 class _SimulatorNetCached(_SimulatorNet, ABC):

@@ -1,6 +1,6 @@
-from neuralcis._data_saver import _DataSaver
-from neuralcis._sequential_net import _SequentialNet
-from neuralcis import common, _layers, _callbacks, _adamw_schedulefree
+from ._data_saver import _DataSaver
+from ._sequential_net import _SequentialNet
+from . import common, _layers, _callbacks, _adamw_schedulefree
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
@@ -11,9 +11,9 @@ from abc import ABC, abstractmethod
 
 # typing imports
 from typing import Optional, Tuple, Sequence, List, Dict, Union
-from neuralcis.common import Samples, NetInputs, NetOutputs, NodesInLayer
-from neuralcis.common import NetInputBlob, NetOutputBlob, NetTargetBlob
-from tensor_annotations.tensorflow import Tensor1, Tensor2
+from .common import Samples, NetInputs, NetOutputs
+from .common import NetInputBlob, NetOutputBlob, NetTargetBlob
+from tensor_annotations.tensorflow import Tensor2
 import tensor_annotations.tensorflow as ttf
 tf32 = ttf.float32
 

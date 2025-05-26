@@ -3,8 +3,8 @@ import tensorflow as tf
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 
 from typing import Optional, Union
-from neuralcis.common import Samples
-from neuralcis import sampling, common
+from .common import Samples
+from . import sampling, common
 from tensor_annotations.tensorflow import Tensor0, Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
 

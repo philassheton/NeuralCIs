@@ -3,14 +3,14 @@ import pickle
 import os
 from datetime import datetime
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
-from neuralcis.variables import Variable
+from .variables import Variable
 
 # for typing
 from typing import Tuple, Union, Callable, Sequence, Dict, Optional
 from typing import Type, TypeVar
 from tensor_annotations.tensorflow import Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples
+from .common import Samples
 
 
 T = TypeVar("T", bound="NeuralCIsKWArgs")

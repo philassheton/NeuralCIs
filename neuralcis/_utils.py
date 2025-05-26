@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from neuralcis import common
+from . import common
 
 
 @tf.function

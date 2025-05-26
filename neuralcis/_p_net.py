@@ -1,14 +1,14 @@
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
-from neuralcis._param_sampler import _ParamSampler
-from neuralcis._z_net import _ZNet
-from neuralcis._data_saver import _DataSaver
+from ._param_sampler import _ParamSampler
+from ._z_net import _ZNet
+from ._data_saver import _DataSaver
 
 # typing
 from typing import Callable, Tuple, Sequence
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples, Stats, Params, KnownParams
+from .common import Samples, Stats, Params, KnownParams
 
 NetInputBlob = Tuple[
     Tensor2[tf32, Samples, Stats],

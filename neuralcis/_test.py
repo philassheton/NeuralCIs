@@ -1,4 +1,5 @@
-from neuralcis import NeuralCIs, analyse, common
+from .neuralcis import NeuralCIs
+from . import analyse
 
 import tensorflow as tf
 import matplotlib.pyplot as plt

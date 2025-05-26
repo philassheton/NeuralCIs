@@ -1,20 +1,18 @@
-from neuralcis._simulator_net_cached import _SimulatorNetCached
-from neuralcis._sampling_feeler_generator import _SamplingFeelerGenerator
-from neuralcis._outer_feeler_generator import _OuterFeelerGenerator
-from neuralcis._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
-from neuralcis import common
+from ._simulator_net_cached import _SimulatorNetCached
+from ._sampling_feeler_generator import _SamplingFeelerGenerator
+from ._outer_feeler_generator import _OuterFeelerGenerator
+from ._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
+from . import common
 
 import tensorflow as tf
 import numpy as np
 
 # typing
 from typing import Tuple, Optional, Union
-from neuralcis.common import Samples, Indices, Params, UnknownParams
-from neuralcis.common import ImportanceIngredients
+from .common import Samples, Indices, Params, UnknownParams, NetInputs
+from .common import ImportanceIngredients
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
-
-from neuralcis.common import NetInputs
 
 tf32 = ttf.float32
 

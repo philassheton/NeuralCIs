@@ -1,11 +1,10 @@
-from neuralcis._layers import layer_type_from_name
-from neuralcis import common
+from ._layers import layer_type_from_name
 
 import tensorflow as tf
 import pickle
 
 # Typing
-from typing import Sequence, Dict, Optional
+from typing import Sequence, Dict
 
 
 WEIGHTS = "weights"

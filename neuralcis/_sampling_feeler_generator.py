@@ -4,13 +4,13 @@ import numpy as np
 import gc
 from datetime import datetime
 
-from neuralcis._data_saver import _DataSaver
-from neuralcis import common
+from ._data_saver import _DataSaver
+from . import common
 
 # typing
 from typing import Callable, Tuple
-from neuralcis.common import Samples, Stats, Params, UnknownParams
-from neuralcis.common import MinAndMax, ImportanceIngredients, Chains
+from .common import Samples, Stats, Params, UnknownParams
+from .common import MinAndMax, ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
 

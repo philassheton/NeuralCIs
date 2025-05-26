@@ -4,7 +4,7 @@ import tensorflow_probability as tfp                                           #
 from typing import Tuple, Union
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from neuralcis.common import Samples
+from .common import Samples
 import tensor_annotations.tensorflow as ttf
 
 

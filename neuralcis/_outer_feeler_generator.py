@@ -6,13 +6,13 @@ import numpy as np
 from datetime import datetime
 from tqdm import tqdm
 
-from neuralcis._data_saver import _DataSaver
-from neuralcis import common
+from ._data_saver import _DataSaver
+from . import common
 
 # typing
 from typing import Callable, Tuple
-from neuralcis.common import Samples, Stats, Params, UnknownParams
-from neuralcis.common import ImportanceIngredients, Chains
+from .common import Samples, Stats, Params, UnknownParams
+from .common import ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
 
