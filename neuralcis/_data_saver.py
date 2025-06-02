@@ -4,13 +4,14 @@ import tensorflow as tf
 from ._sequential_net import _SequentialNet
 
 from typing import Optional, Sequence, Dict
-from .common import INSTANCE_VARS
-from .common import SEQUENTIAL, KWARGS
+from .common import INSTANCE_VARS, SEQUENTIAL, KWARGS
+from .common import INFERENCE, PROFILE_NESTING_ORDER
 
 
 class _DataSaver:
     # subobjects to save maps the filename suffix for the object to the object
     # OR an array of objects
+    smallest_profile_found_in = INFERENCE
     def __init__(
             self,
             subobjects_to_save: Optional[Dict] = None,
@@ -42,56 +43,68 @@ class _DataSaver:
 
         return os.path.join(foldername, filename)
 
+    def _skip_when_profile(self, profile):
+        return not self.profile_can_be_extracted_from(
+            self.smallest_profile_found_in,
+            profile,
+        )
+
     def _save_data(
             self,
             foldername: str,
             filename_start_internal: str,
+            profile: str,  # Only save weights and tensors if profile matches
     ) -> None:
 
         fullname_start = self.fullname(foldername, filename_start_internal)
         os.makedirs(foldername, exist_ok=True)
 
-        for i, net in enumerate(self.nets_with_weights_to_save):
-            net.save(self.sequential_filename(fullname_start, i))
+        if not self._skip_when_profile(profile):
+            for i, net in enumerate(self.nets_with_weights_to_save):
+                net.save(self.sequential_filename(fullname_start, i))
 
-        for suffix, obj in self.subobjects_to_save.items():
-            object_filename = self.construct_filename(filename_start_internal,
-                                                      suffix)
-            print(f'saving {object_filename}')
-            obj._save_data(foldername, object_filename)
+            if len(self.instance_tf_variables_to_save):
+                tf.raw_ops.Save(
+                    filename=self.instance_variables_filename(fullname_start),
+                    tensor_names=self.instance_tf_variables_to_save,
+                    data=[getattr(self, var) for var in
+                          self.instance_tf_variables_to_save]
+                )
 
-        if len(self.instance_tf_variables_to_save):
-            tf.raw_ops.Save(
-                filename=self.instance_variables_filename(fullname_start),
-                tensor_names=self.instance_tf_variables_to_save,
-                data=[getattr(self, var) for var in
-                      self.instance_tf_variables_to_save]
-            )
+            for suffix, obj in self.subobjects_to_save.items():
+                object_filename = self.construct_filename(
+                    filename_start_internal,
+                    suffix)
+                print(f'saving {object_filename}')
+                obj._save_data(foldername, object_filename, profile)
 
     def _load_data(
             self,
             foldername: str,
             filename_start_internal: str,
+            profile: str,
     ) -> None:
 
         fullname_start = self.fullname(foldername, filename_start_internal)
 
-        for i, net in enumerate(self.nets_with_weights_to_save):
-            net.load(self.sequential_filename(fullname_start, i))
+        if not self._skip_when_profile(profile):
+            for i, net in enumerate(self.nets_with_weights_to_save):
+                net.load(self.sequential_filename(fullname_start, i))
 
-        for suffix, obj in self.subobjects_to_save.items():
-            object_filename = self.construct_filename(filename_start_internal,
-                                                      suffix)
-            obj._load_data(foldername, object_filename)
+            for var_name in self.instance_tf_variables_to_save:
+                var = getattr(self, var_name)
+                value = tf.raw_ops.Restore(
+                    file_pattern=self.instance_variables_filename(fullname_start),
+                    tensor_name=var_name,
+                    dt=var.dtype,
+                )
+                var.assign(value)
 
-        for var_name in self.instance_tf_variables_to_save:
-            var = getattr(self, var_name)
-            value = tf.raw_ops.Restore(
-                file_pattern=self.instance_variables_filename(fullname_start),
-                tensor_name=var_name,
-                dt=var.dtype,
-            )
-            var.assign(value)
+            for suffix, obj in self.subobjects_to_save.items():
+                object_filename = self.construct_filename(
+                    filename_start_internal,
+                    suffix)
+                obj._load_data(foldername, object_filename, profile)
 
     def ensure_built(self):
         for obj in self.subobjects_to_save.values():
@@ -126,3 +139,20 @@ class _DataSaver:
             else:
                 expanded_dict[key] = value
         return expanded_dict
+
+    @staticmethod
+    def profile_can_be_extracted_from(
+            profile: str,
+            extractable_from_profile: str,
+    ) -> bool:
+
+        if profile not in PROFILE_NESTING_ORDER:
+            raise Exception(f"Your profile {profile} must be one of"
+                            f" {PROFILE_NESTING_ORDER}!!")
+
+        if extractable_from_profile not in PROFILE_NESTING_ORDER:
+            raise Exception(f"Your profile {extractable_from_profile} must be"
+                            f" one of {PROFILE_NESTING_ORDER}!!")
+
+        return (PROFILE_NESTING_ORDER.index(profile)
+                <= PROFILE_NESTING_ORDER.index(extractable_from_profile))

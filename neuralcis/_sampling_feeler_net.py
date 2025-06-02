@@ -2,6 +2,7 @@ from ._simulator_net_cached import _SimulatorNetCached
 from ._sampling_feeler_generator import _SamplingFeelerGenerator
 from ._outer_feeler_generator import _OuterFeelerGenerator
 from ._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
+from .common import FULL
 from . import common
 
 import tensorflow as tf
@@ -28,6 +29,7 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 
 class _SamplingFeelerNet(_SimulatorNetCached):
     relative_loss_increase_tol = common.REL_LOSS_INCREASE_TOL_FEELER_NET
+    smallest_profile_found_in = FULL
 
     def __init__(
             self,
@@ -35,12 +37,14 @@ class _SamplingFeelerNet(_SimulatorNetCached):
                                          _OuterFeelerGenerator],
             num_unknown_param: int,
             num_known_param: int,
+            profile: str,
             include_threshold: float,
             include_boost: float = 1.,
             **network_setup_args,
     ) -> None:
 
         super().__init__(
+            profile=profile,
             num_inputs_for_each_net=(num_unknown_param + num_known_param,
                                      num_unknown_param + num_known_param),
             num_outputs_for_each_net=(1, NUM_IMPORTANCE_INGREDIENTS - 1),

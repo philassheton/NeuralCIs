@@ -106,6 +106,7 @@ class _NeuralCIsKWArgs():
                 Dict["str", Tensor1[tf32, Samples]],
             ]],
             transform_on_params_param_names: Sequence[str],
+            profile: str,
             network_setup_args: Optional[Dict],
             optional_data_to_store: Optional[Dict],
     ) -> None:
@@ -124,6 +125,8 @@ class _NeuralCIsKWArgs():
         self.transform_on_stats_fn = _TFFn.get(transform_on_stats_fn)
         self.transform_on_params_param_names = transform_on_params_param_names
 
+        self.profile = profile
+
         self.network_setup_args = network_setup_args
         self.optional_data_to_store = optional_data_to_store
         self.variable_defs = variable_defs
@@ -139,6 +142,7 @@ class _NeuralCIsKWArgs():
             transform_on_stats_fn = self.transform_on_stats_fn,
             transform_on_params_param_names =
                                         self.transform_on_params_param_names,
+            profile=self.profile,
             network_setup_args = self.network_setup_args,
             optional_data_to_store = self.optional_data_to_store,
         ) | self.variable_defs
@@ -147,7 +151,10 @@ class _NeuralCIsKWArgs():
     def _wrap_up_kwargs(**kwargs):
         return kwargs
 
-    def save(self, foldername) -> None:
+    def save(self, foldername, profile=None) -> None:
+        if profile is None:
+            profile = self.profile
+
         # Save tf_fn separately as need to use tf saving stuff for this
         self.sampling_distribution_fn.save(
             foldername, "sampling_distribution_fn",
@@ -174,6 +181,7 @@ class _NeuralCIsKWArgs():
                       "known_param_names": self.known_param_names,
                       "transform_on_params_param_names":
                                         self.transform_on_params_param_names,
+                      "profile": profile,
                       "network_setup_args": self.network_setup_args,
                       "optional_data_to_store": self.optional_data_to_store}
         self._save_pickle(foldername, "other_args", other_args)

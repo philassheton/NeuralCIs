@@ -12,6 +12,13 @@ WEIGHTS = "weights"
 SEQUENTIAL = "seq"
 KWARGS = "kwargs"
 
+# profiles for only loading/saving necessary data
+FULL = "full"  # default for saving; loads/saves EVERYTHING including samples
+TESTING = "testing"  # saves everything you need to test the performance
+INFERENCE = "inference"  # saves only what is needed to generate p-values / CIs
+# So, a net saved with FULL profile, can be loaded as testing or inference.
+PROFILE_NESTING_ORDER = (INFERENCE, TESTING, FULL)
+
 # model construction
 NUM_HIDDEN_LAYERS = 7
 NEURONS_PER_LAYER = 50

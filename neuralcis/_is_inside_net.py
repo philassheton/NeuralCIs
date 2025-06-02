@@ -1,5 +1,6 @@
 from ._simulator_net import _SimulatorNet
 from ._param_sampling_net import _ParamSamplingNet
+from .common import TESTING
 from . import common
 
 import tensorflow as tf
@@ -21,6 +22,7 @@ NetOutputBlob = Tensor1[tf32, Samples]                 # Is inside
 
 class _IsInsideNet(_SimulatorNet):
     absolute_loss_increase_tol = common.ABS_LOSS_INCREASE_TOL_Z_NET
+    smallest_profile_found_in = TESTING
 
     def __init__(
             self,
@@ -36,12 +38,14 @@ class _IsInsideNet(_SimulatorNet):
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
+            profile: str,
             **network_setup_args,
     ) -> None:
 
         num_estimate = num_unknown_param
 
         super().__init__(
+            profile,
             num_inputs_for_each_net=(num_estimate + num_known_param,),
             num_outputs_for_each_net=(1,),
             instance_tf_variables_to_save=("estimate_mins",
@@ -50,6 +54,9 @@ class _IsInsideNet(_SimulatorNet):
                                            "known_param_maxs"),
             **network_setup_args
         )
+
+        if self._skip_when_profile(profile):
+            return
 
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_net = param_sampling_net

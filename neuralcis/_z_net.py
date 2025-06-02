@@ -48,6 +48,7 @@ class _ZNet(_SimulatorNet):
             num_known_param: int,
             known_param_indices: Sequence[int],
             num_params_remaining_after_transform: int,
+            profile: str,
             **network_setup_args,
     ) -> None:
 
@@ -64,6 +65,7 @@ class _ZNet(_SimulatorNet):
         num_estimate = num_unknown_param
 
         super().__init__(
+            profile=profile,
             num_inputs_for_each_net=(num_estimate + 1 + num_known_param,
                                      num_estimate +
                                      num_params_remaining_after_transform),

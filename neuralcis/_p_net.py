@@ -38,8 +38,13 @@ class _PNet(_DataSaver):
             known_param_indices: Sequence[int],
             num_params_remaining_after_transform: int,
             param_sampler: _ParamSampler,
+            profile: str,
             **network_setup_args,
     ) -> None:
+
+        if self._skip_when_profile(profile):
+            return
+
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
@@ -55,11 +60,12 @@ class _PNet(_DataSaver):
             num_known_param,
             known_param_indices,
             num_params_remaining_after_transform,
+            profile,
             **network_setup_args,
         )
 
         super().__init__(
-            subobjects_to_save={"znet": self.znet}
+            subobjects_to_save={"znet": self.znet},
         )
 
     def fit(self, *args, **kwargs) -> None:

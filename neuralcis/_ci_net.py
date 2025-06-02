@@ -36,13 +36,18 @@ class _CINet(_SimulatorNet):
             ],
             num_param: int,
             known_param_indices: Sequence[int],
+            profile: str,
             **network_setup_args,
     ) -> None:
 
         _SimulatorNet.__init__(self,
+                               profile,
                                num_inputs_for_each_net=[num_param + 1],
                                num_outputs_for_each_net=[2],
                                **network_setup_args)
+
+        if self._skip_when_profile(profile):
+            return
 
         self.sample_params = sample_params_fn
         self.pnet = pnet

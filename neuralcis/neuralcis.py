@@ -9,6 +9,7 @@ from ._p_net import _PNet
 from ._ci_net import _CINet
 from ._neuralcis_kwargs import _NeuralCIsKWArgs
 from ._data_saver import _DataSaver
+from .common import FULL, TESTING, INFERENCE
 
 # for typing
 from typing import Tuple, Union, Callable, List, Sequence, Dict, Optional
@@ -160,8 +161,8 @@ class NeuralCIs(_DataSaver):
                 Dict["str", Tensor1[tf32, Samples]],
             ]] = None,
             transform_on_params_param_names: Optional[Sequence[str]] = None,
-            foldername = None,
             train_initial_weights: bool = True,
+            profile: str = FULL,                                               # If you want a more minimal setup, "testing" is much lighter and "inference" even lighter still
             network_setup_args: Optional[Dict] = None,
             optional_data_to_store: Optional[Dict] = None,
             **variable_defs: Variable,
@@ -194,6 +195,7 @@ class NeuralCIs(_DataSaver):
             transform_on_params_fn,
             transform_on_stats_fn,
             transform_on_params_param_names,
+            profile,
             network_setup_args,
             optional_data_to_store,
         )
@@ -241,6 +243,7 @@ class NeuralCIs(_DataSaver):
             self.num_unknown_param,
             self.num_known_param,
             self.known_param_indices,
+            profile,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
@@ -253,6 +256,7 @@ class NeuralCIs(_DataSaver):
             self.known_param_indices,
             len(self.kwargs.transform_on_params_param_names),
             self.param_sampler,
+            profile,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
@@ -262,6 +266,7 @@ class NeuralCIs(_DataSaver):
             self.param_sampler.sample_params,
             self.num_param,
             self.known_param_indices,
+            profile,
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
@@ -272,9 +277,6 @@ class NeuralCIs(_DataSaver):
              "pnet": self.pnet,
              "cinet": self.cinet},
         )
-
-        if foldername is not None:
-            _DataSaver._load_data(self, foldername, common.CIS_FILE_START)
 
     @staticmethod
     def wrap_up_kwargs(**kwargs):
@@ -486,12 +488,29 @@ class NeuralCIs(_DataSaver):
     def load(
             cls: Type[T],
             foldername,
+            profile: Optional[str] = None,                                     # Will default to TESTING if possible, else INFERENCE.
             network_setup_args: Optional[dict] = None,
             network_setup_arg_overrides: Optional[dict] = None,
     ) -> T:
 
+        # TODO: Don't load saved data if in inference profile
         kwargs_object = _NeuralCIsKWArgs.load(foldername)
         kwargs = kwargs_object.kwargs()
+
+        saved_profile = kwargs["profile"]
+        if profile is None:
+            if cls.profile_can_be_extracted_from(TESTING, saved_profile):
+                profile = TESTING
+            else:
+                profile = INFERENCE
+        if not cls.profile_can_be_extracted_from(profile, saved_profile):
+            raise Exception(f"The net you tried to load was saved with profile"
+                            f" {saved_profile} but you are trying to load it"
+                            f" using profile {profile}.  There"
+                            f" is not enough data saved to be able to load"
+                            f" this profile.  Choose a smaller profile.")
+        kwargs["profile"] = profile
+
         if network_setup_args is not None:
             kwargs["network_setup_args"] = network_setup_args
         if network_setup_arg_overrides is not None:
@@ -501,15 +520,28 @@ class NeuralCIs(_DataSaver):
             train_initial_weights=False,
             **kwargs,
         )
-        cis._load_data(foldername, common.CIS_FILE_START)
+        cis._load_data(foldername, common.CIS_FILE_START, profile)
         return cis
 
     def save(
             self,
-            foldername: str
+            foldername: str,
+            profile: Optional[str] = None,                                     # Defaults to the most detailed possible profile
     ) -> None:
-        self.kwargs.save(foldername)
-        self._save_data(foldername, common.CIS_FILE_START)
+
+        kwargs = self.kwargs
+        net_profile = kwargs.profile
+        if profile is None:
+            profile = net_profile
+        if profile != net_profile:
+            if not self.profile_can_be_extracted_from(profile, net_profile):
+                raise Exception(f"You are trying to save with profile"
+                                f" {profile}, but your net has only has data"
+                                f" up to profile {net_profile}.  Please"
+                                f" choose a lower profile!!")
+
+        kwargs.save(foldername, profile)
+        self._save_data(foldername, common.CIS_FILE_START, profile)
 
     ###########################################################################
     #

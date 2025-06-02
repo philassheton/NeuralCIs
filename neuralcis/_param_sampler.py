@@ -4,6 +4,7 @@ from ._outer_feeler_generator import _OuterFeelerGenerator
 from ._param_sampling_net import _ParamSamplingNet
 from ._is_inside_net import _IsInsideNet
 from ._data_saver import _DataSaver
+from .common import TESTING
 from . import common
 
 import tensorflow as tf
@@ -15,6 +16,7 @@ from typing import Callable, Sequence, Union
 
 
 class _ParamSampler(_DataSaver):
+    smallest_profile_found_in = TESTING
     def __init__(
             self,
             estimates_min_and_max: Tensor2[tf32, Stats, MinAndMax],
@@ -29,6 +31,7 @@ class _ParamSampler(_DataSaver):
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
+            profile: str,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
             sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
             num_chains: int = common.FEELER_NET_NUM_CHAINS,
@@ -44,6 +47,9 @@ class _ParamSampler(_DataSaver):
             **network_setup_args,
     ) -> None:
 
+        if self._skip_when_profile(profile):
+            return
+
         self.known_param_indices = known_param_indices
         self.inner_data_generator = _SamplingFeelerGenerator(
             estimates_min_and_max,
@@ -51,6 +57,7 @@ class _ParamSampler(_DataSaver):
             preprocess_params_fn,
             num_unknown_param,
             num_known_param,
+            profile,
             sample_size,
             sd_known,
             num_chains,
@@ -63,6 +70,7 @@ class _ParamSampler(_DataSaver):
             self.inner_data_generator,
             num_unknown_param,
             num_known_param,
+            profile,
             include_threshold=common.INNER_FEELER_INCLUDE_THRESHOLD,
             **network_setup_args,
         )
@@ -72,6 +80,7 @@ class _ParamSampler(_DataSaver):
             preprocess_params_fn,
             num_unknown_param,
             num_known_param,
+            profile,
             **network_setup_args,
         )
 
@@ -82,6 +91,7 @@ class _ParamSampler(_DataSaver):
             num_unknown_param,
             num_known_param,
             known_param_indices,
+            profile,
             **network_setup_args,
         )
 
@@ -92,6 +102,7 @@ class _ParamSampler(_DataSaver):
             self.is_inside,
             num_unknown_param,
             num_known_param,
+            profile,
             sample_size,
             sd_known,
             num_chains,
@@ -104,6 +115,7 @@ class _ParamSampler(_DataSaver):
             self.outer_data_generator,
             num_unknown_param,
             num_known_param,
+            profile,
             include_threshold=common.OUTER_FEELER_INCLUDE_THRESHOLD,
             include_boost=common.OUTER_FEELER_INCLUDE_BOOST,
             **network_setup_args,
@@ -114,6 +126,7 @@ class _ParamSampler(_DataSaver):
             preprocess_params_fn,
             num_unknown_param,
             num_known_param,
+            profile,
             **network_setup_args,
         )
 
@@ -126,7 +139,7 @@ class _ParamSampler(_DataSaver):
                 "outergen": self.outer_data_generator,
                 "outerfeeler": self.outer_feeler_net,
                 "outersampler": self.outer_sampling_net,
-            }
+            },
         )
 
     @tf.function

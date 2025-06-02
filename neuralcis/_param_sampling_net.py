@@ -1,5 +1,6 @@
 from ._simulator_net import _SimulatorNet
 from ._sampling_feeler_net import _SamplingFeelerNet
+from .common import TESTING
 from . import _utils, common
 import tensorflow as tf
 
@@ -19,6 +20,7 @@ NetOutputBlob = Tuple[Tensor2[tf32, Samples, Params],  # net outputs (params)
 
 class _ParamSamplingNet(_SimulatorNet):
     absolute_loss_increase_tol = common.ABS_LOSS_INCREASE_TOL_PARAM_SAMP_NET
+    smallest_profile_found_in = TESTING
 
     def __init__(
             self,
@@ -29,14 +31,19 @@ class _ParamSamplingNet(_SimulatorNet):
             ],
             num_unknown_param: int,
             num_known_param: int,
+            profile: str,
             **network_setup_args,
     ) -> None:
 
         super().__init__(
+            profile,
             num_inputs_for_each_net=(num_unknown_param + num_known_param,),
             num_outputs_for_each_net=(num_unknown_param,),
             **network_setup_args,
         )
+
+        if self._skip_when_profile(profile):
+            return
 
         self.feeler_net = feeler_net
         self.num_unknown_param = num_unknown_param

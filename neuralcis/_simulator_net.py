@@ -80,6 +80,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
     def __init__(
             self,
+            profile: str,
             num_inputs_for_each_net: Sequence[int],
             num_outputs_for_each_net: Sequence[int] = (1,),
             num_hidden_layers: int = common.NUM_HIDDEN_LAYERS,
@@ -103,6 +104,9 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             layer_kwargs = [{} for _ in num_outputs_for_each_net]
 
         tf.keras.Model.__init__(self, *model_args, **model_kwargs)
+
+        if self._skip_when_profile(profile):
+            return
 
         self.batch_size = batch_size
         self.nets, self.num_nets = self.create_nets(

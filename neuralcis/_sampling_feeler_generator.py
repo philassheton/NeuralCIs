@@ -5,6 +5,7 @@ import gc
 from datetime import datetime
 
 from ._data_saver import _DataSaver
+from .common import FULL
 from . import common
 
 # typing
@@ -72,6 +73,7 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 ###############################################################################
 
 class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
+    smallest_profile_found_in = FULL
     def __init__(
             self,
             estimates_min_and_max: Tensor2[tf32, Stats, MinAndMax],
@@ -85,6 +87,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             ],
             num_unknown_param: int,
             num_known_param: int,
+            profile: str,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
             sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
             num_chains: int = common.FEELER_NET_NUM_CHAINS,
@@ -95,6 +98,14 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     ):
 
         tf.keras.Model.__init__(self)
+        _DataSaver.__init__(self,
+                            instance_tf_variables_to_save=("sampled_params",
+                                                           "sampled_targets",
+                                                           "sampled_chols",
+                                                           "iteration_num"))
+
+        if self._skip_when_profile(profile):
+            return
 
         self.sampling_distribution_fn = sampling_distribution_fn
         self.preprocess_params_fn = preprocess_params_fn
@@ -171,12 +182,6 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         self.sampled_chols = samples_variable((num_estimate, num_estimate))
 
         self.iteration_num = tf.Variable(0, dtype=tf.int64)                    # tf.int32 cannot be placed on GPU
-
-        _DataSaver.__init__(self,
-                            instance_tf_variables_to_save=("sampled_params",
-                                                           "sampled_targets",
-                                                           "sampled_chols",
-                                                           "iteration_num"))
 
     def fit(self, *args, **kwargs):
 
@@ -301,20 +306,28 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                                       params_pp, importance_ingredients,
                                       cov_chol)
 
-    def _load_data(self, *args, **kwargs) -> None:
-        n = (self.num_chains * self.chain_length +
-             self.num_peripheral_batches * self.peripheral_batch_size)
-        p = self.num_param
-        e = self.num_estimate
-        i = NUM_IMPORTANCE_INGREDIENTS
-        print("Constructing fake variables to load into")
-        self.sampled_params = tf.Variable(tf.fill((n, p), np.nan),
-                                          dtype=tf.float32)
-        self.sampled_chols = tf.Variable(tf.fill((n, e, e), np.nan),
-                                         dtype=tf.float32)
-        self.sampled_targets = tf.Variable(tf.fill((n, i), np.nan),
-                                           dtype=tf.float32)
-        super()._load_data(*args, **kwargs)
+    def _load_data(
+            self,
+            foldername: str,
+            filename_start_internal: str,
+            profile: str,
+    ) -> None:
+
+        if not self._skip_when_profile(profile):
+            n = (self.num_chains * self.chain_length +
+                 self.num_peripheral_batches * self.peripheral_batch_size)
+            p = self.num_param
+            e = self.num_estimate
+            i = NUM_IMPORTANCE_INGREDIENTS
+            print("Constructing fake variables to load into")
+            self.sampled_params = tf.Variable(tf.fill((n, p), np.nan),
+                                              dtype=tf.float32)
+            self.sampled_chols = tf.Variable(tf.fill((n, e, e), np.nan),
+                                             dtype=tf.float32)
+            self.sampled_targets = tf.Variable(tf.fill((n, i), np.nan),
+                                               dtype=tf.float32)
+
+        super()._load_data(foldername, filename_start_internal, profile)
 
     @tf.function
     def assign_iteration_results(
