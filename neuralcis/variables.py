@@ -98,6 +98,12 @@ class Variable(ABC):
             method = getattr(self, method_name)
             setattr(self, method_name, tf.function(method))
 
+    # When saving, we need to put the old Python methods back in place!!
+    def deapply_tf_functions(self):
+        for method_name in self.tf_function_methods:
+            if method_name in self.__dict__:
+                delattr(self, method_name)
+
 
 class TransformUniformVariable(Variable):
     uniform_min: Tensor0

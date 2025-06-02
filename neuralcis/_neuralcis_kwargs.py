@@ -163,7 +163,11 @@ class _NeuralCIsKWArgs():
         )
 
         # Pickle variable defs separately: need special treatment on loading
+        for variable_def in self.variable_defs.values():
+            variable_def.deapply_tf_functions()
         self._save_pickle(foldername, "variable_defs", self.variable_defs)
+        for variable_def in self.variable_defs.values():
+            variable_def.reapply_tf_functions()
 
         other_args = {"unknown_param_names": self.unknown_param_names,
                       "stat_names": self.stat_names,
