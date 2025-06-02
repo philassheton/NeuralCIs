@@ -93,6 +93,12 @@ class _DataSaver:
             )
             var.assign(value)
 
+    def ensure_built(self):
+        for obj in self.subobjects_to_save.values():
+            obj.ensure_built()
+        for net in self.nets_with_weights_to_save:
+            net.ensure_built()
+
     @staticmethod
     def construct_filename(filename: str, suffix: str) -> str:
         return "%s %s" % (filename, suffix)
