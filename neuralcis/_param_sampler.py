@@ -12,7 +12,7 @@ import tensorflow as tf
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2, float32 as tf32
 from .common import Samples, Stats, Params, KnownParams, MinAndMax
-from typing import Callable, Sequence, Union
+from typing import Optional, Callable, Sequence, Union
 
 
 class _ParamSampler(_DataSaver):
@@ -27,6 +27,11 @@ class _ParamSampler(_DataSaver):
             preprocess_params_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Params]
+            ],
+            params_is_valid_fn: Callable[
+                [Tensor2[tf32, Samples, Params],
+                 Optional[bool]],
+                Tensor2[ttf.bool, Samples, Params]
             ],
             num_unknown_param: int,
             num_known_param: int,
@@ -55,6 +60,7 @@ class _ParamSampler(_DataSaver):
             estimates_min_and_max,
             sampling_distribution_fn,
             preprocess_params_fn,
+            params_is_valid_fn,
             num_unknown_param,
             num_known_param,
             profile,
@@ -100,6 +106,7 @@ class _ParamSampler(_DataSaver):
             sampling_distribution_fn,
             preprocess_params_fn,
             self.is_inside,
+            params_is_valid_fn,
             num_unknown_param,
             num_known_param,
             profile,

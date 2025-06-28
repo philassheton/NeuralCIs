@@ -155,12 +155,22 @@ class _ParamSamplingNet(_SimulatorNet):
             known_min_vals: Union[float, Tensor2[tf32, Samples, KnownParams]] =
                                                              common.PARAMS_MIN,
             known_max_vals: Union[float, Tensor2[tf32, Samples, KnownParams]] =
-                                                                common.PARAMS_MAX,
+                                                             common.PARAMS_MAX,
     ) -> Tensor2[tf32, Samples, Params]:
 
         zs_us = self.simulate_zs_and_us(n, preprocess,
                                         known_min_vals,
                                         known_max_vals)
         params = self.call_tf(zs_us)
+
+        # TODO: A bit ugly, but we will have for now to preprocess twice.
+        #       First, we preprocess the known params so that we get the
+        #       other params coming out consistent with the preprocessed known
+        #       params.  Then we use that to generate those other params and
+        #       then need to preprocess to generate those.  Worth thinking
+        #       if there is a cleaner way.  Preprocessing the known params
+        #       twice feels a bit shaky.
+        if preprocess:
+            params = self.preprocess_params_fn(params)
 
         return params

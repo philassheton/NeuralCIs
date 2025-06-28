@@ -90,18 +90,23 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         non_nan_indices = tf.where(~tf.math.is_nan(target_blob[:, 0]))[:, 0]
         print(f"{len(non_nan_indices)} / {target_blob.shape[0]} were not NaN!")
 
+        # We will remove any cases where known params are outside of range,
+        #   since they are anyway controlled to be within range during the
+        #   main simulation.  But we need to keep other params that are out of
+        #   range, so that we can learn how to NOT generate those in the main
+        #   simulation.
         known = self.num_known_param
-        knowns_inside_indices = tf.where(tf.reduce_all(
-            (sim_blob[0][:, -known:] >= self.min_params_valid[None, -known:]) &
-            (sim_blob[0][:, -known:] <= self.max_params_valid[None, -known:]),
-            axis=1
-        ))[:, 0]
-        print(f"{len(knowns_inside_indices)} / {sim_blob[0].shape[0]}"
+        knowns_are_valid_each = self.feeler_data_generator.params_is_valid_fn(
+            sim_blob[0][:, -known:], known_params_only=True,
+        )
+        knowns_are_valid_all = tf.reduce_all(knowns_are_valid_each, axis=1)
+        knowns_valid_indices = tf.where(knowns_are_valid_all)[:, 0]
+        print(f"{len(knowns_valid_indices)} / {sim_blob[0].shape[0]}"
               f" were inside known params range!")
 
         indices = tf.sparse.to_dense(
             tf.sets.intersection(non_nan_indices[None, :],
-                                 knowns_inside_indices[None, :])
+                                 knowns_valid_indices[None, :])
         )[0, :]
 
         return sim_blob, target_blob, indices
@@ -185,9 +190,9 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         importance_log = (include + importance_ingredients[:, vol])            # type: ignore
 
         # Add a punitive amount for being outside the region sampled from
-        param_too_low_by = tf.maximum(self.min_params_valid[None, :] - params,
+        param_too_low_by = tf.maximum(self.min_params_supported[None, :] - params,
                                       0.)
-        param_too_high_by = tf.maximum(params - self.max_params_valid[None, :],
+        param_too_high_by = tf.maximum(params - self.max_params_supported[None, :],
                                        0.)
         param_out_of_bound_by = tf.maximum(param_too_low_by, param_too_high_by)
         greatest_out_of_bound = tf.reduce_max(param_out_of_bound_by, axis=1)

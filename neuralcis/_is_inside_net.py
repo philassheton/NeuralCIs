@@ -123,8 +123,7 @@ class _IsInsideNet(_SimulatorNet):
             NetTargetBlob,
     ]:
 
-        params = self.sample_params(self.batch_size_inside,
-                                    preprocess=True)
+        params = self.sample_params(self.batch_size_inside, preprocess=True)
         estimates_inside = self.sampling_distribution_fn(params)
         known_params_inside = tf.gather(params,
                                         self.known_param_indices,

@@ -110,7 +110,7 @@ def plot_generator_samples(
 
     if x_name is None:
         assert y_name is None and z_name is None
-        assert cis.num_param >= 3
+        assert cis.num_param() >= 3
         x_name, y_name, z_name = cis.param_names_in_net_order[0:3]
 
     if x_lims is not None:
@@ -133,7 +133,7 @@ def plot_generator_samples(
                 param_limits[n] = d.from_std_uniform((-float("inf"),
                                                        float("inf")))
         limits_human = [tf.constant(param_limits[n]) for n in names]
-        limits_net = cis._params_human_net_order_to_net(*limits_human)
+        limits_net = cis._params_human_to_net(*limits_human)
         above_bottom = params >= limits_net[0:1, :]
         below_top = params < limits_net[1:2, :]
         in_range = above_bottom & below_top
@@ -153,7 +153,7 @@ def plot_generator_samples(
     is_inside_outer_zone = tf.gather(valid, indices)
 
     to_plot_net = tf.gather(params, indices, axis=0)
-    to_plot = cis._params_net_to_human_in_net_order(to_plot_net)
+    to_plot = cis._params_net_to_human(to_plot_net)
     to_plot = {n: p for n, p in zip(names, to_plot)}
     targets = tf.gather(generator.sampled_targets, indices, axis=0)
 

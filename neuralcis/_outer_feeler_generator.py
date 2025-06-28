@@ -11,7 +11,7 @@ from .common import FULL
 from . import common
 
 # typing
-from typing import Callable, Tuple
+from typing import Optional, Callable, Tuple
 from .common import Samples, Stats, Params, UnknownParams
 from .common import ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
@@ -95,6 +95,11 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
                  Tensor2[tf32, Samples, Params]],
                 Tensor1[ttf.bool, Samples],
             ],
+            params_is_valid_fn: Callable[
+                [Tensor2[tf32, Samples, Params],
+                 Optional[bool]],
+                Tensor2[ttf.bool, Samples, Params]
+            ],
             num_unknown_param: int,
             num_known_param: int,
             profile: str,
@@ -117,6 +122,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.preprocess_params_fn = preprocess_params_fn
         self.inside_inner_fn = inside_inner_fn
+        self.params_is_valid_fn = params_is_valid_fn
 
         # TODO: Eventually decouple num_unknown_param from num_estimate
         self.num_estimate = num_unknown_param
@@ -505,19 +511,21 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
         eps = common.SMALLEST_LOGABLE_NUMBER
 
-        known_params = params[:, self.num_unknown_param:]
-        known_params_valid = tf.math.reduce_all(
-            (known_params >= common.PARAMS_MIN)
-            &
-            (known_params <= common.PARAMS_MAX),
-            axis=1
         )
-        known_params_valid = tf.cast(known_params_valid, tf.float32)
         importance_if_overlaps = tf.constant(1.) / chol_det
+        # For those params outside of valid ranges, we keep the samples, so we
+        #   can learn not to generate them, and zero out their importance and
+        #   overlaps values in case those are NaN values.
+        params_valid_each = self.params_is_valid_fn(params)
+        params_valid_all = tf.math.reduce_all(params_valid_each, axis=1)
+        overlaps = tf.where(params_valid_all, hits_inner, 0.0)
+        importance_if_overlaps = tf.where(params_valid_all,
+                                          importance_if_overlaps,
+                                          0.0)
 
         importance_ingredients_unlog = tf.stack([
             importance_if_overlaps,
-            hits_inner * known_params_valid,
+            overlaps,
         ], axis=1)
 
         return tf.math.log(importance_ingredients_unlog + eps)                 # type: ignore
