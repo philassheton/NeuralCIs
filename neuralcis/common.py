@@ -55,9 +55,10 @@ LEARNING_WARMUP_STEPS_SCHEDULE_FREE = 1000
 
 # training loss increase tolerances per net type
 # TODO: Remove this and make it automated based on movement of losses
-REL_LOSS_INCREASE_TOL_FEELER_NET = 1.1
-ABS_LOSS_INCREASE_TOL_PARAM_SAMP_NET = 3
-ABS_LOSS_INCREASE_TOL_Z_NET = .3
+#       -- or at least find principled values!!
+REL_LOSS_INCREASE_TOL_FEELER_NET = 10.
+ABS_LOSS_INCREASE_TOL_PARAM_SAMP_NET = 8
+ABS_LOSS_INCREASE_TOL_Z_NET = 2.
 REL_LOSS_INCREASE_TOL_CI_NET = 1.3
 
 # computation of ideal loss
@@ -86,7 +87,7 @@ PARAMS_MIN = -1.
 PARAMS_MAX = 1.
 
 # TODO: All of these to be chosen in a more principled way.
-IS_INSIDE_NET_THRESHOLD = 0.1
+IS_INSIDE_NET_THRESHOLD = 0.01
 INNER_FEELER_INCLUDE_THRESHOLD = -50.
 OUTER_FEELER_INCLUDE_THRESHOLD = -75.
 OUTER_FEELER_INCLUDE_BOOST = 3.
