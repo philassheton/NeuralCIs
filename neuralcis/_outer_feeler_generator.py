@@ -314,12 +314,14 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             p = self.num_param
             e = self.num_estimate
             i = NUM_IMPORTANCE_INGREDIENTS
-            self.sampled_params = tf.Variable(tf.fill((n, p), np.nan),
-                                              dtype=tf.float32)
-            self.sampled_chols = tf.Variable(tf.fill((n, e, e), np.nan),
-                                             dtype=tf.float32)
-            self.sampled_targets = tf.Variable(tf.fill((n, i), np.nan),
-                                               dtype=tf.float32)
+            print("Constructing fake CPU variables to load into")
+            with tf.device("/CPU:0"):
+                self.sampled_params = tf.Variable(tf.fill((n, p), np.nan),
+                                                  dtype=tf.float32)
+                self.sampled_chols = tf.Variable(tf.fill((n, e, e), np.nan),
+                                                 dtype=tf.float32)
+                self.sampled_targets = tf.Variable(tf.fill((n, i), np.nan),
+                                                   dtype=tf.float32)
 
         super()._load_data(foldername, filename_start_internal, profile)
 
