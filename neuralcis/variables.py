@@ -308,5 +308,19 @@ class SampleSize(PositiveCount):
         return tf.math.exp(x)                                                  # type: ignore
 
 
+class Correlation(Uniform):
+    param_hard_min_human = -0.99
+    param_hard_max_human = 0.99
+    def __init__(self, min=-.99, max=.99):
+        super().__init__(min, max)
+
+
+class Proportion(Uniform):
+    param_hard_min_human = 0.01
+    param_hard_max_human = 0.99
+    def __init__(self, min=0., max=1.):
+        super().__init__(min, max)
+
+
 Scale = LogUniform
 Location = Uniform
