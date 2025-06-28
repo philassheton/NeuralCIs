@@ -744,7 +744,9 @@ def cis_surface(
     :param y_name:  A str, name of the variable to be plotted on y-axis.
     :param z_name:  A str, default value "p", name of variable to be on
         z-axis.  This can currently be any of "p" or "z0", "z1", ..., or
-        "feeler", "feeler_log_vol", or "feeler_p_intersect".
+        "inner_log_vol", "inner_include", "inner_importance",
+        "outer_log_vol", "outer_include", "outer_importance",
+        "inside_prob", "hits_inside".
     :param x_is_param:  A bool, default False.  Set to True if the x_name
         should be interpreted as the name of a param, rather than an estimate.
     :param y_is_param:  A bool, default False.  See x_is_param.
@@ -1094,6 +1096,8 @@ def plot_stored_model_cdf_summaries(
         earliest_date_time: str = '1980-01-01',
         latest_date_time: str = '2080-12-31 23:59:59',
         log_y_scale: bool = False,
+        extra_measures: Sequence[str] = (),
+        bins: int = 100,
 ) -> None:
 
     # TODO: First cut.  Still needs:
@@ -1116,21 +1120,30 @@ def plot_stored_model_cdf_summaries(
     results_dfs = [cdf['results_df'] for cdf in included_cdfs]
     results_df = pd.concat(results_dfs, axis=0)
 
-    fig, ax = plt.subplots(3, 1)
-    ax[0].hist(results_df.alpha05, color='black', bins=30,
-               alpha=0.5, label='NeuralCIs', density=True)
-    ax[0].hist(results_df.alpha05_alt, color='red', bins=30,
-               alpha=0.5, label=alt_name, density=True)
+    num_plots = 3 + len(extra_measures)
 
-    ax[1].hist(results_df.alpha01, color='black', bins=30,
+    fig, ax = plt.subplots(num_plots, 1)
+    ax[0].hist(results_df.alpha05, color='black', bins=bins,
                alpha=0.5, label='NeuralCIs', density=True)
-    ax[1].hist(results_df.alpha01_alt, color='red', bins=30,
-               alpha=0.5, label=alt_name, density=True)
 
-    ax[2].hist(results_df.ks, color='black', bins=30,
+    if 'alpha05_alt' in results_df.columns:
+        ax[0].hist(results_df.alpha05_alt, color='red', bins=bins,
+                   alpha=0.5, label=alt_name, density=True)
+        ax[0].legend()
+
+    ax[1].hist(results_df.alpha01, color='black', bins=bins,
                alpha=0.5, label='NeuralCIs', density=True)
-    ax[2].hist(results_df.ks_alt, color='red', bins=30,
-               alpha=0.5, label=alt_name, density=True)
+    if 'alpha01_alt' in results_df.columns:
+        ax[1].hist(results_df.alpha01_alt, color='red', bins=bins,
+                   alpha=0.5, label=alt_name, density=True)
+        ax[1].legend()
+
+    ax[2].hist(results_df.ks, color='black', bins=bins,
+               alpha=0.5, label='NeuralCIs', density=True)
+    if 'ks_alt' in results_df.columns:
+        ax[2].hist(results_df.ks_alt, color='red', bins=bins,
+                   alpha=0.5, label=alt_name, density=True)
+        ax[2].legend()
 
     ax[0].set_xlabel('False Positives')
     ax[1].set_xlabel('False Positives')
@@ -1145,7 +1158,39 @@ def plot_stored_model_cdf_summaries(
         ax[1].set_yscale('log')
         ax[2].set_yscale('log')
 
-    ax[0].legend()
-    ax[1].legend()
-    ax[2].legend()
+    for i, extra_measure in enumerate(extra_measures):
+        if extra_measure == 'KL' or extra_measure == 'KL_compare':
+            KLs = []
+            for cdf_info in included_cdfs:
+                cdf = cdf_info['cdfs_compressed_to_num_plot']
+                num_bins, num_methods, num_cdfs = cdf.shape
+                cdf_shifted_back_1 = tf.concat([
+                    tf.zeros((1, num_methods, num_cdfs)),
+                    cdf[:-1, :, :],
+                ], axis=0)
+                deltas = cdf - cdf_shifted_back_1
+                KLs.append(tf.reduce_sum(
+                    deltas * tf.math.log(num_bins * deltas),
+                    axis=0
+                ))
+
+        if extra_measure == 'KL_compare':
+            KLs = tf.concat(KLs, axis=1)
+            ax[3+i].hist(KLs[0, :] / KLs[1, :], bins=bins)
+            ax[3+i].set_xscale('log')
+
+        elif extra_measure == 'KL':
+            KLs_base = tf.concat([KL[0, :] for KL in KLs], axis=1)
+            ax[3+i].hist(KLs_base.numpy(), color='black', bins=bins,
+                         alpha=0.5, label='NeuralCIs', density=True)
+            KLs_alt = [KL[1, :] for KL in KLs if KL.shape[0] > 1]
+            if len(KLs_alt):
+                KLs_alt = tf.concat(KLs_alt, axis=0)
+                ax[3+i].hist(KLs_alt.numpy(), color='red', bins=bins,
+                             alpha=0.5, label=alt_name, density=True)
+                ax[3+i].legend()
+
+        else:
+            raise Exception(f'Extra measure {extra_measure} not recognised!')
+
     fig.show()
