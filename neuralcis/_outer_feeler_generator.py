@@ -188,19 +188,19 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
               f" {self.chain_length} parameter samples")
         self.compute_chains()
 
-        mins_valid, maxs_valid = self.mins_and_maxs_valid()
+        min_supported, max_supported = self.min_max_supported()
 
         print(f"{datetime.now()} -- Generating {self.num_peripheral_batches}"
               f" batches of {self.peripheral_batch_size} peripheral samples")
         (peripheral_params, peripheral_chols), peripheral_targets = \
-            self.generate_peripheral_samples(mins_valid, maxs_valid)
+            self.generate_peripheral_samples(min_supported, max_supported)
 
         # Compute for each sample a region around the sample that can be
         # substituted for that sample in order to smooth the surface
         self.sampled_chols, peripheral_chols = self.get_smoothing_regions(
             self.sampled_targets, self.sampled_chols,
             peripheral_targets, peripheral_chols,
-            mins_valid, maxs_valid,
+            min_supported, max_supported,
         )
 
         print(f"{datetime.now()} -- Concatenating those")
@@ -213,15 +213,19 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
         print(f"{datetime.now()} -- Param samples generated!")
 
-    def mins_and_maxs_valid(
+    def min_max_supported(
             self
     ) -> Tuple[Tensor1[tf32, Params],
                Tensor1[tf32, Params]]:
 
-        valid_mask = self.is_inside_support_region(self.sampled_targets)
-        params_sampled_valid = tf.boolean_mask(self.sampled_params, valid_mask)
-        mins_sampled = tf.reduce_min(params_sampled_valid, axis=0)
-        maxs_sampled = tf.reduce_max(params_sampled_valid, axis=0)
+        # TODO: May be faster with tf.boolean_mask rather than gather(where())?
+        supported_rows = tf.where(
+            self.is_inside_support_region(self.sampled_targets)
+        )[:, 0]
+        params_sampled_supported = tf.gather(self.sampled_params,
+                                             supported_rows, axis=0)
+        mins_sampled = tf.reduce_min(params_sampled_supported, axis=0)
+        maxs_sampled = tf.reduce_max(params_sampled_supported, axis=0)
 
         return mins_sampled, maxs_sampled
 
@@ -339,8 +343,8 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
     def generate_peripheral_samples(
             self,
-            mins_valid,
-            maxs_valid,
+            min_supported,
+            max_supported,
     ) -> Tuple[NetInputSimulationBlob, NetTargetBlob]:
 
         b = self.num_peripheral_batches
@@ -354,8 +358,10 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         targets = tf.TensorArray(tf.float32, b, element_shape=(ni, imp))
 
         for i in tqdm(range(self.num_peripheral_batches)):
-            (pi, ci), ti = self.generate_peripheral_samples_batch(mins_valid,
-                                                                  maxs_valid)
+            (pi, ci), ti = self.generate_peripheral_samples_batch(
+                min_supported,
+                max_supported,
+            )
             params = params.write(i, pi)
             chols = chols.write(i, ci)
             targets = targets.write(i, ti)
@@ -623,7 +629,8 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
     ) -> Tensor1[ttf.bool, Samples]:
 
-        return targets[:, 1] >= 0.                                             # type: ignore
+        is_inside_index = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
+        return targets[:, is_inside_index] >= 0.  # type: ignore
 
     @tf.function
     def get_chol_det_from_targets(

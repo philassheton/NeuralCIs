@@ -48,8 +48,8 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             num_inputs_for_each_net=(num_unknown_param + num_known_param,
                                      num_unknown_param + num_known_param),
             num_outputs_for_each_net=(1, NUM_IMPORTANCE_INGREDIENTS - 1),
-            instance_tf_variables_to_save=('min_params_valid',
-                                           'max_params_valid'),
+            instance_tf_variables_to_save=('min_params_supported',
+                                           'max_params_supported'),
             **network_setup_args
         )
 
@@ -59,8 +59,8 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         self.feeler_data_generator = feeler_data_generator
 
-        self.min_params_valid = tf.Variable(tf.fill((self.num_param,), np.nan))
-        self.max_params_valid = tf.Variable(tf.fill((self.num_param,), np.nan))
+        self.min_params_supported = tf.Variable(tf.fill((self.num_param,), np.nan))
+        self.max_params_supported = tf.Variable(tf.fill((self.num_param,), np.nan))
         self.include_threshold = include_threshold
         self.include_boost = include_boost
 
@@ -69,9 +69,9 @@ class _SamplingFeelerNet(_SimulatorNetCached):
     ) -> Tuple[Tuple[NetInputSimulationBlob, NetTargetBlob],
                Tensor1[ttf.int64, Indices]]:
 
-        mins, maxs = self.feeler_data_generator.mins_and_maxs_valid()
-        self.min_params_valid.assign(mins)
-        self.max_params_valid.assign(maxs)
+        mins, maxs = self.feeler_data_generator.min_max_supported()
+        self.min_params_supported.assign(mins)
+        self.max_params_supported.assign(maxs)
 
         sim_blob, target_blob, indices = self.get_data_from_generator()
 
