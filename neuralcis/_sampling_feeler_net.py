@@ -204,6 +204,10 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         # TODO: This could be made much cleaner.  (Only exists to increase the
         #       gap between bottom and top when the threshold is very low)
         log_eps = tf.math.log(common.SMALLEST_LOGABLE_NUMBER) * self.include_boost
-        out_of_bounds_val = log_eps - greatest_out_of_bound
+
+        # TODO: Have multiplied by 100 as a temporary hack.  Need to calculate
+        #       the right shape for the boundaries to guarantee offset of
+        #       the increased log abs Jacobian determinant by overspilling.
+        out_of_bounds_val = log_eps - greatest_out_of_bound * 100.
 
         return not_oob*importance_log + oob*out_of_bounds_val
