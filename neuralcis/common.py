@@ -69,8 +69,8 @@ GAP_BETWEEN_SAMPLES_FOR_PDF_ESTIMATION = 20
 FEELER_GENERATOR_BETA_DISTRIBUTION_BETA_AND_ALPHA = 1.                         # We want our beta distribution to be symmetric, so use the same value for alpha and beta.  A value below 1 will emphasise boundary points
 FEELER_NET_MARKOV_CHAIN_LENGTH = 20000
 FEELER_NET_NUM_CHAINS = 250
-FEELER_NET_PERIPHERAL_BATCH_SIZE = 50000                                       # Set as high as your GPU can handle
-FEELER_NET_PERIPHERAL_BATCHES = 20
+FEELER_NET_PERIPHERAL_BATCH_SIZE = 1250                                        # Set as high as your GPU can handle
+FEELER_NET_PERIPHERAL_BATCHES = 800
 OUTER_FEELER_PERIPHERAL_BATCH_SIZE = 1250
 OUTER_FEELER_PERIPHERAL_BATCHES = 800
 PARAM_MARKOV_CHAIN_STEP_SIZE = 1.
@@ -100,7 +100,7 @@ MIN_ALLOWED_JACOBDET_IN_COORDINET = -50.
 SMALLEST_LOGABLE_NUMBER = 1e-37
 NEGLIGIBLE_LOG = -5.
 SOFT_FLOOR_CEILING = 1e-10
-MAX_SAMPLES_AT_A_TIME = 500000
+MAX_SAMPLES_AT_A_TIME = 50000
 
 
 # axis labels for TensorFlow typing
