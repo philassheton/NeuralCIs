@@ -118,6 +118,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         self.num_estimate = estimates_min_and_max.shape[0]
         self.estimates_min = estimates_min_and_max[:, 0]
         self.estimates_max = estimates_min_and_max[:, 1]
+        self.stats_widths = self.estimates_max - self.estimates_min
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
         self.num_param = num_unknown_param + num_known_param
@@ -517,8 +518,12 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         #       by computing both together.
         overlaps = self.overlaps_estimates_box(centroid, cov_chol)
 
+        # TODO: Should we have twice the cov_chol to capture being 2SD?
+        collision_prob_is_prop_to = tf.reduce_prod(
+            tf.linalg.diag_part(cov_chol) + self.stats_widths,
+            axis=1,
         )
-        importance_if_overlaps = tf.constant(1.) / chol_det
+        importance_if_overlaps = tf.constant(1.) / collision_prob_is_prop_to
 
         # For those params outside of valid ranges, we keep the samples, so we
         #   can learn not to generate them, and zero out their importance and

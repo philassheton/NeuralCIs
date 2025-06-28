@@ -102,6 +102,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             ],
             num_unknown_param: int,
             num_known_param: int,
+            stats_widths: Tensor1[tf32, Stats],
             profile: str,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
             sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
@@ -136,6 +137,8 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         self.chain_length = chain_length
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
+
+        self.stats_widths = stats_widths
 
         # https://eurekastatistics.com/beta-distribution-pdf-grapher/
         self.beta = tfp.distributions.Beta(concentration1=1.,
@@ -284,7 +287,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         params_pp, mean, cov_chol, inv_chol, chol_det, hits_inner = \
             self.sample_statistics(params)
         importance_ingredients = self.importance_ingredients(params_pp,
-                                                             chol_det,
+                                                             cov_chol,
                                                              hits_inner)
         importance = self.get_importance(importance_ingredients)
 
@@ -430,7 +433,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         )
         new_importance_ingredients = self.importance_ingredients(
             new_params_pp,
-            new_chol_det,
+            new_cov_chol,
             new_hits_inner
         )
         new_importance = self.get_importance(new_importance_ingredients)
@@ -497,7 +500,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         params_preproc, mean, cov_chol, inv_chol, chol_det, hits_inner = \
             self.sample_statistics(params)
         importance_ingredients = self.importance_ingredients(params_preproc,
-                                                             chol_det,
+                                                             cov_chol,
                                                              hits_inner)
         return params_preproc, importance_ingredients, cov_chol
 
@@ -505,14 +508,23 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     def importance_ingredients(
             self,
             params: Tensor2[tf32, Chains, Params],
-            chol_det: Tensor1[tf32, Chains],
+            cov_chol: Tensor1[tf32, Chains],
             hits_inner: Tensor1[tf32, Chains],
     ) -> Tensor2[tf32, Chains, ImportanceIngredients]:
 
         eps = common.SMALLEST_LOGABLE_NUMBER
 
+        # TODO: This currently uses the same collision prob as for the inner
+        #       feeler generator.  But should we make this use the larger area
+        #       rather than the estimates box area?  Needs thought.  If so,
+        #       could potentially get away with a simple Cholesky factor of
+        #       the "inside" training data.
+        collision_prob_is_prop_to = tf.reduce_prod(
+            tf.linalg.diag_part(cov_chol) + self.stats_widths,
+            axis=1,
         )
-        importance_if_overlaps = tf.constant(1.) / chol_det
+        importance_if_overlaps = tf.constant(1.) / collision_prob_is_prop_to
+
         # For those params outside of valid ranges, we keep the samples, so we
         #   can learn not to generate them, and zero out their importance and
         #   overlaps values in case those are NaN values.

@@ -109,6 +109,7 @@ class _ParamSampler(_DataSaver):
             params_is_valid_fn,
             num_unknown_param,
             num_known_param,
+            self.inner_data_generator.stats_widths,
             profile,
             sample_size,
             sd_known,
