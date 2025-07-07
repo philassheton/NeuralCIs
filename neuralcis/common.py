@@ -107,6 +107,7 @@ MAX_SAMPLES_AT_A_TIME = 50000
 # axis labels for TensorFlow typing
 # each of these presents what sort of data populates a certain axis in a
 #  Tensor.
+Batch = typing.NewType("Batch", axes.Axis)
 Samples = typing.NewType("Samples", axes.Axis)
 Params = typing.NewType("Params", axes.Axis)
 UnknownParams = typing.NewType("UnknownParams", axes.Axis)
