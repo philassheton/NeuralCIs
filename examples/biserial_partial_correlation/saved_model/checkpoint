@@ -1,0 +1,2 @@
+model_checkpoint_path: "cis cinet seq 0 weights"
+all_model_checkpoint_paths: "cis cinet seq 0 weights"
