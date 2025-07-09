@@ -21,6 +21,7 @@ from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
 
 # No need for N_MIN as they are sampled from the network
 DO_L_BFGS = True
+PARAMS_NUM_TO_CONTINUE_FROM = 0
 NUM_PARAM_SAMPLES = 1_000
 NUM_SIMULATIONS_PER_PARAM = 10_000_000
 BATCH_SIZE = 1_000
@@ -155,6 +156,7 @@ def neural_pvalues_for_one_params(
 def run_net_and_save_pvalue_summaries_for_params(
         save_directory: str,
         params_human: dict[str, Tensor1[tf32, Samples]],
+        params_num_to_continue_from: int,
         num_simulations_per_param: int,
         cdf_summary_length: int = 1000,
         batch_size: int = 500,
@@ -162,7 +164,8 @@ def run_net_and_save_pvalue_summaries_for_params(
 
     num_param_samples = biparcorr.get_num_param_samples(params_human)
 
-    for params_num in range(num_param_samples):
+    for params_num in range(params_num_to_continue_from, num_param_samples):
+        print(params_num)
         this_params = {name: param[params_num]
                        for name, param in params_human.items()}
 
@@ -220,6 +223,7 @@ params = load_or_generate_params_dict(param_samples_file, cis,
 run_net_and_save_pvalue_summaries_for_params(
     save_directory=save_directory,
     params_human=params,
+    params_num_to_continue_from=PARAMS_NUM_TO_CONTINUE_FROM,
     num_simulations_per_param=NUM_SIMULATIONS_PER_PARAM,
     cdf_summary_length=1000,
     batch_size=BATCH_SIZE,
