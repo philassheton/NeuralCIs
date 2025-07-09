@@ -10,12 +10,11 @@ import numpy as np
 tfd, tfb = tfp.distributions, tfp.bijectors
 
 from tqdm import tqdm
-from datetime import datetime
 import time
 
 # typing
 from typing import Dict
-from neuralcis.common import Batch, Samples, Stats, One, Ys
+from neuralcis.common import Batch, Samples, Stats, Ys
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
 
@@ -94,17 +93,6 @@ def ps_for_batch(
     return ps_neural
 
 
-def make_cdf_summary(
-        ps: Tensor2[tf32, Samples, Stats],
-        summary_length: int,
-) -> Tensor3[tf32, One, Stats, Samples]:
-
-    ps_sorted = tf.sort(tf.transpose(ps), axis=1)
-    end_of_bucket_index = tf.linspace(0., len(ps), summary_length + 1)[1:] - 1
-    end_of_bucket_index = tf.cast(end_of_bucket_index, tf.int32)
-    return tf.gather(ps_sorted, end_of_bucket_index, axis=1)[None, :, :]
-
-
 def rho_for_power(
         rho_null,
         n,
@@ -161,17 +149,18 @@ def neural_pvalues_for_one_params(
     end = time.perf_counter()
     print(f"Elapsed: {end - start:.6f} seconds")
     print(f"Processed parameters: {params_human}")
-    return make_cdf_summary(ps, cdf_summary_length)
+    return biparcorr.make_cdf_summary(ps, cdf_summary_length)
 
 
 def run_net_and_save_pvalue_summaries_for_params(
         save_directory: str,
         params_human: dict[str, Tensor1[tf32, Samples]],
-        num_param_samples: int,
         num_simulations_per_param: int,
         cdf_summary_length: int = 1000,
         batch_size: int = 500,
 ) -> None:
+
+    num_param_samples = biparcorr.get_num_param_samples(params_human)
 
     for params_num in range(num_param_samples):
         this_params = {name: param[params_num]
@@ -184,18 +173,13 @@ def run_net_and_save_pvalue_summaries_for_params(
             cdf_summary_length=cdf_summary_length,
             batch_size=batch_size,
         )
-        name_start = f'pars{params_num} neur POW'
-        power_text = f'{int(this_params["target_power"]*100):+d}'
-        summary_name = (f'{save_directory}/{name_start}'
-                        f' {datetime.now().strftime("%Y%m%d %H%M%S")}'
-                        f' r_ab_p {this_params["rho_ab_partial"]:.4f}'
-                        f' r_ab_p{power_text}'
-                        f' {this_params["rho_ab_partial_power"]:.4f}'
-                        f' r_bc {this_params["rho_bc"]:.4f}'
-                        f' r_ac {this_params["rho_ac"]:.4f}'
-                        f' p_a {this_params["prop_a"]:.4f}'
-                        f' n {int(this_params["n"]):d}'
-                        f' runs {num_simulations_per_param}')
+        summary_name = biparcorr.param_run_filename(
+            save_directory,
+            'neur POW',
+            params_num,
+            this_params,
+            num_simulations_per_param
+        )
         np.save(summary_name, summary_tensor.numpy())
 
 
@@ -236,7 +220,6 @@ params = load_or_generate_params_dict(param_samples_file, cis,
 run_net_and_save_pvalue_summaries_for_params(
     save_directory=save_directory,
     params_human=params,
-    num_param_samples=NUM_PARAM_SAMPLES,
     num_simulations_per_param=NUM_SIMULATIONS_PER_PARAM,
     cdf_summary_length=1000,
     batch_size=BATCH_SIZE,

@@ -1,10 +1,11 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
+from datetime import datetime
 
 # typing
 from typing import Dict
-from neuralcis.common import Batch, Samples, Stats
+from neuralcis.common import Batch, Samples, Stats, One
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
 
@@ -76,6 +77,17 @@ def estimate_correlations_safe(
     return correlations_hat
 
 
+def make_cdf_summary(
+        ps: Tensor2[tf32, Samples, Stats],
+        summary_length: int,
+) -> Tensor3[tf32, One, Stats, Samples]:
+
+    ps_sorted = tf.sort(tf.transpose(ps), axis=1)
+    end_of_bucket_index = tf.linspace(0., len(ps), summary_length + 1)[1:] - 1
+    end_of_bucket_index = tf.cast(end_of_bucket_index, tf.int32)
+    return tf.gather(ps_sorted, end_of_bucket_index, axis=1)[None, :, :]
+
+
 param_names = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
                'rho_ab_partial_power', 'target_power']
 
@@ -101,3 +113,37 @@ def save_params_dict(
     param_tensors = [params[name] for name in param_names]
     params_grid = tf.stack(param_tensors, axis=1)
     np.save(param_samples_file, params_grid.numpy())
+
+
+def get_num_param_samples(
+        params_dict: Dict[str, Tensor1[tf32, Samples]],
+) -> int:
+
+    num_param_samples = np.unique([len(p) for p in params_dict.values()])
+    if len(num_param_samples) != 1:
+        raise Exception('Every param must be an equal length 1D Tensor!!')
+    num_param_samples = num_param_samples[0]
+    return num_param_samples
+
+
+def param_run_filename(
+        save_directory: str,
+        layer_order_summary: str,
+        params_index: int,
+        params: Dict[str, Tensor0[tf32]],
+        num_simulations_per_param: int,
+) -> str:
+
+    power_percent = int(params["target_power"] * 100)
+    return (f'{save_directory}/'
+            f'pars{params_index}'
+            f' {layer_order_summary}'
+            f' {datetime.now().strftime("%Y%m%d %H%M%S")}'
+            f' r_ab_p {params["rho_ab_partial"]:.4f}'
+            f' r_ab_p{power_percent:d}'
+            f' {params["rho_ab_partial_power"]:.4f}'
+            f' r_bc {params["rho_bc"]:.4f}'
+            f' r_ac {params["rho_ac"]:.4f}'
+            f' p_a {params["prop_a"]:.4f}'
+            f' n {int(params["n"]):d}'
+            f' runs {num_simulations_per_param}')
