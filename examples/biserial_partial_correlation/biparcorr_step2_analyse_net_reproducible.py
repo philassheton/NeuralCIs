@@ -2,6 +2,7 @@ import os
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 from neuralcis import NeuralCIs
+import biparcorr_analyse_funcs as biparcorr
 
 import tensorflow as tf
 import tensorflow_probability as tfp
@@ -20,76 +21,10 @@ from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
 
 
 # No need for N_MIN as they are sampled from the network
-N_MAX = 100
 DO_L_BFGS = True
 NUM_PARAM_SAMPLES = 1_000
 NUM_SIMULATIONS_PER_PARAM = 10_000_000
 BATCH_SIZE = 1_000
-
-
-def sampling_distribution_fn_raw(
-        rho_ab_partial: Tensor0[tf32],
-        rho_bc: Tensor0[tf32],
-        rho_ac: Tensor0[tf32],
-        prop_a: Tensor0[tf32],
-        n: Tensor0[ti64],
-        batch_size: int,
-        generator: tf.random.Generator,
-) -> Tensor3[tf32, Batch, Samples, Stats]:
-
-    rho_ab = (rho_bc * rho_ac
-              + rho_ab_partial * tf.sqrt((1. - tf.square(rho_bc)) *
-                                         (1. - tf.square(rho_ac))))
-
-    z_threshold_a = -tfp.distributions.Normal(0., 1.).quantile(prop_a)
-
-    one = tf.ones_like(rho_ab)
-    correlation_matrix = tf.stack([
-        tf.stack([one, rho_ab, rho_ac], axis=0),
-        tf.stack([rho_ab, one, rho_bc], axis=0),
-        tf.stack([rho_ac, rho_bc, one], axis=0),
-    ], axis=1)
-
-    cholesky = tf.linalg.cholesky(correlation_matrix)
-
-    z = generator.normal((batch_size, 3, N_MAX)) * n_mask(n)[None, None, :]
-    z_correlated = tf.linalg.matmul(cholesky, z)
-
-    a, b, c = tf.split(z_correlated, 3, axis=1)
-    a = tf.cast(a > z_threshold_a, tf.float32) * n_mask(n)[None, None, :]
-    samples = tf.stack([a[:, 0, :], b[:, 0, :], c[:, 0, :]], axis=2)
-
-    return samples
-
-
-# n_mask ensures we only have n z values (the rest will be zeroed)
-#  -- this means we work with constant memory size.
-def n_mask(n: Tensor0[ti64]) -> Tensor1[tf32, Samples]:
-    return tf.cast(tf.range(N_MAX, dtype=tf.int64) < n, tf.float32)
-
-
-def n_mask_safe(n: Tensor0) -> Tensor1[tf32, Samples]:
-    return n_mask(tf.cast(n, tf.int64))
-
-
-def estimate_correlations_safe(
-        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n_float: Tensor0[tf32],
-) -> Tensor2[tf32, Batch, 3]:
-
-    # Returns zero correlation whenever all a values are the same.
-
-    stats_tensor = stats_tensor * n_mask_safe(n_float)[None, :, None]          # type: ignore
-    stats_mean = tf.reduce_sum(stats_tensor, axis=1, keepdims=True) / n_float
-    X = (stats_tensor - stats_mean) * n_mask_safe(n_float)[None, :, None]
-
-    X_sum_pairwise = tf.reduce_sum(X * tf.gather(X, [1, 2, 0], axis=2), axis=1)
-    X_sum_sq = tf.reduce_sum(tf.square(X), axis=1)
-    X_sum_sq_pairwise = X_sum_sq * tf.gather(X_sum_sq, [1, 2, 0], axis=1)
-
-    correlations_hat = X_sum_pairwise / tf.sqrt(X_sum_sq_pairwise + 1e-10)
-
-    return correlations_hat
 
 
 def ps_neural_tf(
@@ -102,9 +37,9 @@ def ps_neural_tf(
     params_human = {name: tf.repeat(param, (batch_size,))
                     for name, param in params.items()}
 
-    correlations = estimate_correlations_safe(stats, params['n'])
+    correlations = biparcorr.estimate_correlations_safe(stats, params['n'])
     rho_ab_hat, rho_bc_hat, rho_ac_hat = tf.unstack(correlations, axis=1)
-    prop_a_hat = tf.reduce_sum(stats[:, :, 0], axis=1) / params['n']
+    prop_a_hat: Tensor1 = tf.reduce_sum(stats[:, :, 0], axis=1) / params['n']  # type: ignore
 
     params_net = cis._params_human_to_net(**params_human)
     stats_net = cis._stats_human_to_net(
@@ -132,7 +67,7 @@ def ps_for_batch(
     generator: tf.random.Generator,
 ) -> Tensor2[tf32, Batch, Ys]:
 
-    stats = sampling_distribution_fn_raw(
+    stats = biparcorr.sampling_distribution_fn_raw(
         rho_ab_partial=rho_ab_partial,
         rho_bc=rho_bc,
         rho_ac=rho_ac,
@@ -270,15 +205,9 @@ def load_or_generate_params_dict(
         num_samples_if_no_file: int,
 ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-    param_names = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
-                   'rho_ab_partial_power', 'target_power']
-
     if os.path.exists(param_samples_file):
-        params_grid = tf.convert_to_tensor(np.load(param_samples_file),
-                                           dtype=tf.float32)
-        param_tensors = tf.unstack(params_grid, axis=1)
-        params = {name: param for name, param in
-                  zip(param_names, param_tensors)}
+        print('Loading previous param samples!')
+        params = biparcorr.load_params_dict(param_samples_file)
     else:
         print('Generating new param samples!!')
         params = cis.sample_params(NUM_PARAM_SAMPLES)
@@ -291,9 +220,7 @@ def load_or_generate_params_dict(
             params['n'],
             params['target_power'],
             alpha=0.05)
-        param_tensors = [params[name] for name in param_names]
-        params_grid = tf.stack(param_tensors, axis=1)
-        np.save(param_samples_file, params_grid.numpy())
+        biparcorr.save_params_dict(param_samples_file, params)
 
     return params
 

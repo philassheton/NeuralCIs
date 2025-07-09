@@ -1,0 +1,103 @@
+import tensorflow as tf
+import tensorflow_probability as tfp
+import numpy as np
+
+# typing
+from typing import Dict
+from neuralcis.common import Batch, Samples, Stats
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
+from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
+
+N_MAX = 100
+
+
+def sampling_distribution_fn_raw(
+        rho_ab_partial: Tensor0[tf32],
+        rho_bc: Tensor0[tf32],
+        rho_ac: Tensor0[tf32],
+        prop_a: Tensor0[tf32],
+        n: Tensor0[ti64],
+        batch_size: int,
+        generator: tf.random.Generator,
+) -> Tensor3[tf32, Batch, Samples, Stats]:
+
+    rho_ab = (rho_bc * rho_ac
+              + rho_ab_partial * tf.sqrt((1. - tf.square(rho_bc)) *
+                                         (1. - tf.square(rho_ac))))
+
+    z_threshold_a = -tfp.distributions.Normal(0., 1.).quantile(prop_a)
+
+    one = tf.ones_like(rho_ab)
+    correlation_matrix = tf.stack([
+        tf.stack([one, rho_ab, rho_ac], axis=0),
+        tf.stack([rho_ab, one, rho_bc], axis=0),
+        tf.stack([rho_ac, rho_bc, one], axis=0),
+    ], axis=1)
+
+    cholesky = tf.linalg.cholesky(correlation_matrix)
+
+    z = generator.normal((batch_size, 3, N_MAX)) * n_mask(n)[None, None, :]
+    z_correlated = tf.linalg.matmul(cholesky, z)
+
+    a, b, c = tf.split(z_correlated, 3, axis=1)
+    a = tf.cast(a > z_threshold_a, tf.float32) * n_mask(n)[None, None, :]
+    samples = tf.stack([a[:, 0, :], b[:, 0, :], c[:, 0, :]], axis=2)
+
+    return samples
+
+
+# n_mask ensures we only have n z values (the rest will be zeroed)
+#  -- this means we work with constant memory size.
+def n_mask(n: Tensor0[ti64]) -> Tensor1[tf32, Samples]:
+    return tf.cast(tf.range(N_MAX, dtype=tf.int64) < n, tf.float32)
+
+
+def n_mask_safe(n: Tensor0) -> Tensor1[tf32, Samples]:
+    return n_mask(tf.cast(n, tf.int64))
+
+
+def estimate_correlations_safe(
+        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
+        n_float: Tensor0[tf32],
+) -> Tensor2[tf32, Batch, 3]:
+
+    # Returns zero correlation whenever all a values are the same.
+
+    stats_tensor = stats_tensor * n_mask_safe(n_float)[None, :, None]          # type: ignore
+    stats_mean = tf.reduce_sum(stats_tensor, axis=1, keepdims=True) / n_float
+    X = (stats_tensor - stats_mean) * n_mask_safe(n_float)[None, :, None]
+
+    X_sum_pairwise = tf.reduce_sum(X * tf.gather(X, [1, 2, 0], axis=2), axis=1)
+    X_sum_sq = tf.reduce_sum(tf.square(X), axis=1)
+    X_sum_sq_pairwise = X_sum_sq * tf.gather(X_sum_sq, [1, 2, 0], axis=1)
+
+    correlations_hat = X_sum_pairwise / tf.sqrt(X_sum_sq_pairwise + 1e-10)
+
+    return correlations_hat
+
+
+param_names = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
+               'rho_ab_partial_power', 'target_power']
+
+
+def load_params_dict(
+        param_samples_file: str,
+) -> Dict[str, Tensor1[tf32, Samples]]:
+
+    params_grid = tf.convert_to_tensor(np.load(param_samples_file),
+                                       dtype=tf.float32)
+    param_tensors = tf.unstack(params_grid, axis=1)
+    params = {name: param for name, param in
+              zip(param_names, param_tensors)}
+
+    return params
+
+
+def save_params_dict(
+        param_samples_file: str,
+        params: Dict[str, Tensor1[tf32, Samples]],
+) -> None:
+
+    param_tensors = [params[name] for name in param_names]
+    params_grid = tf.stack(param_tensors, axis=1)
+    np.save(param_samples_file, params_grid.numpy())
