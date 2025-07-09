@@ -8,6 +8,12 @@ import tensorflow_probability as tfp
 import numpy as np
 tfd, tfb = tfp.distributions, tfp.bijectors
 
+
+
+# tf.config.run_functions_eagerly(True)
+
+
+
 from tqdm import tqdm
 from datetime import datetime
 import time
@@ -15,17 +21,17 @@ import functools
 
 # typing
 from typing import Optional, Union, Tuple
-from neuralcis.common import Batch, Samples, Stats, UnknownParams, One
+from neuralcis.common import Batch, Samples, Stats, UnknownParams, One, Ys
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
 
 
 # No need for N_MIN as they are sampled from the network
 N_MAX = 100
-DO_L_BFGS = False
+DO_L_BFGS = True
 NUM_PARAM_SAMPLES = 1_000
-NUM_SIMULATIONS_PER_PARAM = 10_000_000
-BATCH_SIZE = 10_000
+NUM_SIMULATIONS_PER_PARAM = 100_000 # 10_000_000
+BATCH_SIZE = 1_000
 
 
 def sampling_distribution_fn_raw(
@@ -158,6 +164,7 @@ def adam(
         params_unknown_transformed_init: Tensor2[tf32, Batch, UnknownParams],
         m: Tensor2[tf32, Batch, UnknownParams],
         v: Tensor2[tf32, Batch, UnknownParams],
+        t0: Tensor0[ti64],
         steps: int,
         lr_init: Tensor0[tf32],
         lr_decay: Tensor0[tf32],
@@ -182,8 +189,8 @@ def adam(
 
         m = beta1 * m + (1-beta1) * gradient
         v = beta2 * v + (1-beta2) * tf.square(gradient)
-        m_hat = m / (1. - beta1**(t+1))
-        v_hat = v / (1. - beta2**(t+1))
+        m_hat = m / (1. - beta1**tf.cast(t0 + t + 1, tf.float32))
+        v_hat = v / (1. - beta2**tf.cast(t0 + t + 1, tf.float32))
 
         params_unknown_transformed += lr * m_hat / (tf.sqrt(v_hat) + 1e-8)
         lr *= lr_decay
@@ -262,11 +269,58 @@ def estimate_correlations_safe(
     return correlations_hat
 
 
-def likelihood_ratio_via_gradient_ascent(
+def multistep_adam(
+        likelihood_function,
+        params: Tensor2[tf32, Batch, UnknownParams],
+        n_float: Tensor0[tf32],
+) -> Tensor2[tf32, Batch, Ys]:
+
+    lr_init = 1./n_float
+    m = tf.zeros_like(params)
+    v = tf.zeros_like(params)
+    tf_int = lambda t0: tf.constant(t0, dtype=tf.int64)
+
+    params40, m40, v40, log_likelihood40 = adam(
+        likelihood_function,
+        params, m, v, tf_int(0),
+        steps=40,
+        lr_init=lr_init,
+        lr_decay=tf.constant(1.0),
+    )
+    params80, m80, v80, log_likelihood80 = adam(
+        likelihood_function,
+        params40, m40, v40, tf_int(40),
+        steps=40,
+        lr_init=lr_init,
+        lr_decay=tf.constant(1.0),
+    )
+    params120, m120, v120, log_likelihood120 = adam(
+        likelihood_function,
+        params80, m80, v80, tf_int(80),
+        steps=40,
+        lr_init=lr_init,
+        lr_decay=tf.constant(1.0),
+    )
+    _, _, _, log_likelihood120_40 = adam(
+        likelihood_function,
+        params120, m120, v120, tf_int(120),
+        steps=40,
+        lr_init=lr_init,
+        lr_decay=tf.constant(0.9),
+    )
+
+    return tf.stack([log_likelihood40,
+                     log_likelihood80,
+                     log_likelihood120,
+                     log_likelihood120_40], axis=1)
+
+
+def likelihood_ratios_via_gradient_ascent(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
         rho_ab_partial_null: Tensor0[tf32],
+        rho_ab_partial_power: Tensor0[tf32],
         n: Tensor0[ti64],
-) -> Tuple[Tensor1[tf32, Batch], Tensor1[tf32, Batch], Tensor1[tf32, Batch]]:
+) -> Tensor2[tf32, Batch, Ys]:
 
     n_float = tf.cast(n, tf.float32)
 
@@ -277,6 +331,10 @@ def likelihood_ratio_via_gradient_ascent(
     log_likelihood_fn_null = functools.partial(
         log_likelihood_from_transformed_params_fixed_ab,
         stats_tensor, n, rho_ab_partial_null,
+    )
+    log_likelihood_fn_power_null = functools.partial(
+        log_likelihood_from_transformed_params_fixed_ab,
+        stats_tensor, n, rho_ab_partial_power,
     )
 
     # use sample correlations as basis for initial guess
@@ -293,74 +351,28 @@ def likelihood_ratio_via_gradient_ascent(
                                                        rho_ac_hat,
                                                        prop_a_hat)
 
-    lr_init = 1./n_float
-    m = tf.zeros_like(params_unknown_transformed_init)
-    v = tf.zeros_like(params_unknown_transformed_init)
-
-    params_unknown_trans_alt40, m40, v40, log_likelihood_alt40 = adam(
-        log_likelihood_fn_alternative,
-        params_unknown_transformed_init, m, v,
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(1.0),
+    log_likelihoods_null = multistep_adam(
+        log_likelihood_fn_null,
+        params_unknown_transformed_init[:, 1:],
+        n_float
     )
-    params_unknown_trans_alt80, m80, v80, log_likelihood_alt80 = adam(
+    log_likelihoods_alt = multistep_adam(
         log_likelihood_fn_alternative,
-        params_unknown_trans_alt40, m40, v40,
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(1.0),
+        params_unknown_transformed_init,
+        n_float,
     )
-    params_unknown_trans_alt120, m120, v120, log_likelihood_alt120 = adam(
-        log_likelihood_fn_alternative,
-        params_unknown_trans_alt80, m80, v80,
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(1.0),
-    )
-    _, _, _, log_likelihood_alt120_40 = adam(
-        log_likelihood_fn_alternative,
-        params_unknown_trans_alt120, m120, v120,
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(0.9),
+    log_likelihoods_power_null = multistep_adam(
+        log_likelihood_fn_power_null,
+        params_unknown_transformed_init[:, 1:],
+        n_float,
     )
 
-    params_unknown_trans_null40, m40, v40, log_likelihood_null40 = adam(
-        log_likelihood_fn_null,
-        params_unknown_transformed_init[:, 1:], m[:, 1:], v[:, 1:],
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(1.0),
-    )
-    params_unknown_trans_null80, m80, v80, log_likelihood_null80 = adam(
-        log_likelihood_fn_null,
-        params_unknown_trans_null40, m40, v40,
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(1.0),
-    )
-    params_unknown_trans_null120, m120, v120, log_likelihood_null120 = adam(
-        log_likelihood_fn_null,
-        params_unknown_trans_null40, m40, v40,
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(1.0),
-    )
-    _, _, _, log_likelihood_null120_40 = adam(
-        log_likelihood_fn_null,
-        params_unknown_trans_null120, m120, v120,
-        steps=40,
-        lr_init=lr_init,
-        lr_decay=tf.constant(0.9),
-    )
-
-    return tf.stack([
-        log_likelihood_alt40 - log_likelihood_null40,
-        log_likelihood_alt80 - log_likelihood_null80,
-        log_likelihood_alt120 - log_likelihood_null120,
-        log_likelihood_alt120_40 - log_likelihood_null120_40,
+    diffs = tf.concat([
+        log_likelihoods_alt - log_likelihoods_null,
+        log_likelihoods_alt[:, -1:] - log_likelihoods_power_null[:, -1:],
     ], axis=1)
+
+    return diffs
 
 
 def negative_log_likelihood_from_transformed_params(
@@ -391,9 +403,10 @@ def negative_log_likelihood_from_transformed_params_fixed_ab(
 
 def likelihood_ratio_via_line_search(
         rho_ab_partial_null: Tensor0[tf32],
+        rho_ab_partial_power: Tensor0[tf32],
         n: Tensor0[ti64],
         stats_tensor: Tensor2[tf32, Samples, Stats],
-) -> Tuple[Tensor1[tf32, Batch], Tensor1[tf32, Batch]]:
+) -> Tensor1[tf32, Ys]:
 
     n_float = tf.cast(n, tf.float32)
 
@@ -405,10 +418,14 @@ def likelihood_ratio_via_line_search(
         negative_log_likelihood_from_transformed_params_fixed_ab,
         stats_tensor[None], n, rho_ab_partial_null,
     )
+    log_likelihood_fn_power_null = functools.partial(
+        negative_log_likelihood_from_transformed_params_fixed_ab,
+        stats_tensor[None], n, rho_ab_partial_power,
+    )
 
     # use sample correlations as basis for initial guess
     correlations_hat = estimate_correlations_safe(stats_tensor[None], n_float)
-    prop_a_hat = tf.reduce_sum(stats_tensor[:, 0]) / n_float
+    prop_a_hat = tf.reduce_sum(stats_tensor[:, 0], keepdims=True) / n_float
 
     rho_ab_hat, rho_bc_hat, rho_ac_hat = tf.unstack(correlations_hat, axis=1)
     rho_ab_partial_hat = ((rho_ab_hat - rho_bc_hat*rho_ac_hat) /
@@ -438,7 +455,16 @@ def likelihood_ratio_via_line_search(
     )
     lr_null = -res_null.objective_value
 
-    return lr_alt[0] - lr_null[0]
+    res_power_null = tfp.optimizer.lbfgs_minimize(
+        lambda stats: tfp.math.value_and_gradient(
+            log_likelihood_fn_power_null,
+            stats,
+        ),
+        params_unknown_transformed_init[:, 1:],
+    )
+    lr_power_null = -res_power_null.objective_value
+
+    return tf.stack([lr_alt[0] - lr_null[0], lr_alt[0] - lr_power_null[0]])
 
 
 def ps_neural_tf(
@@ -475,9 +501,10 @@ def ps_for_batch(
     rho_ac: Tensor0[tf32],
     prop_a: Tensor0[tf32],
     n: Tensor0[ti64],
+    rho_ab_partial_power: Tensor0[tf32],
     cis: NeuralCIs,
     batch_size: int,
-):
+) -> Tensor2[tf32, Batch, Ys]:
 
     stats = sampling_distribution_fn_raw(
         rho_ab_partial=rho_ab_partial,
@@ -488,27 +515,38 @@ def ps_for_batch(
         batch_size=batch_size,
     )
 
-    diffs = likelihood_ratio_via_gradient_ascent(stats, rho_ab_partial, n)
+    diffs = likelihood_ratios_via_gradient_ascent(stats,
+                                                  rho_ab_partial,
+                                                  rho_ab_partial_power,
+                                                  n)
 
     if DO_L_BFGS:
         diff_bfgs = tf.map_fn(
             functools.partial(likelihood_ratio_via_line_search,
-                              rho_ab_partial, n),
+                              rho_ab_partial, rho_ab_partial_power, n),
             stats,
             parallel_iterations=batch_size,
-            fn_output_signature=tf.TensorSpec([], tf.float32),
+            fn_output_signature=tf.TensorSpec([2], tf.float32),
         )
-        diffs = tf.concat([diffs, diff_bfgs[:, None]], axis=1)
+        diffs = tf.concat([diffs, diff_bfgs], axis=1)
 
     ps_lr = tf.math.igammac(0.5, 0.5 * 2.0*diffs)
 
-    ps_neural = ps_neural_tf(cis, stats, batch_size,
-                             rho_ab_partial=rho_ab_partial,
-                             rho_bc=rho_bc,
-                             rho_ac=rho_ac,
-                             prop_a=prop_a,
-                             n=tf.cast(n, tf.float32))
-    ps = tf.concat([ps_neural[:, None], ps_lr], axis=1)
+    ps_neural_null = ps_neural_tf(cis, stats, batch_size,
+                                  rho_ab_partial=rho_ab_partial,
+                                  rho_bc=rho_bc,
+                                  rho_ac=rho_ac,
+                                  prop_a=prop_a,
+                                  n=tf.cast(n, tf.float32))
+    ps_neural_power = ps_neural_tf(cis, stats, batch_size,
+                                   rho_ab_partial=rho_ab_partial_power,
+                                   rho_bc=rho_bc,
+                                   rho_ac=rho_ac,
+                                   prop_a=prop_a,
+                                   n=tf.cast(n, tf.float32))
+    ps_neural = tf.stack([ps_neural_null, ps_neural_power], axis=1)
+
+    ps = tf.concat([ps_neural, ps_lr], axis=1)
 
     return ps
 
@@ -524,12 +562,59 @@ def make_cdf_summary(
     return tf.gather(ps_sorted, end_of_bucket_index, axis=1)[None, :, :]
 
 
+def rho_for_power(
+        n: Tensor0[ti64],
+        prop_a: Tensor0[tf32],
+        rho_ab_partial_null: Tensor0[tf32],
+        power: float = 0.80,
+        alpha: float = 0.05,
+        k: int = 1,
+        alt_sign: int = 1,
+):
+
+    normal = tfp.distributions.Normal(0., 1.)
+
+    power = tf.constant(power, dtype=tf.float32)
+    alpha = tf.constant(alpha, dtype=tf.float32)
+    k = tf.constant(k, dtype=tf.float32)
+    alt_sign = tf.constant(float(tf.sign(alt_sign)), tf.float32)
+    n = tf.cast(n, tf.float32)
+
+    zcrit = normal.quantile(1.0 - alpha / 2.0)
+    zbeta = normal.quantile(power)
+    delta_z = (zcrit + zbeta) / tf.sqrt(n - k - 3.0)
+
+    # ---- helper: latent ρ  <-->  observed point-biserial r ----
+    z_pi = normal.quantile(1.0 - prop_a)
+    phi = normal.prob(z_pi)
+    scale = phi / tf.sqrt(prop_a * (1.0 - prop_a))  # r = ρ * scale
+    invscale = 1.0 / scale  # ρ = r * invscale
+
+    # Null on observed scale
+    r0 = rho_ab_partial_null * scale
+    # Fisher z of null
+    z0 = tf.atanh(tf.clip_by_value(r0, -0.999999, 0.999999))
+
+    # Alternative Fisher z
+    z1 = z0 + alt_sign * delta_z
+    # Back to observed r, then to latent ρ
+    r1 = tf.tanh(z1)
+    rho1 = r1 * invscale
+
+    # Avoid overflow outside (-1,1) due to numeric noise
+    rho1 = tf.clip_by_value(rho1, -0.999999, 0.999999)
+    return rho1
+
+
 def profile_pvalues_for_one_params(
         params_human: dict[str, Tensor0[tf32]],
+        rho_ab_partial_power: Tensor0[tf32],
         num_simulations: int,
         cdf_summary_length: int = 1000,
         batch_size: int = 500,
 ):
+
+    n = tf.cast(params_human['n'], tf.int64)
 
     ps = []
     num_batches = num_simulations // batch_size
@@ -540,10 +625,15 @@ def profile_pvalues_for_one_params(
             params_human['rho_bc'],
             params_human['rho_ac'],
             params_human['prop_a'],
-            tf.cast(params_human['n'], tf.int64),
+            n,
+            rho_ab_partial_power,
             cis,
             batch_size,
         )
+
+        # CPU!!!
+
+
         ps.append(ps_batch)
     ps = tf.concat(ps, axis=0)
 
@@ -565,15 +655,29 @@ def profile_and_save_pvalue_summaries_for_params(
     for params_num in range(num_param_samples):
         this_params = {name: param[params_num]
                        for name, param in params_human.items()}
+
+        target_power = np.random.choice([0.50, 0.80])
+        sign_power = np.random.choice([-1, +1])
+        n = tf.cast(this_params['n'], tf.int64)
+        rho_ab_partial_power = rho_for_power(n,
+                                             this_params['prop_a'],
+                                             this_params['rho_ab_partial'],
+                                             power=target_power,
+                                             alpha=0.05,
+                                             alt_sign=sign_power)
+
         summary_tensor = profile_pvalues_for_one_params(
             params_human=this_params,
+            rho_ab_partial_power=rho_ab_partial_power,
             num_simulations=num_simulations_per_param,
             cdf_summary_length=cdf_summary_length,
             batch_size=batch_size,
         )
-        name_start = f'neur lr40 lr80 lr120 lr120_40'
+        power_text = f'{int(target_power*100):d}{sign_power:+d}'.rstrip('1')
+        name_start = f'neur POW lr40 80 120 120_40 POW'
         if DO_L_BFGS:
-            name_start += ' bfgs'
+            name_start += ' bfgs POW'
+        name_start += f'{power_text}'
         summary_name = (f'{save_directory}/{name_start} '
                         f'{datetime.now().strftime("%Y%m%d %H%M%S")}'
                         f' r_ab_p {this_params["rho_ab_partial"]:.4f}'
@@ -587,7 +691,9 @@ def profile_and_save_pvalue_summaries_for_params(
 
 save_directory = 'param_runs'
 os.makedirs(save_directory, exist_ok=True)
-cis = NeuralCIs.load('saved_model', 'testing')
+# cis = NeuralCIs.load('examples/biserial_partial_correlation/saved_model',
+cis = NeuralCIs.load('saved_model',
+                     'testing')
 params = cis.sample_params(NUM_PARAM_SAMPLES)
 
 profile_and_save_pvalue_summaries_for_params(
