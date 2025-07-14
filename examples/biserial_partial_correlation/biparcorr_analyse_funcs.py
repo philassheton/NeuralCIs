@@ -6,20 +6,23 @@ from datetime import datetime
 # typing
 from typing import Dict
 from neuralcis.common import Batch, Samples, Stats, One
-from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
-from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
+from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
+from tensor_annotations.tensorflow import float32 as tf32
 
 N_MAX = 100
 
 
+algorithm = tf.random.Algorithm.PHILOX
+generator = tf.random.Generator.from_seed(0, algorithm)
+
+
 def sampling_distribution_fn_raw(
-        rho_ab_partial: Tensor0[tf32],
-        rho_bc: Tensor0[tf32],
-        rho_ac: Tensor0[tf32],
-        prop_a: Tensor0[tf32],
-        n: Tensor0[ti64],
+        rho_ab_partial: Tensor1[tf32, Batch],
+        rho_bc: Tensor1[tf32, Batch],
+        rho_ac: Tensor1[tf32, Batch],
+        prop_a: Tensor1[tf32, Batch],
+        n: Tensor1[tf32, Batch],
         batch_size: int,
-        generator: tf.random.Generator,
 ) -> Tensor3[tf32, Batch, Samples, Stats]:
 
     rho_ab = (rho_bc * rho_ac
@@ -30,43 +33,60 @@ def sampling_distribution_fn_raw(
 
     one = tf.ones_like(rho_ab)
     correlation_matrix = tf.stack([
-        tf.stack([one, rho_ab, rho_ac], axis=0),
-        tf.stack([rho_ab, one, rho_bc], axis=0),
-        tf.stack([rho_ac, rho_bc, one], axis=0),
-    ], axis=1)
+        tf.stack([one, rho_ab, rho_ac], axis=-1),
+        tf.stack([rho_ab, one, rho_bc], axis=-1),
+        tf.stack([rho_ac, rho_bc, one], axis=-1),
+    ], axis=-1)
 
     cholesky = tf.linalg.cholesky(correlation_matrix)
 
-    z = generator.normal((batch_size, 3, N_MAX)) * n_mask(n)[None, None, :]
+    mask = n_mask(n)[:, None, :]
+    z = generator.normal((batch_size, 3, N_MAX)) * mask
     z_correlated = tf.linalg.matmul(cholesky, z)
 
     a, b, c = tf.split(z_correlated, 3, axis=1)
-    a = tf.cast(a > z_threshold_a, tf.float32) * n_mask(n)[None, None, :]
+    a = tf.cast(a > z_threshold_a[:, None, None], tf.float32) * mask
     samples = tf.stack([a[:, 0, :], b[:, 0, :], c[:, 0, :]], axis=2)
 
     return samples
 
 
+def replicate_params(
+        params_dict: Dict[str, Tensor1[tf32, Samples]],
+        param_sample_index: int,
+        batch_size: int,
+) -> Dict[str, Tensor1[tf32, Batch]]:
+
+    return {n: tf.repeat(p[param_sample_index], batch_size)
+            for n, p in params_dict.items()}
+
+
+def start_first_batch_for_param_sample(param_sample_index: int) -> None:
+    state = tf.stack([algorithm.value,
+                      tf.cast(param_sample_index, tf.uint64),
+                      tf.constant(0, tf.uint64)], axis=0)
+    generator.reset(state)
+
+
 # n_mask ensures we only have n z values (the rest will be zeroed)
 #  -- this means we work with constant memory size.
-def n_mask(n: Tensor0[ti64]) -> Tensor1[tf32, Samples]:
-    return tf.cast(tf.range(N_MAX, dtype=tf.int64) < n, tf.float32)
-
-
-def n_mask_safe(n: Tensor0) -> Tensor1[tf32, Samples]:
-    return n_mask(tf.cast(n, tf.int64))
+def n_mask(n: Tensor1[tf32, Batch]) -> Tensor1[tf32, Samples]:
+    n = tf.cast(n, tf.int64)
+    return tf.cast(tf.sequence_mask(n, N_MAX), tf.float32)
 
 
 def estimate_correlations_safe(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n_float: Tensor0[tf32],
+        n: Tensor1[tf32, Batch],
 ) -> Tensor2[tf32, Batch, 3]:
 
     # Returns zero correlation whenever all a values are the same.
 
-    stats_tensor = stats_tensor * n_mask_safe(n_float)[None, :, None]          # type: ignore
-    stats_mean = tf.reduce_sum(stats_tensor, axis=1, keepdims=True) / n_float
-    X = (stats_tensor - stats_mean) * n_mask_safe(n_float)[None, :, None]
+    stats_tensor = stats_tensor * n_mask(n)[:, :, None]                   # type: ignore
+    stats_mean = tf.reduce_sum(stats_tensor,
+                               axis=1,
+                               keepdims=True) / n[:, None, None]
+    X = (stats_tensor - stats_mean) * n_mask(n)[:, :, None]
 
     X_sum_pairwise = tf.reduce_sum(X * tf.gather(X, [1, 2, 0], axis=2), axis=1)
     X_sum_sq = tf.reduce_sum(tf.square(X), axis=1)
@@ -122,18 +142,40 @@ def get_num_param_samples(
     num_param_samples = np.unique([len(p) for p in params_dict.values()])
     if len(num_param_samples) != 1:
         raise Exception('Every param must be an equal length 1D Tensor!!')
-    num_param_samples = num_param_samples[0]
+    num_param_samples = int(num_param_samples[0])
     return num_param_samples
+
+
+def convert_relative_path(basename: str) -> str:
+    if os.getcwd().endswith('biserial_partial_correlation'):
+        dirname = ''
+    elif os.getcwd().lower().endswith('NeuralCIs'):
+        dirname = 'examples/biserial_partial_correlation'
+    else:
+        raise Exception('What directory are we in??')
+
+    return os.path.join(dirname, basename)
+
+
+def get_scalar_params(
+        params: Dict[str, Tensor1[tf32, Batch]]
+) -> Dict[str, float]:
+
+    if np.all([tf.reduce_min(p) == tf.reduce_max(p) for p in params.values()]):
+        return {n: float(p[0]) for n, p in params.items()}
+    else:
+        raise Exception('There are multiple different param values per param!')
 
 
 def param_run_filename(
         save_directory: str,
         layer_order_summary: str,
         params_index: int,
-        params: Dict[str, Tensor0[tf32]],
+        params: Dict[str, Tensor1[tf32, Batch]],
         num_simulations_per_param: int,
 ) -> str:
 
+    params = get_scalar_params(params)
     power_percent = int(params["target_power"] * 100)
     return (f'{save_directory}/'
             f'pars{params_index}'

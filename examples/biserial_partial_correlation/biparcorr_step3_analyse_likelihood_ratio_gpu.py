@@ -37,11 +37,9 @@ def profile_pvalues_for_one_params(
         batch_size: int = 500,
 ):
 
-    generator = tf.random.Generator.from_seed(param_sample_index,
-                                              tf.random.Algorithm.PHILOX)
-
     ps = []
     num_batches = num_simulations // batch_size
+    biparcorr.start_first_batch_for_param_sample(param_sample_index)
     start = time.perf_counter()
     for batch_num in tqdm(range(num_batches)):
         ps_batch = lr.ps_for_batch(
@@ -52,7 +50,6 @@ def profile_pvalues_for_one_params(
             tf.cast(params_human['n'], tf.int64),
             params_human['rho_ab_partial_power'],
             batch_size,
-            generator,
             DO_L_BFGS,
         )
         ps.append(ps_batch)

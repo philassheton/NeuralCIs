@@ -15,8 +15,8 @@ import time
 # typing
 from typing import Dict
 from neuralcis.common import Batch, Samples, Stats, Ys
-from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
-from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
+from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
+from tensor_annotations.tensorflow import float32 as tf32
 
 
 # No need for N_MIN as they are sampled from the network
@@ -30,16 +30,13 @@ BATCH_SIZE = 1_000
 def ps_neural_tf(
         cis: NeuralCIs,
         stats: Tensor3[tf32, Batch, Samples, Stats],
-        batch_size: int,
-        **params: Tensor0[tf32],
+        **params_human: Tensor1[tf32, Batch],
 ):
 
-    params_human = {name: tf.repeat(param, (batch_size,))
-                    for name, param in params.items()}
-
-    correlations = biparcorr.estimate_correlations_safe(stats, params['n'])
+    correlations = biparcorr.estimate_correlations_safe(stats,
+                                                        params_human['n'])
     rho_ab_hat, rho_bc_hat, rho_ac_hat = tf.unstack(correlations, axis=1)
-    prop_a_hat: Tensor1 = tf.reduce_sum(stats[:, :, 0], axis=1) / params['n']  # type: ignore
+    prop_a_hat = tf.reduce_sum(stats[:, :, 0], axis=1) / params_human['n']
 
     params_net = cis._params_human_to_net(**params_human)
     stats_net = cis._stats_human_to_net(
@@ -56,15 +53,14 @@ def ps_neural_tf(
 
 @tf.function(jit_compile=True)
 def ps_for_batch(
-    rho_ab_partial: Tensor0[tf32],
-    rho_bc: Tensor0[tf32],
-    rho_ac: Tensor0[tf32],
-    prop_a: Tensor0[tf32],
-    n: Tensor0[ti64],
-    rho_ab_partial_power: Tensor0[tf32],
+    rho_ab_partial: Tensor1[tf32, Batch],
+    rho_bc: Tensor1[tf32, Batch],
+    rho_ac: Tensor1[tf32, Batch],
+    prop_a: Tensor1[tf32, Batch],
+    n: Tensor1[tf32, Batch],
+    rho_ab_partial_power: Tensor1[tf32, Batch],
     cis: NeuralCIs,
     batch_size: int,
-    generator: tf.random.Generator,
 ) -> Tensor2[tf32, Batch, Ys]:
 
     stats = biparcorr.sampling_distribution_fn_raw(
@@ -74,16 +70,15 @@ def ps_for_batch(
         prop_a=prop_a,
         n=n,
         batch_size=batch_size,
-        generator=generator,
     )
 
-    ps_neural_null = ps_neural_tf(cis, stats, batch_size,
+    ps_neural_null = ps_neural_tf(cis, stats,
                                   rho_ab_partial=rho_ab_partial,
                                   rho_bc=rho_bc,
                                   rho_ac=rho_ac,
                                   prop_a=prop_a,
                                   n=tf.cast(n, tf.float32))
-    ps_neural_power = ps_neural_tf(cis, stats, batch_size,
+    ps_neural_power = ps_neural_tf(cis, stats,
                                    rho_ab_partial=rho_ab_partial_power,
                                    rho_bc=rho_bc,
                                    rho_ac=rho_ac,
@@ -119,18 +114,16 @@ def rho_for_power(
 
 
 def neural_pvalues_for_one_params(
-        params_human: dict[str, Tensor0[tf32]],
+        params_human: dict[str, Tensor1[tf32, Batch]],
         param_sample_index: int,
         num_simulations: int,
         cdf_summary_length: int = 1000,
         batch_size: int = 500,
 ):
 
-    generator = tf.random.Generator.from_seed(param_sample_index,
-                                              tf.random.Algorithm.PHILOX)
-
     ps = []
     num_batches = num_simulations // batch_size
+    biparcorr.start_first_batch_for_param_sample(param_sample_index)
     start = time.perf_counter()
     for batch_num in tqdm(range(num_batches)):
         ps_batch = ps_for_batch(
@@ -138,18 +131,17 @@ def neural_pvalues_for_one_params(
             params_human['rho_bc'],
             params_human['rho_ac'],
             params_human['prop_a'],
-            tf.cast(params_human['n'], tf.int64),
+            params_human['n'],
             params_human['rho_ab_partial_power'],
             cis,
             batch_size,
-            generator,
         )
         ps.append(ps_batch)
     ps = tf.concat(ps, axis=0)
 
     end = time.perf_counter()
     print(f"Elapsed: {end - start:.6f} seconds")
-    print(f"Processed parameters: {params_human}")
+    print(f"Processed parameters: {biparcorr.get_scalar_params(params_human)}")
     return biparcorr.make_cdf_summary(ps, cdf_summary_length)
 
 
@@ -166,8 +158,9 @@ def run_net_and_save_pvalue_summaries_for_params(
 
     for params_num in range(params_num_to_continue_from, num_param_samples):
         print(params_num)
-        this_params = {name: param[params_num]
-                       for name, param in params_human.items()}
+        this_params = biparcorr.replicate_params(params_human,
+                                                 params_num,
+                                                 batch_size)
 
         summary_tensor = neural_pvalues_for_one_params(
             params_human=this_params,

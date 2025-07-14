@@ -19,8 +19,11 @@ def log_likelihood(
         rho_bc: Tensor1[tf32, Batch],
         rho_ac: Tensor1[tf32, Batch],
         prop_a: Tensor1[tf32, Batch],
-        n: Tensor0[ti64],
+        n: Tensor1[tf32, Batch],
 ) -> Tensor1[tf32, Batch]:
+
+    # Note: the likelihood methods used here have the advantage that they
+    #       magically know the variances of b and c.
 
     rho_ab = (rho_bc * rho_ac
               + rho_ab_partial * tf.sqrt((1. - tf.square(rho_bc)) *
@@ -65,7 +68,7 @@ def log_likelihood(
 
 def log_likelihood_from_transformed_params(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n: Tensor0[ti64],
+        n: Tensor1[tf32, Batch],
         params_unknown_transformed: Tensor2[tf32, Batch, UnknownParams],
 ) -> Tensor1[tf32, Batch]:
 
@@ -80,8 +83,8 @@ def log_likelihood_from_transformed_params(
 
 def log_likelihood_from_transformed_params_fixed_ab(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n: Tensor0[ti64],
-        rho_ab_partial: Tensor1[tf32, Batch],
+        n: Tensor1[tf32, Batch],
+        rho_ab_partial_transformed: Tensor1[tf32, Batch],
         params_unknown_transformed: Tensor2[tf32, Batch, UnknownParams],
 ) -> Tensor1[tf32, Batch]:
 
@@ -101,8 +104,8 @@ def adam(
         v: Tensor2[tf32, Batch, UnknownParams],
         t0: Tensor0[ti64],
         steps: int,
-        lr_init: Tensor0[tf32],
-        lr_decay: Tensor0[tf32],
+        lr_init: Tensor1[tf32, Batch],
+        lr_decay: Union[Tensor0[tf32], Tensor1[tf32, Batch]],
 ) -> Tuple[Tensor2[tf32, Batch, UnknownParams],
            Tensor2[tf32, Batch, UnknownParams],
            Tensor2[tf32, Batch, UnknownParams],
@@ -127,7 +130,8 @@ def adam(
         m_hat = m / (1. - beta1**tf.cast(t0 + t + 1, tf.float32))
         v_hat = v / (1. - beta2**tf.cast(t0 + t + 1, tf.float32))
 
-        params_unknown_transformed += lr * m_hat / (tf.sqrt(v_hat) + 1e-8)
+        params_unknown_transformed += (lr[:, None] * m_hat
+                                       / (tf.sqrt(v_hat) + 1e-8))
         lr *= lr_decay
     return params_unknown_transformed, m, v, log_likelihood_per_item
 
@@ -187,10 +191,9 @@ def untransform_params(
 def multistep_adam(
         likelihood_function,
         params: Tensor2[tf32, Batch, UnknownParams],
-        n_float: Tensor0[tf32],
+        n: Tensor1[tf32, Batch],  # Just for setting learning rate.
 ) -> Tensor2[tf32, Batch, Ys]:
 
-    lr_init = 1./n_float
     m = tf.zeros_like(params)
     v = tf.zeros_like(params)
     tf_int = lambda t0: tf.constant(t0, dtype=tf.int64)
@@ -232,12 +235,11 @@ def multistep_adam(
 
 def likelihood_ratios_via_gradient_ascent(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        rho_ab_partial_null: Tensor0[tf32],
-        rho_ab_partial_power: Tensor0[tf32],
-        n: Tensor0[ti64],
+        rho_ab_partial_null: Tensor1[tf32, Batch],
+        rho_ab_partial_power: Tensor1[tf32, Batch],
+        n: Tensor1[tf32, Batch],
 ) -> Tensor2[tf32, Batch, Ys]:
 
-    n_float = tf.cast(n, tf.float32)
 
     log_likelihood_fn_alternative = functools.partial(
         log_likelihood_from_transformed_params,
@@ -289,30 +291,11 @@ def likelihood_ratios_via_gradient_ascent(
     ], axis=1)
 
     return diffs
-
-
-def negative_log_likelihood_from_transformed_params(
-        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n: Tensor0[ti64],
-        params_unknown_transformed: Tensor2[tf32, Batch, UnknownParams],
-) -> Tensor1[tf32, Batch]:
-
-    return -log_likelihood_from_transformed_params(
-        stats_tensor,
         n,
         params_unknown_transformed,
     )
 
 
-def negative_log_likelihood_from_transformed_params_fixed_ab(
-        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n: Tensor0[ti64],
-        rho_ab_partial: Tensor1[tf32, Batch],
-        params_unknown_transformed: Tensor2[tf32, Batch, UnknownParams],
-) -> Tensor1[tf32, Batch]:
-
-    return -log_likelihood_from_transformed_params_fixed_ab(
-        stats_tensor,
         n,
         rho_ab_partial,
         params_unknown_transformed
@@ -388,14 +371,13 @@ def likelihood_ratio_via_line_search(
 
 @tf.function(jit_compile=True)
 def ps_for_batch(
-    rho_ab_partial: Tensor0[tf32],
-    rho_bc: Tensor0[tf32],
-    rho_ac: Tensor0[tf32],
-    prop_a: Tensor0[tf32],
-    n: Tensor0[ti64],
-    rho_ab_partial_power: Tensor0[tf32],
+    rho_ab_partial: Tensor1[tf32, Batch],
+    rho_bc: Tensor1[tf32, Batch],
+    rho_ac: Tensor1[tf32, Batch],
+    prop_a: Tensor1[tf32, Batch],
+    n: Tensor1[tf32, Batch],
+    rho_ab_partial_power: Tensor1[tf32, Batch],
     batch_size: int,
-    generator: tf.random.Generator,
     do_l_bfgs: bool,
 ) -> Tensor2[tf32, Batch, Ys]:
 
@@ -406,7 +388,6 @@ def ps_for_batch(
         prop_a=prop_a,
         n=n,
         batch_size=batch_size,
-        generator=generator,
     )
 
     diffs = likelihood_ratios_via_gradient_ascent(stats,
