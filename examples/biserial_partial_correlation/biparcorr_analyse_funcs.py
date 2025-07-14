@@ -2,14 +2,16 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
 from datetime import datetime
+import os
 
 # typing
-from typing import Dict
+from typing import Dict, Optional
 from neuralcis.common import Batch, Samples, Stats, One
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32
 
 N_MAX = 100
+PARAMS_DICT_FILENAME = 'param_samples.npy'
 
 
 algorithm = tf.random.Algorithm.PHILOX
@@ -113,23 +115,27 @@ param_names = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
 
 
 def load_params_dict(
-        param_samples_file: str,
-) -> Dict[str, Tensor1[tf32, Samples]]:
+) -> Optional[Dict[str, Tensor1[tf32, Samples]]]:
 
-    params_grid = tf.convert_to_tensor(np.load(param_samples_file),
-                                       dtype=tf.float32)
-    param_tensors = tf.unstack(params_grid, axis=1)
-    params = {name: param for name, param in
-              zip(param_names, param_tensors)}
+    param_samples_file = convert_relative_path(PARAMS_DICT_FILENAME)
 
-    return params
+    if os.path.exists(param_samples_file):
+        params_grid = tf.convert_to_tensor(np.load(param_samples_file),
+                                           dtype=tf.float32)
+        param_tensors = tf.unstack(params_grid, axis=1)
+        params = {name: param for name, param in
+                  zip(param_names, param_tensors)}
+        return params
+
+    else:
+        return None
 
 
 def save_params_dict(
-        param_samples_file: str,
         params: Dict[str, Tensor1[tf32, Samples]],
 ) -> None:
 
+    param_samples_file = convert_relative_path(PARAMS_DICT_FILENAME)
     param_tensors = [params[name] for name in param_names]
     params_grid = tf.stack(param_tensors, axis=1)
     np.save(param_samples_file, params_grid.numpy())

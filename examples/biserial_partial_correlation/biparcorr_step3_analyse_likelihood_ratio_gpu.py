@@ -104,8 +104,8 @@ elif os.getcwd().lower().endswith('NeuralCIs'):
 else:
     raise Exception('What directory are we in??')
 
-save_directory = os.path.join(path, 'param_runs')
-param_samples_file = os.path.join(path, 'param_samples.npy')
+save_directory = biparcorr.convert_relative_path('param_runs')
+param_samples_file = biparcorr.convert_relative_path('param_samples.npy')
 
 os.makedirs(save_directory, exist_ok=True)
 params = biparcorr.load_params_dict(param_samples_file)

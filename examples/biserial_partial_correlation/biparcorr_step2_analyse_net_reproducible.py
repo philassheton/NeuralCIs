@@ -180,14 +180,13 @@ def run_net_and_save_pvalue_summaries_for_params(
 
 
 def load_or_generate_params_dict(
-        param_samples_file: str,
         cis: NeuralCIs,
         num_samples_if_no_file: int,
 ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-    if os.path.exists(param_samples_file):
-        print('Loading previous param samples!')
-        params = biparcorr.load_params_dict(param_samples_file)
+    params = biparcorr.load_params_dict()
+    if params is not None:
+        print('Loaded previous param samples!')
     else:
         print('Generating new param samples!!')
         params = cis.sample_params(NUM_PARAM_SAMPLES)
@@ -200,7 +199,7 @@ def load_or_generate_params_dict(
             params['n'],
             params['target_power'],
             alpha=0.05)
-        biparcorr.save_params_dict(param_samples_file, params)
+        biparcorr.save_params_dict(params)
 
     return params
 
@@ -210,8 +209,7 @@ param_samples_file = 'param_samples.npy'
 
 os.makedirs(save_directory, exist_ok=True)
 cis = NeuralCIs.load('saved_model', 'testing')
-params = load_or_generate_params_dict(param_samples_file, cis,
-                                      NUM_PARAM_SAMPLES)
+params = load_or_generate_params_dict(cis, NUM_PARAM_SAMPLES)
 
 run_net_and_save_pvalue_summaries_for_params(
     save_directory=save_directory,
