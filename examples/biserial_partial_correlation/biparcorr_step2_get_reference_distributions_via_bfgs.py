@@ -1,5 +1,6 @@
 import biparcorr_analyse_funcs as biparcorr
 import biparcorr_likelihood_ratio_funcs as lr
+from neuralcis import NeuralCIs
 
 import numpy as np
 import tensorflow as tf
@@ -137,7 +138,8 @@ def likelihoods_for_batch(
     return likelihoods
 
 
-params = biparcorr.load_params_dict()
+cis = NeuralCIs.load('saved_model', 'testing')
+params = biparcorr.load_or_generate_params_dict(cis)
 batch_size = 1000
 
 num_param_samples = biparcorr.get_num_param_samples(params)
@@ -152,6 +154,7 @@ for param_sample_num in tqdm(range(num_param_samples)):
     this_likelihoods = likelihoods_for_batch(batch_size,
                                              **params_repeated)
     likelihoods_list.append(this_likelihoods)
+
 
 likelihoods = tf.stack(likelihoods_list)
 

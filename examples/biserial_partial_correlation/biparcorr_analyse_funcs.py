@@ -1,3 +1,5 @@
+from neuralcis import NeuralCIs
+
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
@@ -12,6 +14,8 @@ from tensor_annotations.tensorflow import float32 as tf32
 
 N_MAX = 100
 PARAMS_DICT_FILENAME = 'param_samples.npy'
+NUM_PARAM_SAMPLES_LARGER = 3_000
+NUM_PARAM_SAMPLES_REFINED = 1_000
 
 
 algorithm = tf.random.Algorithm.PHILOX
@@ -84,7 +88,7 @@ def estimate_correlations_safe(
 
     # Returns zero correlation whenever all a values are the same.
 
-    stats_tensor = stats_tensor * n_mask(n)[:, :, None]                   # type: ignore
+    stats_tensor = stats_tensor * n_mask(n)[:, :, None]                        # type: ignore
     stats_mean = tf.reduce_sum(stats_tensor,
                                axis=1,
                                keepdims=True) / n[:, None, None]
@@ -114,6 +118,30 @@ param_names = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
                'rho_ab_partial_power', 'target_power']
 
 
+def rho_for_power(
+        rho_null,
+        n,
+        signed_target_power,
+        alpha: float = 0.05,
+):
+    normal = tfp.distributions.Normal(0., 1.)
+
+    target_power = tf.math.abs(signed_target_power)
+    alt_sign = tf.sign(signed_target_power)
+    alpha = tf.constant(alpha, dtype=tf.float32)
+    num_control_vars = tf.constant(1, dtype=tf.float32)
+
+    z_alpha = normal.quantile(1.0 - alpha / 2.0)
+    z_beta = normal.quantile(target_power)
+    delta_z = (z_alpha + z_beta) / tf.sqrt(n - num_control_vars - 3.0)
+    z_null = tf.atanh(tf.clip_by_value(rho_null, -0.999, 0.999))
+
+    z_alt = z_null + alt_sign * delta_z
+    rho_alt = tf.tanh(z_alt)
+
+    return rho_alt
+
+
 def load_params_dict(
 ) -> Optional[Dict[str, Tensor1[tf32, Samples]]]:
 
@@ -129,6 +157,32 @@ def load_params_dict(
 
     else:
         return None
+
+
+def load_or_generate_params_dict(
+        cis: NeuralCIs,
+) -> Dict[str, Tensor1[tf32, Samples]]:
+
+    params = load_params_dict()
+    if params is not None:
+        print('Loaded previous param samples!')
+    else:
+        print('Generating new param samples!!')
+        params = cis.sample_params(NUM_PARAM_SAMPLES_LARGER)
+        power_targets = np.random.choice(
+            [-0.50, -0.80, 0.50,  0.80],
+            NUM_PARAM_SAMPLES_LARGER,
+        )
+        params['target_power'] = tf.convert_to_tensor(power_targets,
+                                                      dtype=tf.float32)
+        params['rho_ab_partial_power'] = rho_for_power(
+            params['rho_ab_partial'],
+            params['n'],
+            params['target_power'],
+            alpha=0.05)
+        save_params_dict(params)
+
+    return params
 
 
 def save_params_dict(
