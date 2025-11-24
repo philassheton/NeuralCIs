@@ -7,10 +7,10 @@ from datetime import datetime
 import os
 
 # typing
-from typing import Dict, Optional
+from typing import Optional, Dict, Tuple
 from neuralcis.common import Batch, Samples, Stats, One
-from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
-from tensor_annotations.tensorflow import float32 as tf32
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
+from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
 
 N_MAX = 100
 PARAMS_DICT_FILENAME = 'param_samples.npy'
@@ -18,8 +18,20 @@ NUM_PARAM_SAMPLES_LARGER = 3_000
 NUM_PARAM_SAMPLES_REFINED = 1_000
 
 
-algorithm = tf.random.Algorithm.PHILOX
-generator = tf.random.Generator.from_seed(0, algorithm)
+def generate_random_normals(
+        row_shape: Tuple[int, int],
+        params_num: Tensor0[ti32],
+        first_row_num: Tensor0[ti32],
+        num_rows: int,
+) -> Tensor3:
+
+    row_nums = tf.range(num_rows) + first_row_num
+    return tf.map_fn(
+        lambda row: tf.random.stateless_normal(row_shape,
+                                               tf.stack([params_num, row])),
+        row_nums,
+        dtype=tf.float32,
+    )
 
 
 def sampling_distribution_fn_raw(
@@ -28,7 +40,9 @@ def sampling_distribution_fn_raw(
         rho_ac: Tensor1[tf32, Batch],
         prop_a: Tensor1[tf32, Batch],
         n: Tensor1[tf32, Batch],
-        batch_size: int,
+        params_num: Tensor0[ti32],
+        first_row_num: Tensor0[ti32],
+        num_rows: int,
 ) -> Tensor3[tf32, Batch, Samples, Stats]:
 
     rho_ab = (rho_bc * rho_ac
@@ -47,7 +61,10 @@ def sampling_distribution_fn_raw(
     cholesky = tf.linalg.cholesky(correlation_matrix)
 
     mask = n_mask(n)[:, None, :]
-    z = generator.normal((batch_size, 3, N_MAX)) * mask
+    z = generate_random_normals((3, N_MAX),
+                                params_num,
+                                first_row_num,
+                                num_rows) * mask
     z_correlated = tf.linalg.matmul(cholesky, z)
 
     a, b, c = tf.split(z_correlated, 3, axis=1)
@@ -65,13 +82,6 @@ def replicate_params(
 
     return {n: tf.repeat(p[param_sample_index], batch_size)
             for n, p in params_dict.items()}
-
-
-def start_first_batch_for_param_sample(param_sample_index: int) -> None:
-    state = tf.stack([algorithm.value,
-                      tf.cast(param_sample_index, tf.uint64),
-                      tf.constant(0, tf.uint64)], axis=0)
-    generator.reset(state)
 
 
 # n_mask ensures we only have n z values (the rest will be zeroed)

@@ -332,6 +332,7 @@ def likelihood_ratios_via_gradient_ascent(
     return diffs
 
 
+# TODO: Check that this is now reproducible even with JIT
 @tf.function(jit_compile=True)
 def ps_for_batch(
     rho_ab_partial: Tensor1[tf32, Batch],
@@ -340,7 +341,9 @@ def ps_for_batch(
     prop_a: Tensor1[tf32, Batch],
     n: Tensor1[tf32, Batch],
     rho_ab_partial_power: Tensor1[tf32, Batch],
-    batch_size: int,
+    params_num: Tensor0[ti32],
+    first_row_num: Tensor0[ti32],
+    num_rows: int,
     hyperparameter_overrides: Optional[Dict[str, Tensor0]] = None,
 ) -> Tensor2[tf32, Batch, Ys]:
 
@@ -355,7 +358,9 @@ def ps_for_batch(
         rho_ac=rho_ac,
         prop_a=prop_a,
         n=n,
-        batch_size=batch_size,
+        params_num=params_num,
+        first_row_num=first_row_num,
+        num_rows=num_rows,
     )
 
     diffs = likelihood_ratios_via_gradient_ascent(stats,

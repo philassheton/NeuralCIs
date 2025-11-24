@@ -11,8 +11,8 @@ from tqdm import tqdm
 
 # typing
 from neuralcis.common import Batch, Samples, Stats, Ys
-from tensor_annotations.tensorflow import Tensor1, Tensor3
-from tensor_annotations.tensorflow import float32 as tf32
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor3
+from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
 
 
 def likelihoods_via_line_search(
@@ -119,19 +119,24 @@ def likelihoods_via_line_search(
 
 @tf.function
 def likelihoods_for_batch(
-        batch_size: int,
-        **params_per_batch_sample: Tensor1[tf32, Batch],
+        params_num: Tensor0[ti32],
+        first_sim_num: Tensor0[ti32],
+        num_sims: int,
+        **params: Tensor0[tf32],
 ):
 
+    params = {n: tf.repeat(p, num_sims) for n, p in params.items()}
     line_search_args = [
-        params_per_batch_sample[key] for key in [
+        params[key] for key in [
             'rho_ab_partial', 'rho_ab_partial_power',
             'rho_bc', 'rho_ac', 'prop_a', 'n'
         ]
     ]
-    rho_ab_partial_power = params_per_batch_sample.pop('rho_ab_partial_power')
-    stats = biparcorr.sampling_distribution_fn_raw(batch_size=batch_size,
-                                                   **params_per_batch_sample)
+    params.pop('rho_ab_partial_power')
+    stats = biparcorr.sampling_distribution_fn_raw(params_num=params_num,
+                                                   first_row_num=first_sim_num,
+                                                   num_rows=num_sims,
+                                                   **params)
     line_search_args += [stats]
     likelihoods = likelihoods_via_line_search(*line_search_args)
 
@@ -140,23 +145,28 @@ def likelihoods_for_batch(
 
 cis = NeuralCIs.load('saved_model', 'testing')
 params = biparcorr.load_or_generate_params_dict(cis)
-batch_size = 1000
-
+batch_size = 500
+start_from_param_num = 0
+num_sims_per_param_sample = 1000
 num_param_samples = biparcorr.get_num_param_samples(params)
-target_powers = params.pop('target_power')
+params.pop('target_power')
 
-likelihoods_list = []
-for param_sample_num in tqdm(range(num_param_samples)):
-    biparcorr.start_first_batch_for_param_sample(param_sample_num)
-    params_repeated = biparcorr.replicate_params(params,
-                                                 param_sample_num,
-                                                 batch_size)
-    this_likelihoods = likelihoods_for_batch(batch_size,
-                                             **params_repeated)
-    likelihoods_list.append(this_likelihoods)
+assert num_sims_per_param_sample % batch_size == 0
 
+batch_size_tf = tf.constant(batch_size)
+for params_sample_num in tqdm(range(start_from_param_num, num_param_samples)):
+    batch_likelihoods = []
+    params_sample_num_tf = tf.constant(params_sample_num, tf.int32)
+    # TODO: All this shit used to be nicely factored into biparcorr lib!!
+    this_params = {n: p[params_sample_num] for n, p in params.items()}
+    for batch_num in range(num_sims_per_param_sample // batch_size):
+        this_likelihoods = likelihoods_for_batch(params_sample_num_tf,
+                                                 batch_size_tf * batch_num,
+                                                 batch_size,
+                                                 **this_params)
+        batch_likelihoods.append(this_likelihoods)
 
-likelihoods = tf.stack(likelihoods_list)
-
-likelihoods_path = biparcorr.convert_relative_path('exact_likelihoods.npy')
-np.save(likelihoods_path, likelihoods.numpy())
+    filename = f'exact_likelihoods_{params_sample_num:04d}.npy'
+    path = biparcorr.convert_relative_path(filename)
+    likelihoods = tf.concat(batch_likelihoods, axis=0)
+    np.save(path, likelihoods.numpy())
