@@ -1,6 +1,8 @@
 /ignore/
 /.idea/
 savedmodels/
+examples/
+scripts/
 
 
 # Byte-compiled / optimized / DLL files
