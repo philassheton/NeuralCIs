@@ -125,6 +125,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         self.simnet_weights = None
         self.train_initial_weights = train_initial_weights
         self.schedule_free = None
+        self._dataset = None
 
         _DataSaver.__init__(
             self,
@@ -269,7 +270,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             )
             callbacks += [lr_scheduler]
 
-        history = super().fit(x=self.dataset_generator(),
+        history = super().fit(x=self.dataset,
                               steps_per_epoch=steps_per_epoch,
                               epochs=epochs,
                               verbose=verbose,
@@ -328,13 +329,19 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             yield self.simulate_training_data()
 
     def dataset_generator(self) -> tf.data.Dataset:
-        sample_data = self.simulate_training_data()
-        data_shape = self.get_data_signature(sample_data)
+        example_data = self.simulate_training_data()
+        data_shape = self.get_data_signature(example_data)
         dataset = tf.data.Dataset.from_generator(self.data_generator,
                                                  output_signature=data_shape)
         dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
         return dataset
+
+    @property
+    def dataset(self) -> tf.data.Dataset:
+        if self._dataset is None:
+            self._dataset = self.dataset_generator()
+        return self._dataset
 
     ###########################################################################
     #
