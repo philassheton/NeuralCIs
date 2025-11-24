@@ -334,7 +334,7 @@ def likelihood_ratios_via_gradient_ascent(
 
 # TODO: Check that this is now reproducible even with JIT
 @tf.function(jit_compile=True)
-def ps_for_batch(
+def likelihoods_for_batch(
     rho_ab_partial: Tensor1[tf32, Batch],
     rho_bc: Tensor1[tf32, Batch],
     rho_ac: Tensor1[tf32, Batch],
@@ -363,15 +363,42 @@ def ps_for_batch(
         num_rows=num_rows,
     )
 
-    diffs = likelihood_ratios_via_gradient_ascent(stats,
-                                                  rho_ab_partial,
-                                                  rho_ab_partial_power,
-                                                  rho_bc,
-                                                  rho_ac,
-                                                  prop_a,
-                                                  n,
-                                                  **hyperparameters)
+    log_likelihoods = log_likelihoods_via_gradient_ascent(stats,
+                                                         rho_ab_partial,
+                                                         rho_ab_partial_power,
+                                                         rho_bc,
+                                                         rho_ac,
+                                                         prop_a,
+                                                         n,
+                                                         **hyperparameters)
 
-    ps_lr = tf.math.igammac(0.5, 0.5 * 2.0*diffs)
+    return log_likelihoods
 
+
+def ps_for_batch(
+        rho_ab_partial: Tensor1[tf32, Batch],
+        rho_bc: Tensor1[tf32, Batch],
+        rho_ac: Tensor1[tf32, Batch],
+        prop_a: Tensor1[tf32, Batch],
+        n: Tensor1[tf32, Batch],
+        rho_ab_partial_power: Tensor1[tf32, Batch],
+        batch_size: int,
+        hyperparameter_overrides: Optional[Dict[str, Tensor0]] = None,
+) -> Tensor2[tf32, Batch, Ys]:
+
+    likelihoods = likelihoods_for_batch(
+        rho_ab_partial,
+        rho_bc,
+        rho_ac,
+        prop_a,
+        n,
+        rho_ab_partial_power,
+        batch_size,
+        hyperparameter_overrides,
+    )
+    diffs = tf.stack([
+        likelihoods[:, 0] - likelihoods[:, 1],
+        likelihoods[:, 0] - likelihoods[:, 2],
+    ], axis=1)
+    ps_lr = tf.math.igammac(0.5, 0.5 * 2.0 * diffs)
     return ps_lr
