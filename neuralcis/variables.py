@@ -29,7 +29,7 @@ class Variable(ABC):
         self.min = min
         self.max = max
         min_and_max = tf.constant([min, max])
-        self.min_and_max_std_uniform = self.to_std_uniform(min_and_max)
+        self.min_and_max_net = self.to_net(min_and_max)
 
         self.param_hard_limits = None
         self.param_hard_min_net = None
@@ -46,7 +46,7 @@ class Variable(ABC):
             self,
             hard_min_human: Optional[float],
             hard_max_human: Optional[float],
-   ) -> None:
+    ) -> None:
 
         if hard_min_human is None and hard_max_human is None:
             self.param_hard_limits = False

@@ -35,6 +35,7 @@ class _IsInsideNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, KnownParams], bool],
                 Tensor2[tf32, Samples, KnownParams]
             ],
+            num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
@@ -42,14 +43,12 @@ class _IsInsideNet(_SimulatorNet):
             **network_setup_args,
     ) -> None:
 
-        num_estimate = num_unknown_param
-
         super().__init__(
             profile,
-            num_inputs_for_each_net=(num_estimate + num_known_param,),
+            num_inputs_for_each_net=(num_stat + num_known_param,),
             num_outputs_for_each_net=(1,),
-            instance_tf_variables_to_save=("estimate_mins",
-                                           "estimate_maxs",
+            instance_tf_variables_to_save=("stat_mins",
+                                           "stat_maxs",
                                            "known_param_mins",
                                            "known_param_maxs"),
             **network_setup_args
@@ -63,15 +62,15 @@ class _IsInsideNet(_SimulatorNet):
         self.preprocess_params_fn = preprocess_params_fn
         self.known_param_indices = known_param_indices
 
-        self.num_estimate = num_estimate
+        self.num_stat = num_stat
         self.num_known_param = num_known_param
 
         assert self.batch_size % 2 == 0
         self.batch_size_inside = self.batch_size // 2
         self.batch_size_dummy = self.batch_size // 2
 
-        self.estimate_mins = tf.Variable(tf.fill(num_estimate, np.nan))
-        self.estimate_maxs = tf.Variable(tf.fill(num_estimate, np.nan))
+        self.stat_mins = tf.Variable(tf.fill(num_stat, np.nan))
+        self.stat_maxs = tf.Variable(tf.fill(num_stat, np.nan))
         self.known_param_mins = tf.Variable(tf.fill(num_known_param, np.nan))
         self.known_param_maxs = tf.Variable(tf.fill(num_known_param, np.nan))
 
@@ -99,17 +98,17 @@ class _IsInsideNet(_SimulatorNet):
         #       mins and maxs AFTER TRAINING (or in a separate variable even)
         #       so that we get a robust boundary for inference time.
         params_init = self.sample_params(100000, preprocess=False)
-        estimates_init = self.sampling_distribution_fn(params_init)
-        estimate_mins = tfp.stats.percentile(estimates_init, q=00.1, axis=0)
-        estimate_maxs = tfp.stats.percentile(estimates_init, q=99.9, axis=0)
+        stats_init = self.sampling_distribution_fn(params_init)
+        stat_mins = tfp.stats.percentile(stats_init, q=00.1, axis=0)
+        stat_maxs = tfp.stats.percentile(stats_init, q=99.9, axis=0)
 
         param_mins = tf.reduce_min(params_init, axis=0)
         param_maxs = tf.reduce_max(params_init, axis=0)
         known_param_mins = tf.gather(param_mins, self.known_param_indices)
         known_param_maxs = tf.gather(param_maxs, self.known_param_indices)
 
-        self.estimate_mins.assign(estimate_mins)
-        self.estimate_maxs.assign(estimate_maxs)
+        self.stat_mins.assign(stat_mins)
+        self.stat_maxs.assign(stat_maxs)
         self.known_param_mins.assign(known_param_mins)
         self.known_param_maxs.assign(known_param_maxs)
 
@@ -124,14 +123,14 @@ class _IsInsideNet(_SimulatorNet):
     ]:
 
         params = self.sample_params(self.batch_size_inside, preprocess=True)
-        estimates_inside = self.sampling_distribution_fn(params)
+        stats_inside = self.sampling_distribution_fn(params)
         known_params_inside = tf.gather(params,
                                         self.known_param_indices,
                                         axis=1)
-        estimates_shape_dummy = (self.batch_size_dummy, self.num_estimate)
-        estimates_dummy = tf.random.uniform(estimates_shape_dummy,
-                                            minval=self.estimate_mins[None, :],
-                                            maxval=self.estimate_maxs[None, :])
+        stats_shape_dummy = (self.batch_size_dummy, self.num_stat)
+        stats_dummy = tf.random.uniform(stats_shape_dummy,
+                                        minval=self.stat_mins[None, :],
+                                        maxval=self.stat_maxs[None, :])
         known_param_shape_dummy = (self.batch_size_dummy, self.num_known_param)
         known_params_dummy = tf.random.uniform(known_param_shape_dummy,
                                                minval=self.known_param_mins,
@@ -139,11 +138,11 @@ class _IsInsideNet(_SimulatorNet):
         known_params_dummy = self.preprocess_params_fn(known_params_dummy,
                                                        known_params_only=True)
 
-        estimates = tf.concat([estimates_inside, estimates_dummy], axis=0)
+        stats = tf.concat([stats_inside, stats_dummy], axis=0)
         known_params = tf.concat([known_params_inside, known_params_dummy],
                                  axis=0)
 
-        input_blob = (estimates, known_params)
+        input_blob = (stats, known_params)
 
         target_blob = tf.concat([tf.ones(self.batch_size_inside),
                                  tf.zeros(self.batch_size_dummy)], axis=0)
@@ -165,8 +164,8 @@ class _IsInsideNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        estimates, known_params = input_blob
-        input_tensor = tf.concat([estimates, known_params], axis=1)
+        stats, known_params = input_blob
+        input_tensor = tf.concat([stats, known_params], axis=1)
         net_inputs = (input_tensor,)
         return net_inputs
 
@@ -188,22 +187,22 @@ class _IsInsideNet(_SimulatorNet):
     @tf.function
     def is_inside_sampled_region(
             self,
-            estimates: Tensor2[tf32, Samples, Stats],
+            stats: Tensor2[tf32, Samples, Stats],
             known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor1[ttf.bool, Samples]:
 
         threshold = common.IS_INSIDE_NET_THRESHOLD
-        net_says_inside = self.call_tf((estimates, known_params)) > threshold
-        bounds_say_estimates_inside = (
-            (estimates >= self.estimate_mins[None, :]) &
-            (estimates <= self.estimate_maxs[None, :])
+        net_says_inside = self.call_tf((stats, known_params)) > threshold
+        bounds_say_stats_inside = (
+            (stats >= self.stat_mins[None, :]) &
+            (stats <= self.stat_maxs[None, :])
         )
         bounds_say_known_params_inside = (
             (known_params >= self.known_param_mins[None, :]) &
             (known_params <= self.known_param_maxs[None, :])
         )
         is_inside = (net_says_inside[:, 0] &
-                     tf.reduce_all(bounds_say_estimates_inside, axis=1) &
+                     tf.reduce_all(bounds_say_stats_inside, axis=1) &
                      tf.reduce_all(bounds_say_known_params_inside, axis=1))
 
         return is_inside

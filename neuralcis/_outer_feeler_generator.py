@@ -12,7 +12,7 @@ from . import common
 
 # typing
 from typing import Optional, Callable, Tuple
-from .common import Samples, Stats, Params, UnknownParams
+from .common import Samples, Stats, Params, UnknownParams, KnownParams
 from .common import ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
@@ -84,7 +84,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             ],
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
-                Tensor2[tf32, Samples, Stats],  # -> ys
+                Tensor2[tf32, Samples, Stats],     # -> ys
             ],
             preprocess_params_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
@@ -100,9 +100,14 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
                  Optional[bool]],
                 Tensor2[ttf.bool, Samples, Params]
             ],
+            estimates_fn: Callable[
+                [Tensor2[tf32, Samples, Stats],
+                 Tensor2[tf32, Samples, KnownParams]],
+                Tensor2[tf32, Samples, UnknownParams],
+            ],
             num_unknown_param: int,
             num_known_param: int,
-            stats_widths: Tensor1[tf32, Stats],
+            estimates_widths: Tensor1[tf32, UnknownParams],
             profile: str,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
             sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
@@ -124,6 +129,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         self.preprocess_params_fn = preprocess_params_fn
         self.inside_inner_fn = inside_inner_fn
         self.params_is_valid_fn = params_is_valid_fn
+        self.estimates_fn = estimates_fn
 
         # TODO: Eventually decouple num_unknown_param from num_estimate
         self.num_estimate = num_unknown_param
@@ -138,7 +144,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
 
-        self.stats_widths = stats_widths
+        self.estimates_widths = estimates_widths
 
         # https://eurekastatistics.com/beta-distribution-pdf-grapher/
         self.beta = tfp.distributions.Beta(concentration1=1.,
@@ -468,7 +474,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     def random_params_step(
             self,
             params: Tensor2[tf32, Chains, Params],
-            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
+            cov_chol: Tensor3[tf32, Chains, UnknownParams, UnknownParams],
     ) -> Tensor2[tf32, Chains, Params]:
 
         # TODO: Nothing currently to stop a step into an invalid param
@@ -496,7 +502,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     ) -> Tuple[
         Tensor2[tf32, Samples, Params],
         Tensor2[tf32, Samples, ImportanceIngredients],
-        Tensor3[tf32, Samples, Stats, Stats],
+        Tensor3[tf32, Samples, UnknownParams, UnknownParams],
     ]:
 
         params_preproc, mean, cov_chol, inv_chol, chol_det, hits_inner = \
@@ -522,7 +528,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         #       could potentially get away with a simple Cholesky factor of
         #       the "inside" training data.
         collision_prob_is_prop_to = tf.reduce_prod(
-            tf.linalg.diag_part(cov_chol) + self.stats_widths,
+            tf.linalg.diag_part(cov_chol) + self.estimates_widths,
             axis=1,
         )
         importance_if_overlaps = tf.constant(1.) / collision_prob_is_prop_to
@@ -572,9 +578,9 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             params: Tensor2[tf32, Chains, Params],
     ) -> Tuple[
         Tensor2[tf32, Chains, Params],
-        Tensor2[tf32, Chains, Stats],
-        Tensor3[tf32, Chains, Stats, Stats],
-        Tensor3[tf32, Chains, Stats, Stats],
+        Tensor2[tf32, Chains, UnknownParams],
+        Tensor3[tf32, Chains, UnknownParams, UnknownParams],
+        Tensor3[tf32, Chains, UnknownParams, UnknownParams],
         Tensor1[tf32, Chains],
         Tensor1[tf32, Chains],
     ]:
@@ -582,9 +588,12 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         num_chains, _ = params.shape
         params_pp = self.preprocess_params_fn(params)
         params_repeated = tf.repeat(params_pp, self.sample_size, axis=0)
-        estimates = self.sampling_distribution_fn(params_repeated)
+        known_params_repeated = params_repeated[:, -self.num_known_param:]
 
-        inside_inner = self.inside_inner_fn(estimates, params_repeated)
+        stats = self.sampling_distribution_fn(params_repeated)
+        estimates = self.estimates_fn(stats, known_params_repeated)
+
+        inside_inner = self.inside_inner_fn(stats, params_repeated)
         inside_inner_grouped = tf.reshape(inside_inner, (num_chains,
                                                          self.sample_size))
         hits_inner = tf.reduce_any(inside_inner_grouped, axis=1)
@@ -604,9 +613,9 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def covariance_cholesky_computation(
             self,
-            estimates: Tensor3[tf32, Chains, Samples, Stats],
-            estimates_mean: Tensor2[tf32, Chains, Stats],
-    ) -> Tensor3[tf32, Chains, Stats, Stats]:
+            estimates: Tensor3[tf32, Chains, Samples, UnknownParams],
+            estimates_mean: Tensor2[tf32, Chains, UnknownParams],
+    ) -> Tensor3[tf32, Chains, UnknownParams, UnknownParams]:
 
         # TODO: Check if tfp.stats.cholesky_covariance produces stable enough
         #       output consistently to remove this function.  Currently unused
@@ -625,7 +634,7 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             self,
             x: Tensor2[tf32, Chains, Params],
             mu: Tensor2[tf32, Chains, Params],
-            sigma_chol_inv: Tensor3[tf32, Chains, Stats, Stats],
+            sigma_chol_inv: Tensor3[tf32, Chains, UnknownParams, UnknownParams],
             sigma_chol_det: Tensor1[tf32, Chains],
     ) -> Tensor1[tf32, Chains]:
 
@@ -665,9 +674,10 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
     def get_smoothing_regions(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols: Tensor3[tf32, Samples, Stats, Stats],
+            chols: Tensor3[tf32, Samples, UnknownParams, UnknownParams],
             targets_peripheral: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols_peripheral: Tensor3[tf32, Samples, Stats, Stats],
+            chols_peripheral: Tensor3[tf32, Samples, UnknownParams,
+                                                     UnknownParams],
             mins: Tensor1[tf32, Params],
             maxs: Tensor1[tf32, Params],
     ) -> Tuple[

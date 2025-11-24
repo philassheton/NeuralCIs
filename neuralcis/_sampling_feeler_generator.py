@@ -10,7 +10,7 @@ from . import common
 
 # typing
 from typing import Optional, Callable, Tuple
-from .common import Samples, Stats, Params, UnknownParams
+from .common import Samples, Stats, Params, UnknownParams, KnownParams
 from .common import MinAndMax, ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations import tensorflow as ttf
@@ -76,7 +76,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     smallest_profile_found_in = FULL
     def __init__(
             self,
-            estimates_min_and_max: Tensor2[tf32, Stats, MinAndMax],
+            estimates_min_and_max: Tensor2[tf32, UnknownParams, MinAndMax],
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
                 Tensor2[tf32, Samples, Stats],  # -> ys
@@ -89,6 +89,11 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                 [Tensor2[tf32, Samples, Params],
                  Optional[bool]],
                 Tensor2[ttf.bool, Samples, Params]
+            ],
+            estimates_fn: Callable[
+                [Tensor2[tf32, Samples, Stats],
+                 Tensor2[tf32, Samples, KnownParams]],
+                Tensor2[tf32, Samples, UnknownParams],
             ],
             num_unknown_param: int,
             num_known_param: int,
@@ -109,16 +114,21 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
                                                            "sampled_chols",
                                                            "iteration_num"))
 
+        self.estimates_widths = None
+
         if self._skip_when_profile(profile):
             return
 
         self.sampling_distribution_fn = sampling_distribution_fn
         self.preprocess_params_fn = preprocess_params_fn
         self.params_is_valid_fn = params_is_valid_fn
+        self.estimates_fn = estimates_fn
+
         self.num_estimate = estimates_min_and_max.shape[0]
         self.estimates_min = estimates_min_and_max[:, 0]
         self.estimates_max = estimates_min_and_max[:, 1]
-        self.stats_widths = self.estimates_max - self.estimates_min
+        self.estimates_widths = self.estimates_max - self.estimates_min
+
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
         self.num_param = num_unknown_param + num_known_param
@@ -138,18 +148,6 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
         beta_params = common.FEELER_GENERATOR_BETA_DISTRIBUTION_BETA_AND_ALPHA
         self.beta = tfp.distributions.Beta(concentration1=beta_params,
                                            concentration0=beta_params)
-
-        # We will draw our very first param sample from the estimates box,
-        #   since we are for starters assuming that the estimates are indeed
-        #   estimates of the params, so that's probably a good place to start.
-        self.first_params_min = tf.concat([
-            self.estimates_min,
-            tf.repeat(common.PARAMS_MIN, num_known_param),
-        ], axis=0)
-        self.first_params_widths = tf.concat([
-            self.estimates_max - self.estimates_min,
-            tf.repeat(common.PARAMS_MAX - common.PARAMS_MIN, num_known_param),
-        ], axis=0)
 
         # See note 2 at the top of this script.  This computes an adjustment
         # of 1 / .82 for a self.sample_size of 100
@@ -291,9 +289,16 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def initialise_for_training(self):
         self.iteration_num.assign(0)
 
-        u = self.beta.sample((self.num_chains, self.num_param))
-        params = (u * self.first_params_widths[None, :] +
-                  self.first_params_min[None, :])
+        n = self.num_chains
+        u_estimate = self.beta.sample((n, self.num_estimate))
+        u_known_param = self.beta.sample((n, self.num_known_param))
+
+        estimates = (u_estimate * self.estimates_widths[None, :]
+                     + self.estimates_min[None, :])
+        known_params = (u_known_param * (common.PARAMS_MAX - common.PARAMS_MIN)
+                        + common.PARAMS_MIN)
+        params = tf.concat([estimates, known_params], axis=1)
+
         params_pp, mean, cov_chol, inv_chol, chol_det = \
             self.sample_statistics(params)
         importance_ingredients = self.importance_ingredients(params_pp,
@@ -465,7 +470,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def random_params_step(
             self,
             params: Tensor2[tf32, Chains, Params],
-            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
+            cov_chol: Tensor3[tf32, Chains, UnknownParams, UnknownParams],
     ) -> Tensor2[tf32, Chains, Params]:
 
         # TODO: Nothing currently to stop a step into an invalid param
@@ -491,7 +496,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     ) -> Tuple[
         Tensor2[tf32, Samples, Params],
         Tensor2[tf32, Samples, ImportanceIngredients],
-        Tensor3[tf32, Samples, Stats, Stats],
+        Tensor3[tf32, Samples, UnknownParams, UnknownParams],
     ]:
 
         params_preproc, mean, cov_chol, inv_chol, chol_det = \
@@ -506,8 +511,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def importance_ingredients(
             self,
             params: Tensor2[tf32, Chains, Params],
-            centroid: Tensor2[tf32, Chains, Stats],
-            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
+            centroid: Tensor2[tf32, Chains, UnknownParams],
+            cov_chol: Tensor3[tf32, Chains, UnknownParams, UnknownParams],
             chol_det: Tensor1[tf32, Chains],
     ) -> Tensor2[tf32, Chains, ImportanceIngredients]:
 
@@ -521,7 +526,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
 
         # TODO: Should we have twice the cov_chol to capture being 2SD?
         collision_prob_is_prop_to = tf.reduce_prod(
-            tf.linalg.diag_part(cov_chol) + self.stats_widths,
+            tf.linalg.diag_part(cov_chol) + self.estimates_widths,
             axis=1,
         )
         importance_if_overlaps = tf.constant(1.) / collision_prob_is_prop_to
@@ -568,8 +573,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def overlaps_estimates_box(
             self,
-            centroid: Tensor2[tf32, Chains, Stats],
-            cov_chol: Tensor3[tf32, Chains, Stats, Stats],
+            centroid: Tensor2[tf32, Chains, UnknownParams],
+            cov_chol: Tensor3[tf32, Chains, UnknownParams, UnknownParams],
     ) -> Tensor1[tf32, Chains]:
 
         # TODO: Quick substitution for now.  Instead of testing whether the
@@ -611,9 +616,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             params: Tensor2[tf32, Chains, Params],
     ) -> Tuple[
         Tensor2[tf32, Chains, Params],
-        Tensor2[tf32, Chains, Stats],
-        Tensor3[tf32, Chains, Stats, Stats],
-        Tensor3[tf32, Chains, Stats, Stats],
+        Tensor2[tf32, Chains, UnknownParams],
+        Tensor3[tf32, Chains, UnknownParams, UnknownParams],
+        Tensor3[tf32, Chains, UnknownParams, UnknownParams],
         Tensor1[tf32, Chains],
     ]:
 
@@ -633,12 +638,14 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             self,
             params_preprocessed: Tensor2[tf32, Chains, Params],
             num_chains: int,
-    ) -> Tensor3[tf32, Chains, Samples, Stats]:
+    ) -> Tensor3[tf32, Chains, Samples, UnknownParams]:
 
         params_repeated = tf.repeat(params_preprocessed,
                                     self.sample_size,
                                     axis=0)
-        estimates = self.sampling_distribution_fn(params_repeated)
+        known_params_repeated = params_repeated[:, -self.num_known_param:]
+        stats = self.sampling_distribution_fn(params_repeated)
+        estimates = self.estimates_fn(stats, known_params_repeated)
         estimates_grouped = tf.reshape(estimates, (num_chains,
                                                    self.sample_size,
                                                    self.num_estimate))
@@ -648,9 +655,9 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def covariance_cholesky_computation(
             self,
-            estimates: Tensor3[tf32, Chains, Samples, Stats],
-            estimates_mean: Tensor2[tf32, Chains, Stats],
-    ) -> Tensor3[tf32, Chains, Stats, Stats]:
+            estimates: Tensor3[tf32, Chains, Samples, UnknownParams],
+            estimates_mean: Tensor2[tf32, Chains, UnknownParams],
+    ) -> Tensor3[tf32, Chains, UnknownParams, UnknownParams]:
 
         # TODO: Check if tfp.stats.cholesky_covariance produces stable enough
         #       output consistently to remove this function.  Currently unused
@@ -669,7 +676,8 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
             self,
             x: Tensor2[tf32, Chains, Params],
             mu: Tensor2[tf32, Chains, Params],
-            sigma_chol_inv: Tensor3[tf32, Chains, Stats, Stats],
+            sigma_chol_inv: Tensor3[tf32, Chains, UnknownParams,
+                                                  UnknownParams],
             sigma_chol_det: Tensor1[tf32, Chains],
     ) -> Tensor1[tf32, Chains]:
 
@@ -709,9 +717,10 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     def get_smoothing_regions(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols: Tensor3[tf32, Samples, Stats, Stats],
+            chols: Tensor3[tf32, Samples, UnknownParams, UnknownParams],
             targets_peripheral: Tensor2[tf32, Samples, ImportanceIngredients],
-            chols_peripheral: Tensor3[tf32, Samples, Stats, Stats],
+            chols_peripheral: Tensor3[tf32, Samples, UnknownParams,
+                                                     UnknownParams],
             mins: Tensor1[tf32, Params],
             maxs: Tensor1[tf32, Params],
     ) -> Tuple[

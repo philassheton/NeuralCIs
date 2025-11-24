@@ -11,7 +11,8 @@ import tensorflow as tf
 
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2, float32 as tf32
-from .common import Samples, Stats, Params, KnownParams, MinAndMax
+from .common import Samples
+from .common import Stats, Params, UnknownParams, KnownParams, MinAndMax
 from typing import Optional, Callable, Sequence, Union
 
 
@@ -19,7 +20,7 @@ class _ParamSampler(_DataSaver):
     smallest_profile_found_in = TESTING
     def __init__(
             self,
-            estimates_min_and_max: Tensor2[tf32, Stats, MinAndMax],
+            estimates_min_and_max: Tensor2[tf32, UnknownParams, MinAndMax],
             sampling_distribution_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],  # params
                 Tensor2[tf32, Samples, Stats],  # -> ys
@@ -33,6 +34,12 @@ class _ParamSampler(_DataSaver):
                  Optional[bool]],
                 Tensor2[ttf.bool, Samples, Params]
             ],
+            estimates_fn: Callable[
+                [Tensor2[tf32, Samples, Stats],
+                 Tensor2[tf32, Samples, KnownParams]],
+                Tensor2[tf32, Samples, UnknownParams],
+            ],
+            num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
@@ -61,6 +68,7 @@ class _ParamSampler(_DataSaver):
             sampling_distribution_fn,
             preprocess_params_fn,
             params_is_valid_fn,
+            estimates_fn,
             num_unknown_param,
             num_known_param,
             profile,
@@ -94,6 +102,7 @@ class _ParamSampler(_DataSaver):
             sampling_distribution_fn,
             self.inner_sampling_net,
             preprocess_params_fn,
+            num_stat,
             num_unknown_param,
             num_known_param,
             known_param_indices,
@@ -107,9 +116,10 @@ class _ParamSampler(_DataSaver):
             preprocess_params_fn,
             self.is_inside,
             params_is_valid_fn,
+            estimates_fn,
             num_unknown_param,
             num_known_param,
-            self.inner_data_generator.stats_widths,
+            self.inner_data_generator.estimates_widths,
             profile,
             sample_size,
             sd_known,

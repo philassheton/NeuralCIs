@@ -94,6 +94,10 @@ class _NeuralCIsKWArgs():
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Tensor1[tf32, Samples]
             ],
+            estimates_fn: Callable[
+                [Tuple[Tensor1[tf32, Samples], ...]],
+                Tuple[Tensor1[tf32, Samples], ...]
+            ],
             unknown_param_names: Sequence[str],
             stat_names: Sequence[str],
             known_param_names: Sequence[str],
@@ -116,6 +120,7 @@ class _NeuralCIsKWArgs():
 
         self.sampling_distribution_fn = _TFFn.get(sampling_distribution_fn)
         self.contrast_fn = _TFFn.get(contrast_fn)
+        self.estimates_fn = _TFFn.get(estimates_fn)
 
         self.unknown_param_names = unknown_param_names
         self.stat_names = stat_names
@@ -135,6 +140,7 @@ class _NeuralCIsKWArgs():
         return self._wrap_up_kwargs(
             sampling_distribution_fn = self.sampling_distribution_fn,
             contrast_fn = self.contrast_fn,
+            estimates_fn = self.estimates_fn,
             unknown_param_names = self.unknown_param_names,
             stat_names = self.stat_names,
             known_param_names = self.known_param_names,
@@ -161,6 +167,9 @@ class _NeuralCIsKWArgs():
         )
         self.contrast_fn.save(
             foldername, "contrast_fn",
+        )
+        self.estimates_fn.save(
+            foldername, "estimates_fn",
         )
         self.transform_on_params_fn.save(
             foldername, "transform_on_params_fn",
@@ -197,6 +206,9 @@ class _NeuralCIsKWArgs():
             ),
             contrast_fn = _TFFn.load(
                 foldername, "contrast_fn",
+            ),
+            estimates_fn = _TFFn.load(
+                foldername, "estimates_fn",
             ),
             transform_on_params_fn = _TFFn.load(
                 foldername, "transform_on_params_fn"

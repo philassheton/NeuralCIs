@@ -5,7 +5,6 @@ import numpy as np
 import collections
 
 from . import common
-from . import sampling
 from ._param_sampler import _ParamSampler
 from ._p_net import _PNet
 from ._ci_net import _CINet
@@ -18,7 +17,7 @@ from typing import Tuple, Union, Callable, List, Sequence, Dict, Optional
 from typing import TypeVar, Type
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
-from .common import Samples, Stats, Params
+from .common import Samples, Stats, Params, KnownParams, UnknownParams
 from .variables import Variable
 import tensor_annotations.tensorflow as ttf
 
@@ -152,6 +151,10 @@ class NeuralCIs(_DataSaver):
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Tensor1[tf32, Samples]
             ],
+            estimates_fn: Callable[
+                [Tuple[Tensor1[tf32, Samples], ...]],
+                Tuple[Tensor1[tf32, Samples], ...]
+            ],
             unknown_param_names: Sequence[str],
             stat_names: Sequence[str],
             known_param_names: Sequence[str] = (),
@@ -192,6 +195,7 @@ class NeuralCIs(_DataSaver):
             variable_defs,
             sampling_distribution_fn,
             contrast_fn,
+            estimates_fn,
             unknown_param_names,
             stat_names,
             known_param_names,
@@ -225,14 +229,11 @@ class NeuralCIs(_DataSaver):
         for known_param_name in known_param_names:
             self.variable_defs()[known_param_name].make_known_param()
 
-        stats_min_and_max_std_uniform = tf.stack([
-            self.variable_defs()[stat].min_and_max_std_uniform
-            for stat in self.stat_names()
+        estimates_min_and_max = tf.stack([
+            self.variable_defs()[param].min_and_max_net
+            for param in self.param_names(unknown_params=True,
+                                          known_params=False)
         ], axis=0)
-        stats_min_and_max = sampling.uniform_from_std_uniform(
-            stats_min_and_max_std_uniform,
-            common.PARAMS_MIN, common.PARAMS_MAX
-        )
 
         assert (self._max_error_of_reverse_mapping().numpy() <
                 common.ERROR_ALLOWED_FOR_PARAM_MAPPINGS)
@@ -243,10 +244,12 @@ class NeuralCIs(_DataSaver):
             i + self.num_unknown_param for i in range(self.num_known_param)
         ]
         self.param_sampler = _ParamSampler(
-            stats_min_and_max,
+            estimates_min_and_max,
             self._sampling_dist_net_interface,
             self._preprocess_params_net_interface,
             self._param_is_valid_net_interface,
+            self._estimates_fn_net_interface,
+            self.num_stat,
             self.num_unknown_param,
             self.num_known_param,
             self.known_param_indices,
@@ -258,6 +261,7 @@ class NeuralCIs(_DataSaver):
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
             self._transform_on_params_fn_net_interface,
+            self.num_stat,
             self.num_unknown_param,
             self.num_known_param,
             self.known_param_indices,
@@ -292,14 +296,16 @@ class NeuralCIs(_DataSaver):
     #@tf.function
     def param_names(
             self,
-            known_params_only: bool = False,
+            unknown_params: bool = True,
+            known_params: bool = True,
     ) -> List[str]:
 
-        if known_params_only:
-            return list(self.kwargs.known_param_names)
-        else:
-            return (list(self.kwargs.unknown_param_names)
-                    + list(self.kwargs.known_param_names))
+        param_names = []
+        if unknown_params:
+            param_names += self.kwargs.unknown_param_names
+        if known_params:
+            param_names += self.kwargs.known_param_names
+        return param_names
 
     # @tf.function
     def num_param(
@@ -602,6 +608,23 @@ class NeuralCIs(_DataSaver):
         return contrasts
 
     @tf.function
+    def _estimates_fn_net_interface(
+            self,
+            stats_net: Tensor2[tf32, Samples, Stats],
+            known_params_net: Tensor2[tf32, Samples, KnownParams],
+    ) -> Tensor2[tf32, Samples, UnknownParams]:
+
+        stats_human = self._stats_net_to_human(stats_net)
+        known_params_human = self._params_net_to_human(known_params_net,
+                                                       known_params_only=True)
+        inputs_human = stats_human | known_params_human
+        unknown_params_human = self.kwargs.estimates_fn(**inputs_human)
+        unknown_params_net = self._params_human_to_net(**unknown_params_human,
+                                                       unknown_params=True,
+                                                       known_params=False)
+        return unknown_params_net
+
+    @tf.function
     def _transform_on_params_fn_net_interface(
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
@@ -630,7 +653,7 @@ class NeuralCIs(_DataSaver):
             known_params_only: bool = False,
     ) -> Tensor2[ttf.bool, Samples, Params]:
 
-        param_names = self.param_names(known_params_only)
+        param_names = self.param_names(unknown_params=not known_params_only)
         params_net_split = self._unstack_params_net(params_net,
                                                     known_params_only)
         vars = self.variable_defs()
@@ -656,7 +679,7 @@ class NeuralCIs(_DataSaver):
             known_params_only: bool = False,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        param_names = self.param_names(known_params_only)
+        param_names = self.param_names(unknown_params=not known_params_only)
         params_net_split = self._unstack_params_net(params_net,
                                                     known_params_only)
 
@@ -739,7 +762,7 @@ class NeuralCIs(_DataSaver):
             known_params_only: bool = False,
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        param_names = self.param_names(known_params_only)
+        param_names = self.param_names(unknown_params=not known_params_only)
         num_param = self.num_param(known_params_only)
         params_human = self._net_to_human(param_names, num_param, params_net)
 
@@ -748,15 +771,12 @@ class NeuralCIs(_DataSaver):
     @tf.function
     def _params_human_to_net(
             self,
-            known_params_only: bool = False,
+            unknown_params: bool = True,
+            known_params: bool = True,
             **params_human: Tensor1[tf32, Samples],
     ) -> Tensor2[tf32, Samples, Params]:
 
-        if known_params_only:
-            param_names = self.kwargs.known_param_names
-        else:
-            param_names = self.param_names()
-
+        param_names = self.param_names(unknown_params, known_params)
         return self._human_to_net(param_names, **params_human)
 
     @tf.function

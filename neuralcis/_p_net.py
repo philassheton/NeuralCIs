@@ -33,6 +33,7 @@ class _PNet(_DataSaver):
                 Tuple[Tensor2[tf32, Samples, Stats],
                       Tensor2[tf32, Samples, Params]]
             ],
+            num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
@@ -56,6 +57,7 @@ class _PNet(_DataSaver):
             self.param_sampler.sample_params,
             contrast_fn,
             transform_on_params_fn,
+            num_stat,
             num_unknown_param,
             num_known_param,
             known_param_indices,
