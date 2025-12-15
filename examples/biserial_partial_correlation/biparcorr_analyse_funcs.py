@@ -1,5 +1,3 @@
-from neuralcis import NeuralCIs
-
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
@@ -8,9 +6,22 @@ import os
 
 # typing
 from typing import Optional, Dict, Tuple
-from neuralcis.common import Batch, Samples, Stats, One
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
+
+
+# These could be imported from neuralcis, but for easier deployment on an
+#   instance, I want to avoid needing those unnecessary dependencies
+import typing
+from tensor_annotations import axes
+Batch = typing.NewType("Batch", axes.Axis)
+Samples = typing.NewType("Samples", axes.Axis)
+Stats = typing.NewType("Stats", axes.Axis)
+UnknownParams = typing.NewType("UnknownParams", axes.Axis)
+Ys = typing.NewType("Ys", axes.Axis)
+One = typing.NewType("One", axes.Axis)
+PairwiseCorrelations = typing.NewType("PairwiseCorrelations", axes.Axis)
+
 
 N_MAX = 100
 PARAMS_DICT_FILENAME = 'param_samples.npy'
@@ -94,7 +105,7 @@ def n_mask(n: Tensor1[tf32, Batch]) -> Tensor1[tf32, Samples]:
 def estimate_correlations_safe(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
         n: Tensor1[tf32, Batch],
-) -> Tensor2[tf32, Batch, 3]:
+) -> Tensor2[tf32, Batch, PairwiseCorrelations]:
 
     # Returns zero correlation whenever all a values are the same.
 

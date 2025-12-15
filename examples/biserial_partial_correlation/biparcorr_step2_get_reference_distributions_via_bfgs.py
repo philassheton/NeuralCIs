@@ -1,6 +1,5 @@
 import biparcorr_analyse_funcs as biparcorr
 import biparcorr_likelihood_ratio_funcs as lr
-from neuralcis import NeuralCIs
 
 import numpy as np
 import tensorflow as tf
@@ -10,9 +9,9 @@ import functools
 from tqdm import tqdm
 
 # typing
-from neuralcis.common import Batch, Samples, Stats, Ys
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
+from biparcorr_analyse_funcs import Batch, Samples, Stats, Ys
 
 
 def likelihoods_via_line_search(
