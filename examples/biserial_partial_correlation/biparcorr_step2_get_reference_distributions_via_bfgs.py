@@ -59,17 +59,8 @@ def likelihoods_via_line_search(
         stopping_condition=tfp.optimizer.converged_all,
     )
     params_unknown_transformed_alt = res_alt.position
-
-    res_alt = tfp.optimizer.bfgs_minimize(
-        lambda params_unknown_transformed: tfp.math.value_and_gradient(
-            neg_log_likelihood_fn_alternative,
-            params_unknown_transformed,
-        ),
-        params_unknown_transformed_alt,
-        stopping_condition=tfp.optimizer.converged_all,
-    )
     likelihood_alt = -neg_log_likelihood_fn_alternative(
-        res_alt.position,
+        params_unknown_transformed_alt,
         penalise_boundaries=False,
     )
 
@@ -78,7 +69,7 @@ def likelihoods_via_line_search(
             neg_log_likelihood_fn_null,
             params_unknown_transformed,
         ),
-        params_unknown_transformed_alt[:, 1:],
+        params_unknown_transformed_alt[:, 1:] + 0.01,                          # Need to add a 0.01 here as, if the values passed in already converged, it will crash with NaNs!!
         stopping_condition=tfp.optimizer.converged_all,
     )
     likelihood_null = -neg_log_likelihood_fn_null(
@@ -91,7 +82,7 @@ def likelihoods_via_line_search(
             neg_log_likelihood_fn_power_null,
             params_unknown_transformed,
         ),
-        params_unknown_transformed_alt[:, 1:],
+        params_unknown_transformed_alt[:, 1:] + 0.01,                          # Need to add a 0.01 here as, if the values passed in already converged, it will crash with NaNs!!
         stopping_condition=tfp.optimizer.converged_all,
     )
     likelihood_power_null = -neg_log_likelihood_fn_power_null(
