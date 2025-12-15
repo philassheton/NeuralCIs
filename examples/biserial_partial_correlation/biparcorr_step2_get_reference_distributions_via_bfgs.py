@@ -135,9 +135,11 @@ def likelihoods_for_batch(
 
 
 params = biparcorr.load_params_dict()
+
+
 batch_size = 500
 start_from_param_num = 0
-num_sims_per_param_sample = 1000
+num_sims_per_param_sample = 1_000_000
 num_param_samples = biparcorr.get_num_param_samples(params)
 params.pop('target_power')
 
