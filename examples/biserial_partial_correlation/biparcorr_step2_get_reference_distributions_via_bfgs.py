@@ -143,6 +143,13 @@ params.pop('target_power')
 
 assert num_sims_per_param_sample % batch_size == 0
 
+print("Compiling!")
+# Do an initial run to force a compile so that our timings are pure
+likelihoods_for_batch(tf.constant(0, tf.int32),
+                      tf.constant(0, tf.int32),
+                      batch_size,
+                      **{n: p[0] for n, p in params.items()})
+
 batch_size_tf = tf.constant(batch_size)
 for params_sample_num in tqdm(range(start_from_param_num, num_param_samples)):
     batch_likelihoods = []
