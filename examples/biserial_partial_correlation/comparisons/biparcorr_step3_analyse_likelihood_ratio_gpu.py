@@ -1,8 +1,9 @@
 import os
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
-import biparcorr_analyse_funcs as biparcorr
-import biparcorr_likelihood_ratio_funcs as lr
+from examples.biserial_partial_correlation.comparisons import \
+    biparcorr_analyse_funcs as biparcorr, \
+    biparcorr_likelihood_ratio_funcs as lr
 
 import tensorflow as tf
 import tensorflow_probability as tfp

@@ -1,11 +1,12 @@
-import biparcorr_analyse_funcs as biparcorr
+from examples.biserial_partial_correlation.comparisons import \
+    biparcorr_analyse_funcs as biparcorr
 
 import tensorflow as tf
 import tensorflow_probability as tfp
 
 # typing
 from typing import Union, Tuple
-from biparcorr_analyse_funcs import Batch, Samples, Stats, UnknownParams
+from examples.biserial_partial_correlation.comparisons.biparcorr_analyse_funcs import Batch, Samples, Stats, UnknownParams
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32
 

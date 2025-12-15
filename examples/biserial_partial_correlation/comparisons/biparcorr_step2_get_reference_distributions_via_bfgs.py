@@ -1,5 +1,6 @@
-import biparcorr_analyse_funcs as biparcorr
-import biparcorr_likelihood_ratio_funcs as lr
+from examples.biserial_partial_correlation.comparisons import \
+    biparcorr_analyse_funcs as biparcorr, \
+    biparcorr_likelihood_ratio_funcs as lr
 
 import numpy as np
 import tensorflow as tf
@@ -11,7 +12,7 @@ from tqdm import tqdm
 # typing
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
-from biparcorr_analyse_funcs import Batch, Samples, Stats, Ys
+from examples.biserial_partial_correlation.comparisons.biparcorr_analyse_funcs import Batch, Samples, Stats, Ys
 
 
 def likelihoods_via_line_search(
