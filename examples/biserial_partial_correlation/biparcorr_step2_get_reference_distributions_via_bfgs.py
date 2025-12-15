@@ -107,7 +107,7 @@ def likelihoods_via_line_search(
     return results
 
 
-@tf.function
+@tf.function(jit_compile=True)
 def likelihoods_for_batch(
         params_num: Tensor0[ti32],
         first_sim_num: Tensor0[ti32],
@@ -115,6 +115,7 @@ def likelihoods_for_batch(
         **params: Tensor0[tf32],
 ):
 
+    print("Compiling likelihoods_for_batch")
     params = {n: tf.repeat(p, num_sims) for n, p in params.items()}
     line_search_args = [
         params[key] for key in [
