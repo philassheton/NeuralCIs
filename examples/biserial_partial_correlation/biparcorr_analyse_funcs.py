@@ -25,8 +25,6 @@ PairwiseCorrelations = typing.NewType("PairwiseCorrelations", axes.Axis)
 
 N_MAX = 100
 PARAMS_DICT_FILENAME = 'param_samples.npy'
-NUM_PARAM_SAMPLES_LARGER = 3_000
-NUM_PARAM_SAMPLES_REFINED = 1_000
 
 
 def generate_random_normals(
@@ -178,32 +176,6 @@ def load_params_dict(
 
     else:
         return None
-
-
-def load_or_generate_params_dict(
-        cis: NeuralCIs,
-) -> Dict[str, Tensor1[tf32, Samples]]:
-
-    params = load_params_dict()
-    if params is not None:
-        print('Loaded previous param samples!')
-    else:
-        print('Generating new param samples!!')
-        params = cis.sample_params(NUM_PARAM_SAMPLES_LARGER)
-        power_targets = np.random.choice(
-            [-0.50, -0.80, 0.50,  0.80],
-            NUM_PARAM_SAMPLES_LARGER,
-        )
-        params['target_power'] = tf.convert_to_tensor(power_targets,
-                                                      dtype=tf.float32)
-        params['rho_ab_partial_power'] = rho_for_power(
-            params['rho_ab_partial'],
-            params['n'],
-            params['target_power'],
-            alpha=0.05)
-        save_params_dict(params)
-
-    return params
 
 
 def save_params_dict(

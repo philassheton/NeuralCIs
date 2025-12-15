@@ -142,8 +142,7 @@ def likelihoods_for_batch(
     return likelihoods
 
 
-cis = NeuralCIs.load('saved_model', 'testing')
-params = biparcorr.load_or_generate_params_dict(cis)
+params = biparcorr.load_params_dict()
 batch_size = 500
 start_from_param_num = 0
 num_sims_per_param_sample = 1000
