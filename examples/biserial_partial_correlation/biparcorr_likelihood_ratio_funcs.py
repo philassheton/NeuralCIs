@@ -2,6 +2,7 @@ import biparcorr_analyse_funcs as biparcorr
 
 import tensorflow as tf
 import tensorflow_probability as tfp
+import numpy as np
 
 import functools
 
@@ -9,15 +10,20 @@ import functools
 from typing import Optional, Union, Tuple, Dict
 from biparcorr_analyse_funcs import Batch, Samples, Stats, UnknownParams, Ys
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
-from tensor_annotations.tensorflow import float32 as tf32, int64 as ti64
+from tensor_annotations.tensorflow import (float32 as tf32,
+                                           int64 as ti64,
+                                           int32 as ti32)
+
+
 
 
 MAX_ABS_RHO = 0.99
 HYPERPARAMETERS_DEFAULT = {
-    'adam_iterations': tf.constant(120, dtype=tf.int64),
+    'adam_iterations': tf.constant(40, dtype=tf.int64),
     'adam_polish_iterations': tf.constant(40, dtype=tf.int64),
+    'NR_polish_iterations': tf.constant(40, dtype=tf.int64),
     'learning_rate_multiplier': tf.constant(1.0, dtype=tf.float32),
-    'learning_rate_polish_decay': tf.constant(0.9, dtype=tf.float32),
+    'learning_rate_polish_decay': tf.constant(0.95, dtype=tf.float32),
     'beta1': tf.constant(0.8, dtype=tf.float32),
     'beta2': tf.constant(0.99, dtype=tf.float32),
 }
@@ -143,14 +149,17 @@ def adam(
         **hyperparameters: Tensor0,
 ) -> Tuple[Tensor2[tf32, Batch, UnknownParams],
            Tensor2[tf32, Batch, UnknownParams],
-           Tensor2[tf32, Batch, UnknownParams],
-           Tensor1[tf32, Batch]]:
+           Tensor2[tf32, Batch, UnknownParams]]:
+
+    print("tracing adam!!")
 
     beta1 = hyperparameters['beta1']
     beta2 = hyperparameters['beta2']
 
     lr = lr_init
     params_unknown_transformed = params_unknown_transformed_init
+    best_params = params_unknown_transformed
+    best_likelihoods = tf.ones_like(lr_init) * tf.constant(-np.inf, tf.float32)
 
     if UNROLL_WHEN_COMPILING:
         ts = range(int(steps))  # will create Python loop that gets unrolled.
@@ -163,23 +172,77 @@ def adam(
             log_likelihood_per_item = likelihood_function(
                 params_unknown_transformed
             )
-            log_likelihood = tf.reduce_sum(log_likelihood_per_item)
-        gradient = tape.gradient(log_likelihood, params_unknown_transformed)
+        gradient = tape.gradient(log_likelihood_per_item, params_unknown_transformed)
+
+        is_best_so_far = log_likelihood_per_item > best_likelihoods
+        best_params = tf.where(is_best_so_far[:, None],
+                               params_unknown_transformed,
+                               best_params)
+        best_likelihoods = tf.where(is_best_so_far,
+                                    log_likelihood_per_item,
+                                    best_likelihoods)
 
         one = tf.constant(1.0, tf.float32)
+        one_int = tf.constant(1, tf.int64)
         m = beta1 * m + (one - beta1) * gradient
         v = beta2 * v + (one - beta2) * tf.square(gradient)
-        m_hat = m / (1. - beta1**tf.cast(t0 + t + 1, tf.float32))
-        v_hat = v / (1. - beta2**tf.cast(t0 + t + 1, tf.float32))
+        m_hat = m / (1. - beta1**tf.cast(t0 + t + one_int, tf.float32))
+        v_hat = v / (1. - beta2**tf.cast(t0 + t + one_int, tf.float32))
 
         params_unknown_transformed += (lr[:, None] * m_hat
                                        / (tf.sqrt(v_hat) + 1e-8))
         lr *= lr_decay
-    return params_unknown_transformed, m, v, log_likelihood_per_item
+
+    return best_params, m, v
 
 
 if not UNROLL_WHEN_COMPILING:
     adam = tf.function(adam, jit_compile=True)
+
+
+def newton_raphson(
+        likelihood_function,
+        params_unknown_transformed_init: Tensor2[tf32, Batch, UnknownParams],
+        steps: Tensor0[ti64],
+) -> Tuple[Tensor2[tf32, Batch, UnknownParams]]:
+
+    params_unknown_transformed = params_unknown_transformed_init
+    best_params = params_unknown_transformed
+    best_likelihoods = (tf.ones_like(params_unknown_transformed[:, 0])
+                        * tf.constant(-np.inf, tf.float32))
+
+    if UNROLL_WHEN_COMPILING:
+        ts = range(int(steps))  # will create Python loop that gets unrolled.
+    else:
+        ts = tf.range(steps)  # will create a tf loop that doesn't get unrolled
+
+    for t in ts:
+        with tf.GradientTape() as tape2:
+            tape2.watch(params_unknown_transformed)
+            with tf.GradientTape() as tape1:
+                tape1.watch(params_unknown_transformed)
+                log_likelihood_per_item = likelihood_function(
+                    params_unknown_transformed
+                )
+            gradient = tape1.gradient(log_likelihood_per_item,
+                                      params_unknown_transformed)
+        hessian = tape2.batch_jacobian(gradient,
+                                       params_unknown_transformed)
+
+        is_best_so_far = log_likelihood_per_item > best_likelihoods
+        best_params = tf.where(is_best_so_far[:, None],
+                               params_unknown_transformed,
+                               best_params)
+        best_likelihoods = tf.where(is_best_so_far,
+                                    log_likelihood_per_item,
+                                    best_likelihoods)
+
+        params_unknown_transformed += tf.linalg.solve(
+            hessian,
+            gradient[:, :, None]
+        )[:, 0]
+
+    return best_params
 
 
 def transform_correlations(
@@ -235,31 +298,40 @@ def adam_and_polish(
     lr_decay = hyperparameters['learning_rate_polish_decay']
     iterations = hyperparameters['adam_iterations']
     iterations_polish = hyperparameters['adam_polish_iterations']
+    iterations_newton_raphson = hyperparameters['NR_polish_iterations']
 
     m = tf.zeros_like(params)
     v = tf.zeros_like(params)
 
-    params, m, v, _ = adam(
+    # TODO: consider whether better for m and v to follow through to polish
+    params, _, _ = adam(
         likelihood_function,
-        params, m, v, tf.constant(0, dtype=tf.int64),
+        params, m, v, tf.constant(0, tf.int64),
         steps=iterations,
         lr_init=lr_init,
         lr_decay=tf.constant(1.0),
         **hyperparameters,
     )
-    params, m, v, log_likelihood = adam(
+    # tf.print("polish!")
+    params, m, v = adam(
         likelihood_function,
         params, m, v, iterations,
         steps=iterations_polish,
-        lr_init=lr_init,
+        lr_init=lr_init * 0.1,
         lr_decay=lr_decay,
         **hyperparameters,
+    )
+    params = newton_raphson(
+        likelihood_function,
+        params,
+        iterations_polish
     )
 
     return params
 
 
-def likelihood_ratios_via_gradient_ascent(
+@tf.function(jit_compile=True)
+def log_likelihoods_via_gradient_ascent(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
         rho_ab_partial_null: Tensor1[tf32, Batch],
         rho_ab_partial_power: Tensor1[tf32, Batch],
@@ -269,6 +341,8 @@ def likelihood_ratios_via_gradient_ascent(
         n: Tensor1[tf32, Batch],
         **hyperparameters,
 ) -> Tensor2[tf32, Batch, Ys]:
+
+    print("Tracing log_likelihoods_via_gradient_ascent")
 
     params_unknown_transformed_init = transform_params(
         rho_ab_partial_null,
@@ -292,21 +366,41 @@ def likelihood_ratios_via_gradient_ascent(
         stats_tensor, n, rho_ab_partial_power_trans,
     )
 
-    params_alt = adam_and_polish(
+    params_alt_init, _, _ = adam(
         log_likelihood_fn_alternative,
         params_unknown_transformed_init,
+        tf.zeros_like(params_unknown_transformed_init),
+        tf.zeros_like(params_unknown_transformed_init),
+        tf.constant(0, dtype=tf.int64),
+        steps=tf.constant(40, tf.int64),
+        lr_init=tf.repeat(0.1, len(n)),
+        lr_decay=tf.constant(0.99),
+        **hyperparameters,
+    )
+
+    # tf.print("Doing alt:")
+
+    params_alt = adam_and_polish(
+        log_likelihood_fn_alternative,
+        params_alt_init,
         n,
         **hyperparameters,
     )
+
+    # tf.print("Doing null:")
+
     params_null = adam_and_polish(
         log_likelihood_fn_null,
-        params_alt[:, 1:],
+        params_alt_init[:, 1:],
         n,
         **hyperparameters,
     )
+
+    # tf.print("Doing power:")
+
     params_power_null = adam_and_polish(
         log_likelihood_fn_power_null,
-        params_alt[:, 1:],
+        params_alt_init[:, 1:],
         n,
         **hyperparameters,
     )
@@ -325,12 +419,13 @@ def likelihood_ratios_via_gradient_ascent(
         penalise_boundaries=False,
     )
 
-    diffs = tf.stack([
-        log_likelihoods_alt - log_likelihoods_null,
-        log_likelihoods_alt - log_likelihoods_power_null,
+    log_likelihoods = tf.stack([
+        log_likelihoods_alt,
+        log_likelihoods_null,
+        log_likelihoods_power_null,
     ], axis=1)
 
-    return diffs
+    return log_likelihoods
 
 
 # TODO: Check that this is now reproducible even with JIT
@@ -347,6 +442,8 @@ def likelihoods_for_batch(
     num_rows: int,
     hyperparameter_overrides: Optional[Dict[str, Tensor0]] = None,
 ) -> Tensor2[tf32, Batch, Ys]:
+
+    print("Tracing!!")
 
     if hyperparameter_overrides is None:
         hyperparameters = HYPERPARAMETERS_DEFAULT
