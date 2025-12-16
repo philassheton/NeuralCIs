@@ -1,3 +1,5 @@
+import os
+
 from examples.biserial_partial_correlation.comparisons import \
     biparcorr_analyse_funcs as biparcorr, \
     biparcorr_likelihood_ratio_funcs as lr
@@ -113,6 +115,7 @@ def likelihoods_for_batch(
         params_num: Tensor0[ti32],
         first_sim_num: Tensor0[ti32],
         num_sims: int,
+        simulate_from_power_rho: bool = False,
         **params: Tensor0[tf32],
 ):
 
@@ -124,49 +127,66 @@ def likelihoods_for_batch(
             'rho_bc', 'rho_ac', 'prop_a', 'n'
         ]
     ]
-    params.pop('rho_ab_partial_power')
-    stats = biparcorr.sampling_distribution_fn_raw(params_num=params_num,
-                                                   first_row_num=first_sim_num,
-                                                   num_rows=num_sims,
-                                                   **params)
+    rho_ab_partial_power = params.pop('rho_ab_partial_power')
+    if simulate_from_power_rho:
+        params['rho_ab_partial'] = rho_ab_partial_power
+    stats = biparcorr.sampling_distribution_fn_raw(
+        params_num=params_num,
+        first_row_num=first_sim_num,
+        num_rows=num_sims,
+        seed_differently=simulate_from_power_rho,
+        **params,
+    )
     line_search_args += [stats]
     likelihoods = likelihoods_via_line_search(*line_search_args)
 
     return likelihoods
 
 
-params = biparcorr.load_params_dict()
+def run_bfgs_likelihoods(
+        file_prefix: str,
+        num_sims_per_param_sample: int,
+        start_from_param_num: int = 0,
+        batch_size: int = 500,
+        simulate_from_power_rho: bool = False,  # for idealized power
+) -> None:
+
+    params = biparcorr.load_params_dict()
+    num_param_samples = biparcorr.get_num_param_samples(params)
+    params.pop('target_power')
+
+    assert num_sims_per_param_sample % batch_size == 0
+
+    print("Compiling!")
+    # Do an initial run to force a compile so that our timings are pure
+    likelihoods_for_batch(tf.constant(0, tf.int32),
+                          tf.constant(0, tf.int32),
+                          batch_size,
+                          simulate_from_power_rho,
+                          **{n: p[0] for n, p in params.items()})
+
+    batch_size_tf = tf.constant(batch_size)
+    for params_sample_num in tqdm(range(start_from_param_num, num_param_samples)):
+        batch_likelihoods = []
+        params_sample_num_tf = tf.constant(params_sample_num, tf.int32)
+        # TODO: All this shit used to be nicely factored into biparcorr lib!!
+        this_params = {n: p[params_sample_num] for n, p in params.items()}
+        for batch_num in range(num_sims_per_param_sample // batch_size):
+            this_likelihoods = likelihoods_for_batch(params_sample_num_tf,
+                                                     batch_size_tf * batch_num,
+                                                     batch_size,
+                                                     simulate_from_power_rho,
+                                                     **this_params)
+            batch_likelihoods.append(this_likelihoods)
+
+        filename = f'data/{file_prefix}_{params_sample_num:04d}.npy'
+        path = biparcorr.convert_relative_path(filename)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        likelihoods = tf.concat(batch_likelihoods, axis=0)
+        np.save(path, likelihoods.numpy())
 
 
-batch_size = 500
-start_from_param_num = 0
-num_sims_per_param_sample = 1_000_000
-num_param_samples = biparcorr.get_num_param_samples(params)
-params.pop('target_power')
-
-assert num_sims_per_param_sample % batch_size == 0
-
-print("Compiling!")
-# Do an initial run to force a compile so that our timings are pure
-likelihoods_for_batch(tf.constant(0, tf.int32),
-                      tf.constant(0, tf.int32),
-                      batch_size,
-                      **{n: p[0] for n, p in params.items()})
-
-batch_size_tf = tf.constant(batch_size)
-for params_sample_num in tqdm(range(start_from_param_num, num_param_samples)):
-    batch_likelihoods = []
-    params_sample_num_tf = tf.constant(params_sample_num, tf.int32)
-    # TODO: All this shit used to be nicely factored into biparcorr lib!!
-    this_params = {n: p[params_sample_num] for n, p in params.items()}
-    for batch_num in range(num_sims_per_param_sample // batch_size):
-        this_likelihoods = likelihoods_for_batch(params_sample_num_tf,
-                                                 batch_size_tf * batch_num,
-                                                 batch_size,
-                                                 **this_params)
-        batch_likelihoods.append(this_likelihoods)
-
-    filename = f'exact_likelihoods_{params_sample_num:04d}.npy'
-    path = biparcorr.convert_relative_path(filename)
-    likelihoods = tf.concat(batch_likelihoods, axis=0)
-    np.save(path, likelihoods.numpy())
+if __name__ == "__main__":
+    run_bfgs_likelihoods("bfgs_likelihoods", 1_000_000)
+    run_bfgs_likelihoods("bfgs_powersim_likelihoods", 10_000,
+                         simulate_from_power_rho=True)

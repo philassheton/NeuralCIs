@@ -52,7 +52,11 @@ def sampling_distribution_fn_raw(
         params_num: Tensor0[ti32],
         first_row_num: Tensor0[ti32],
         num_rows: int,
+        seed_differently: bool,
 ) -> Tensor3[tf32, Batch, Samples, Stats]:
+
+    if seed_differently:
+        params_num += 1_000_000_000
 
     rho_ab = (rho_bc * rho_ac
               + rho_ab_partial * tf.sqrt((1. - tf.square(rho_bc)) *
