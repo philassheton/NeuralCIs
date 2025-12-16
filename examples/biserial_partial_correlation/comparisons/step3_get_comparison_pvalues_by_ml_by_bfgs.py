@@ -179,7 +179,7 @@ def run_bfgs_likelihoods(
                                                      **this_params)
             batch_likelihoods.append(this_likelihoods)
 
-        filename = f'data/{file_prefix}_{params_sample_num:04d}.npy'
+        filename = biparcorr.data_filename(file_prefix, params_sample_num)
         path = biparcorr.convert_relative_path(filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         likelihoods = tf.concat(batch_likelihoods, axis=0)

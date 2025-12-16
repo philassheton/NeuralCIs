@@ -203,13 +203,23 @@ def get_num_param_samples(
     return num_param_samples
 
 
+def data_filename(
+        prefix: str,
+        params_sample_num: int,
+) -> str:
+
+    return f"data/{prefix}_{params_sample_num:04d}.npy"
+
+
 def convert_relative_path(basename: str) -> str:
-    if os.getcwd().endswith('biserial_partial_correlation'):
+    if os.getcwd().endswith('biserial_partial_correlation/comparisons'):
         dirname = ''
-    elif os.getcwd().lower().endswith('NeuralCIs'):
-        dirname = 'examples/biserial_partial_correlation'
+    elif os.getcwd().endswith('NeuralCIs'):
+        dirname = 'examples/biserial_partial_correlation/comparisons'
+    elif os.getcwd().lower().endswith('biserial_partial_correlation'):
+        dirname = 'comparisons'
     else:
-        raise Exception('What directory are we in??')
+        dirname = ''
 
     return os.path.join(dirname, basename)
 
@@ -224,25 +234,4 @@ def get_scalar_params(
         raise Exception('There are multiple different param values per param!')
 
 
-def param_run_filename(
-        save_directory: str,
-        layer_order_summary: str,
-        params_index: int,
-        params: Dict[str, Tensor1[tf32, Batch]],
-        num_simulations_per_param: int,
-) -> str:
-
-    params = get_scalar_params(params)
-    power_percent = int(params["target_power"] * 100)
-    return (f'{save_directory}/'
-            f'pars{params_index}'
-            f' {layer_order_summary}'
-            f' {datetime.now().strftime("%Y%m%d %H%M%S")}'
-            f' r_ab_p {params["rho_ab_partial"]:.4f}'
-            f' r_ab_p{power_percent:d}'
-            f' {params["rho_ab_partial_power"]:.4f}'
-            f' r_bc {params["rho_bc"]:.4f}'
-            f' r_ac {params["rho_ac"]:.4f}'
-            f' p_a {params["prop_a"]:.4f}'
-            f' n {int(params["n"]):d}'
-            f' runs {num_simulations_per_param}')
+if __name__ == '__main__':
