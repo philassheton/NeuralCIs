@@ -84,7 +84,7 @@ class _SequentialNet:
 
     @staticmethod
     def weights_filename(filename: str) -> str:
-        return f"{filename} {WEIGHTS}"
+        return f"{filename} {WEIGHTS}.weights.h5"
 
     @staticmethod
     def kwargs_filename(filename: str) -> str:
