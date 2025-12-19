@@ -259,7 +259,7 @@ class _SamplingFeelerGenerator(_DataSaver, tf.keras.Model):
     @tf.function
     def train_step(self, _):
         self.sampling_iteration()
-        return {}
+        return {"dummy_output": 999}  # Dummy stuff needed for Keras trainer
 
     def compute_chains(self) -> None:
         if tf.greater_equal(self.iteration_num, self.chain_length):
