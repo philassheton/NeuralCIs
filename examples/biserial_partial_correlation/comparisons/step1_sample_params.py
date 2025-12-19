@@ -14,11 +14,10 @@ from tensor_annotations.tensorflow import Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
 from examples.biserial_partial_correlation.comparisons.biparcorr_analyse_funcs import Samples
 
-
 NUM_PARAM_SAMPLES = 1000
 TARGET_RATE = 5e-5
 R_MAX = 0.99
-TARGET_POWER = 0.80
+MAX_TARGET_POWER = 0.90
 ALPHA = 0.05
 
 PARAM_SEEDS = {
@@ -28,6 +27,8 @@ PARAM_SEEDS = {
     'N': 3,
     'PROP_A': 4,
     'UP_DOWN': 5,
+    'POWER_INDEX': 6,
+    # EVERYTHING ABOVE 6 IS USED FOR POWER_INDEX TOO!!
 }
 SECONDARY_SEED = 42
 
@@ -41,6 +42,17 @@ def __sample_uniform(
     param_seed = PARAM_SEEDS[param_name]
     seed = tf.constant([SECONDARY_SEED, param_seed], dtype=tf.int32)
     return tf.random.stateless_uniform((number_to_draw,), seed, minval, maxval)
+
+
+def __sample_power_index(
+        draw_number: int,
+        maxval: int,
+) -> int:
+
+    main_seed = PARAM_SEEDS["POWER_INDEX"] + draw_number
+    seed = tf.constant([SECONDARY_SEED, main_seed], dtype=tf.int32)
+    tensor = tf.random.stateless_uniform((), seed, 0, maxval, dtype=tf.int32)
+    return tensor.numpy().item()
 
 
 def __prop_a_min_max(
@@ -105,8 +117,8 @@ def __rho_ab_partial_power_from_alt(
         rho_ab_partial: Tensor1[tf32, Samples],  # rho_ab from which we simulate
         rho_ab_min: Tensor1[tf32, Samples],
         rho_ab_max: Tensor1[tf32, Samples],
+        target_powers: Tensor1[tf32, Samples],
         alpha: float,
-        target_power: float,
 ) -> Tensor1[tf32, Samples]:
 
     pointbiserial_to_biserial = \
@@ -126,7 +138,7 @@ def __rho_ab_partial_power_from_alt(
     z_true = rho_biserial_to_z(rho_ab_partial)
 
     z_alpha = normal.quantile(1. - alpha / 2.)  # 1.96 for alpha=0.05
-    z_beta = normal.quantile(target_power)  # 0.84 for target_power=0.80
+    z_beta = normal.quantile(target_powers)  # 0.84 for target_power=0.80
 
     z_null_up = z_true + z_alpha + z_beta  # shift z_true enough to overcome...
     z_null_down = z_true - z_alpha - z_beta  # ...both test and required power
@@ -149,7 +161,10 @@ def __rho_ab_partial_power_from_alt(
                       tf.clip_by_value(z_null_up, z_min, z_max),
                       tf.clip_by_value(z_null_down, z_min, z_max))
 
-    return z_to_rho_biserial(z_null)
+    rho_ab_partial_power = z_to_rho_biserial(z_null)
+    assert tf.reduce_all((rho_ab_min - 1e-6 <= rho_ab_partial_power)
+                         & (rho_ab_partial_power <= rho_ab_max + 1e-6))
+    return rho_ab_partial_power
 
 
 def __partial_biserial_power(
@@ -183,6 +198,37 @@ def __partial_biserial_power(
     return power
 
 
+def sample_target_powers_uniformly_but_respecting_maxes(
+        max_target_powers: Tensor1[tf32, Samples],
+        maxval: float,
+        alpha: float,
+) -> Tensor1[tf32, Samples]:
+
+    # TODO: Kinda ugly converting to NumPy and back.  We need tf in this
+    #       script is for the stateless random stuff though.
+
+    max_target_powers = max_target_powers.numpy().tolist()
+    num_sims = len(max_target_powers)
+    possible_target_powers = np.linspace(alpha, maxval, num_sims).tolist()
+
+    ordered_indices = np.argsort(max_target_powers).tolist()
+    target_powers = np.zeros(len(max_target_powers))
+    for i in ordered_indices:
+        max_target_power = max_target_powers[i]
+        num_to_choose_from = np.sum(
+            np.array(possible_target_powers) <= max_target_power
+        )
+        if num_to_choose_from == 0:
+            target_power = max_target_power
+            possible_target_powers.pop(0)
+        else:
+            random_selection = __sample_power_index(i, num_to_choose_from)
+            target_power = possible_target_powers.pop(random_selection)
+        target_powers[i] = target_power
+
+    return tf.constant(target_powers, dtype=tf.float32)
+
+
 def sample_n_params(
         num_param: int,
 ) -> dict[str, Tensor1[tf32, Samples]]:
@@ -205,6 +251,28 @@ def sample_n_params(
     rho_bc = __sample_uniform(num_param, "RHO_BC", rho_bc_min, rho_bc_max)
     rho_ac = __sample_uniform(num_param, "RHO_AC", rho_ac_min, rho_ac_max)
 
+    rho_ab_partial_power_extreme = __rho_ab_partial_power_from_alt(
+        num_param,
+        n=n,
+        prop_a=prop_a,
+        rho_ab_partial=rho_ab_partial,
+        rho_ab_min=rho_ab_min,
+        rho_ab_max=rho_ab_max,
+        target_powers=tf.repeat(MAX_TARGET_POWER, num_param),
+        alpha=ALPHA,
+    )
+    max_target_powers_possible = __partial_biserial_power(
+        n=n,
+        prop_a=prop_a,
+        rho_ab_partial_alt=rho_ab_partial,                  # true parameter
+        rho_ab_partial_null=rho_ab_partial_power_extreme,   # null in the test
+        alpha=ALPHA,
+    )
+    target_powers = sample_target_powers_uniformly_but_respecting_maxes(
+        max_target_powers_possible,
+        maxval=MAX_TARGET_POWER,
+        alpha=ALPHA,
+    )
     rho_ab_partial_power = __rho_ab_partial_power_from_alt(
         num_param,
         n=n,
@@ -212,25 +280,21 @@ def sample_n_params(
         rho_ab_partial=rho_ab_partial,
         rho_ab_min=rho_ab_min,
         rho_ab_max=rho_ab_max,
+        target_powers=target_powers,
         alpha=ALPHA,
-        target_power=TARGET_POWER,
     )
-    rho_ab_partial_power = tf.clip_by_value(rho_ab_partial_power,
-                                            rho_ab_min,
-                                            rho_ab_max)
-
-    target_power = __partial_biserial_power(
-    n=n,
-    prop_a=prop_a,
-    rho_ab_partial_alt=rho_ab_partial,          # true parameter
-    rho_ab_partial_null=rho_ab_partial_power,   # null in the test
-    alpha=0.05,
-)
+    target_powers_achieved = __partial_biserial_power(
+        n=n,
+        prop_a=prop_a,
+        rho_ab_partial_alt=rho_ab_partial,
+        rho_ab_partial_null=rho_ab_partial_power,
+        alpha=ALPHA,
+    )
 
     return {
         "rho_ab_partial": rho_ab_partial,
         "rho_ab_partial_power": rho_ab_partial_power,
-        "target_power": target_power,
+        "target_power": target_powers_achieved,
         "rho_bc": rho_bc,
         "rho_ac": rho_ac,
         "prop_a": prop_a,
