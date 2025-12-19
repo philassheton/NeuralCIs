@@ -380,11 +380,12 @@ def get_num_param_samples(
 
 
 def data_filename(
-        prefix: str,
+        method_name: str,
+        data_type: str,
         params_sample_num: int,
 ) -> str:
 
-    return f"data/{prefix}_{params_sample_num:04d}.npy"
+    return f"data/{method_name}_{data_type}_{params_sample_num:04d}.npy"
 
 
 def convert_relative_path(basename: str) -> str:
