@@ -147,8 +147,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
 
         """Generate net input samples and output targets.
 
-        Must be a `tf.function`.
-
         :param n: An `int`, number of samples to generate.
         :return: A tuple containing two elements: (1) A list of 2D `Tensor`s
         of samples x network inputs (one for each net) and (2) whatever target
@@ -163,8 +161,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     ) -> ttf.float32:
 
         """Calculate the loss.
-
-        Must be a `tf.function`.
 
         :param net_outputs: Outputs from the networks in whatever format they
             are returned by `self.call_tf(training=True)` (generally a tuple
@@ -181,7 +177,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     #
     ###########################################################################
 
-    @tf.function
     def net_inputs(
             self,
             inputs: NetInputBlob,
@@ -306,9 +301,9 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                 optimizer = tf.keras.optimizers.Nadam()
                 self.schedule_free = False
 
-        tf.keras.Model.compile(self, optimizer, loss=None, *args, **kwargs)
+        tf.keras.Model.compile(self, optimizer, loss=None, jit_compile=False,
+                               *args, **kwargs)
 
-    @tf.function
     def train_step(self, data):
         input_blob, targets = data
         loss, grads = self.loss_and_gradient(input_blob, targets)
@@ -324,15 +319,12 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         else:
             raise ValueError("Data must be made of Tensors, Sequences or None")
 
-    def data_generator(self) -> Tuple[NetInputBlob, NetTargetBlob]:
-        while(True):
-            yield self.simulate_training_data()
-
     def dataset_generator(self) -> tf.data.Dataset:
-        example_data = self.simulate_training_data()
-        data_shape = self.get_data_signature(example_data)
-        dataset = tf.data.Dataset.from_generator(self.data_generator,
-                                                 output_signature=data_shape)
+        dataset = tf.data.Dataset.from_tensors(0).repeat()
+        dataset = dataset.map(
+            lambda _: self.simulate_training_data(),
+            num_parallel_calls=tf.data.AUTOTUNE,
+        )
         dataset = dataset.prefetch(tf.data.AUTOTUNE)
 
         return dataset
@@ -448,9 +440,9 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
             assert len(type_or_types) == n
             return type_or_types
 
-    def get_simnet_weights(self) -> List[tf.Tensor]:
+    def get_simnet_weights(self) -> List[tf.Variable]:
         simnet_weights = [net.trainable_weights() for net in self.nets]
-        return [w for ws in simnet_weights for w in ws]
+        return [w._value for ws in simnet_weights for w in ws]
 
     ###########################################################################
     #
@@ -462,7 +454,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     def metrics(self):
         return [self.loss_tracker]
 
-    @tf.function
     def call_tf(
             self,
             input_blob: NetInputBlob,
@@ -471,7 +462,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         net_inputs = self.net_inputs(input_blob)
         return self._call_tf(net_inputs, training=False)
 
-    @tf.function
     def call_tf_training(
             self,
             input_blob: NetInputBlob,
@@ -485,7 +475,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
         net_inputs = self.net_inputs(input_blob)
         return self._call_tf(net_inputs, training=True)
 
-    @tf.function
     def _call_tf(
             self,
             net_ins: Sequence[Tensor2[tf32, Samples, NetInputs]],
@@ -496,7 +485,6 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                    for net, ins in zip(self.nets, net_ins)]
         return tf.concat(outputs, axis=1)
 
-    @tf.function
     def loss_and_gradient(
             self,
             input_blob: NetInputBlob,
