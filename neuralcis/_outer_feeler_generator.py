@@ -74,7 +74,7 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 #
 ###############################################################################
 
-class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
+class _OuterFeelerGenerator(_DataSaver):
     smallest_profile_found_in = FULL
     def __init__(
             self,
@@ -118,8 +118,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             num_peripheral_batches: int =
                                      common.OUTER_FEELER_PERIPHERAL_BATCHES,
     ):
-
-        tf.keras.Model.__init__(self)
 
         if self._skip_when_profile(profile):
             return
@@ -244,47 +242,63 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
         return mins_sampled, maxs_sampled
 
-    @staticmethod
-    def dummy_training_stuff() -> Tuple[tf.keras.optimizers.Optimizer,
-                                        tf.data.Dataset]:
-
-        # TODO: Find a way to use all the nice Keras bits, without needing this
-        dummy_optimizer = tf.keras.optimizers.SGD()
-        dummy_dataset = tf.data.Dataset.from_tensor_slices((
-            tf.zeros((1, 1)),
-            tf.zeros((1, 1)),
-        )).repeat()
-        return dummy_optimizer, dummy_dataset
-
-    @tf.function
-    def train_step(self, _):
-        self.sampling_iteration()
-        return {"dummy_output": 999}  # Dummy stuff needed for Keras trainer
-
     def compute_chains(self) -> None:
         if tf.greater_equal(self.iteration_num, self.chain_length):
             print("Chains already computed!")
             return
 
-        dummy_optimizer, dummy_dataset = self.dummy_training_stuff()
-        super().compile(optimizer=dummy_optimizer, loss=None)
-        super().fit(x=dummy_dataset,
-                    epochs=1,
-                    steps_per_epoch=self.chain_length - 1)
+        params, chols, targets = self.compute_chains_tf()
 
         num_samples = self.num_chains * self.chain_length
         self.sampled_params = tf.reshape(
-            self.sampled_params,
+            params,
             (num_samples, self.num_param),
         )
         self.sampled_chols = tf.reshape(
-            self.sampled_chols,
+            chols,
             (num_samples, self.num_estimate, self.num_estimate),
         )
         self.sampled_targets = tf.reshape(
-            self.sampled_targets,
+            targets,
             (num_samples, NUM_IMPORTANCE_INGREDIENTS),
         )
+
+    @tf.function
+    def compute_chains_tf(
+            self
+    ) -> Tuple[Tensor2[tf32, Samples, Chains, Params],
+               Tensor3[tf32, Samples, Chains, UnknownParams, UnknownParams],
+               Tensor2[tf32, Samples, Chains, ImportanceIngredients]]:
+
+        params = tf.TensorArray(
+            tf.float32,
+            size=self.chain_length,
+            element_shape=(self.num_chains,
+                           self.num_param),
+        )
+        chols = tf.TensorArray(
+            tf.float32,
+            size=self.chain_length,
+            element_shape=(self.num_chains,
+                           self.num_estimate,
+                           self.num_estimate),
+        )
+        targets = tf.TensorArray(
+            tf.float32,
+            size=self.chain_length,
+            element_shape=(self.num_chains,
+                           NUM_IMPORTANCE_INGREDIENTS),
+        )
+
+        for t in tf.range(self.chain_length):
+            if tf.equal(t % 1000, 0):
+                tf.print("step", t, "/", self.chain_length)
+            params_new, targets_new, chols_new = self.sampling_iteration()
+            params = params.write(t, params_new)
+            targets = targets.write(t, targets_new)
+            chols = chols.write(t, chols_new)
+
+        return params.stack(), chols.stack(), targets.stack(),
 
     def initialise_for_training(self):
         self.iteration_num.assign(0)
@@ -303,10 +317,8 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         #   discretized value params_pp (pp=preprocessed_ for training our
         #   nets with.
         self.assign_iteration_results(params, mean,
-                                      cov_chol, inv_chol, chol_det,
-                                      importance,
-                                      params_pp, importance_ingredients,
-                                      cov_chol)
+                                      cov_chol, inv_chol, chol_det, importance)
+
     def _load_data(
             self,
             foldername: str,
@@ -331,7 +343,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
         super()._load_data(foldername, filename_start_internal, profile)
 
-    @tf.function
     def assign_iteration_results(
             self,
             params,
@@ -340,9 +351,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
             inv_chol,
             chol_det,
             importance,
-            sampled_params,
-            sampled_targets,
-            sampled_chols,
     ) -> None:
 
         self.params.assign(params)
@@ -351,12 +359,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         self.inv_chol.assign(inv_chol)
         self.chol_det.assign(chol_det)
         self.importance.assign(importance)
-
-        self.sampled_params[self.iteration_num].assign(sampled_params)
-        self.sampled_targets[self.iteration_num].assign(sampled_targets)
-        self.sampled_chols[self.iteration_num].assign(sampled_chols)
-
-        self.iteration_num.assign(self.iteration_num + 1)
 
     def generate_peripheral_samples(
             self,
@@ -424,10 +426,11 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         sim_blob = (sampled_params_peripheral, chols_peripheral)
         return sim_blob, targets_peripheral
 
-    @tf.function
     def sampling_iteration(
             self,
-    ):
+    ) -> Tuple[Tensor2[tf32, Chains, Params],
+               Tensor2[tf32, Chains, ImportanceIngredients],
+               Tensor3[tf32, Chains, UnknownParams, UnknownParams]]:
 
         new_params = self.random_params_step(self.params, self.cov_chol)
         (new_params_pp,
@@ -465,12 +468,12 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         # This is not a proper importance sample
         # ...we just use the MCMC to help us decide which way to walk next
         self.assign_iteration_results(params, mean,
-                                      cov_chol, inv_chol, chol_det, importance,
-                                      new_params_pp,
-                                      new_importance_ingredients,
-                                      new_cov_chol)
+                                      cov_chol, inv_chol, chol_det, importance)
 
-    @tf.function
+        self.iteration_num.assign(self.iteration_num + 1)
+
+        return new_params_pp, new_importance_ingredients, new_cov_chol
+
     def random_params_step(
             self,
             params: Tensor2[tf32, Chains, Params],
@@ -512,7 +515,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
                                                              hits_inner)
         return params_preproc, importance_ingredients, cov_chol
 
-    @tf.function
     def importance_ingredients(
             self,
             params: Tensor2[tf32, Chains, Params],
@@ -550,7 +552,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
         return tf.math.log(importance_ingredients_unlog + eps)                 # type: ignore
 
-    @tf.function
     def get_log_importance(
             self,
             importance_ingredients: Tensor2[tf32, Chains,
@@ -561,7 +562,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         samp = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
         return importance_ingredients[:, vol] + importance_ingredients[:, samp]
 
-    @tf.function
     def get_importance(
             self,
             importance_ingredients: Tensor2[tf32, Chains,
@@ -610,7 +610,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
         return params_pp, xbar, l, inv_l, det_l, hits_inner
 
-    @tf.function
     def covariance_cholesky_computation(
             self,
             estimates: Tensor3[tf32, Chains, Samples, UnknownParams],
@@ -629,7 +628,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
 
         return l
 
-    @tf.function
     def params_proposal_pdf_proportional(
             self,
             x: Tensor2[tf32, Chains, Params],
@@ -654,7 +652,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         # NB: det is det of Cholesky factor, so no need for the usual sqrt
         return tf.math.exp(-0.5 * z_norm_sq) / (det_unknown * det_known)
 
-    @tf.function
     def is_inside_support_region(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
@@ -663,7 +660,6 @@ class _OuterFeelerGenerator(_DataSaver, tf.keras.Model):
         is_inside_index = common.IMPORTANCE_INGREDIENTS_SHOULD_SAMPLE_INDEX
         return targets[:, is_inside_index] >= 0.  # type: ignore
 
-    @tf.function
     def get_chol_det_from_targets(
             self,
             targets: Tensor2[tf32, Samples, ImportanceIngredients],
