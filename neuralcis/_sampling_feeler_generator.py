@@ -12,7 +12,7 @@ from . import common
 from typing import Optional, Callable, Tuple
 from .common import Samples, Stats, Params, UnknownParams, KnownParams
 from .common import MinAndMax, ImportanceIngredients, Chains
-from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
+from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3, Tensor4
 from tensor_annotations import tensorflow as ttf
 
 tf32 = ttf.float32
@@ -109,8 +109,8 @@ class _SamplingFeelerGenerator(_DataSaver):
 
         _DataSaver.__init__(self,
                             instance_tf_variables_to_save=("sampled_params",
-                                                           "sampled_targets",
                                                            "sampled_chols",
+                                                           "sampled_targets",
                                                            "iteration_num"))
 
         self.estimates_widths = None
@@ -182,8 +182,8 @@ class _SamplingFeelerGenerator(_DataSaver):
         self.importance = state_variable(())
 
         self.sampled_params = samples_variable((num_param,))
-        self.sampled_targets = samples_variable((NUM_IMPORTANCE_INGREDIENTS,))
         self.sampled_chols = samples_variable((num_estimate, num_estimate))
+        self.sampled_targets = samples_variable((NUM_IMPORTANCE_INGREDIENTS,))
 
         self.iteration_num = tf.Variable(0, dtype=tf.int64)                    # tf.int32 cannot be placed on GPU
 
@@ -267,9 +267,9 @@ class _SamplingFeelerGenerator(_DataSaver):
     @tf.function
     def compute_chains_tf(
             self
-    ) -> Tuple[Tensor2[tf32, Samples, Chains, Params],
-               Tensor3[tf32, Samples, Chains, UnknownParams, UnknownParams],
-               Tensor2[tf32, Samples, Chains, ImportanceIngredients]]:
+    ) -> Tuple[Tensor3[tf32, Samples, Chains, Params],
+               Tensor4[tf32, Samples, Chains, UnknownParams, UnknownParams],
+               Tensor3[tf32, Samples, Chains, ImportanceIngredients]]:
 
         params = tf.TensorArray(
             tf.float32,
@@ -294,10 +294,10 @@ class _SamplingFeelerGenerator(_DataSaver):
         for t in tf.range(self.chain_length):
             if tf.equal(t % 1000, 0):
                 tf.print("step", t, "/", self.chain_length)
-            params_new, targets_new, chols_new = self.sampling_iteration()
+            params_new, chols_new, targets_new = self.sampling_iteration()
             params = params.write(t, params_new)
-            targets = targets.write(t, targets_new)
             chols = chols.write(t, chols_new)
+            targets = targets.write(t, targets_new)
 
         return params.stack(), chols.stack(), targets.stack(),
 
@@ -418,7 +418,7 @@ class _SamplingFeelerGenerator(_DataSaver):
         u = tf.random.uniform((self.peripheral_batch_size, self.num_param))
         sampled_params_peripheral = u * diffs[None, :] + mins[None, :]
 
-        sampled_params_peripheral, targets_peripheral, chols_peripheral = \
+        sampled_params_peripheral, chols_peripheral, targets_peripheral = \
             self.sample_ingredients(sampled_params_peripheral)
 
         sim_blob = (sampled_params_peripheral, chols_peripheral)
@@ -427,8 +427,8 @@ class _SamplingFeelerGenerator(_DataSaver):
     def sampling_iteration(
             self,
     ) -> Tuple[Tensor2[tf32, Chains, Params],
-               Tensor2[tf32, Chains, ImportanceIngredients],
-               Tensor3[tf32, Chains, UnknownParams, UnknownParams]]:
+               Tensor3[tf32, Chains, UnknownParams, UnknownParams],
+               Tensor2[tf32, Chains, ImportanceIngredients]]:
 
         new_params = self.random_params_step(self.params, self.cov_chol)
         new_params_pp, new_mean, new_cov_chol, new_inv_chol, new_chol_det = \
@@ -467,7 +467,7 @@ class _SamplingFeelerGenerator(_DataSaver):
                                       cov_chol, inv_chol, chol_det, importance)
         self.iteration_num.assign(self.iteration_num + 1)
 
-        return new_params_pp, new_importance_ingredients, new_cov_chol
+        return new_params_pp, new_cov_chol, new_importance_ingredients
 
     def random_params_step(
             self,
@@ -496,8 +496,8 @@ class _SamplingFeelerGenerator(_DataSaver):
             params: Tensor2[tf32, Samples, Params],
     ) -> Tuple[
         Tensor2[tf32, Samples, Params],
-        Tensor2[tf32, Samples, ImportanceIngredients],
         Tensor3[tf32, Samples, UnknownParams, UnknownParams],
+        Tensor2[tf32, Samples, ImportanceIngredients],
     ]:
 
         params_preproc, mean, cov_chol, inv_chol, chol_det = \
@@ -506,7 +506,7 @@ class _SamplingFeelerGenerator(_DataSaver):
                                                              mean,
                                                              cov_chol,
                                                              chol_det)
-        return params_preproc, importance_ingredients, cov_chol
+        return params_preproc, cov_chol, importance_ingredients
 
     def importance_ingredients(
             self,
@@ -758,16 +758,16 @@ class _SamplingFeelerGenerator(_DataSaver):
 
         with tf.device("/CPU:0"):
             params_cpu = tf.identity(self.sampled_params)
-            targets_cpu = tf.identity(self.sampled_targets)
             chols_cpu = tf.identity(self.sampled_chols)
+            targets_cpu = tf.identity(self.sampled_targets)
 
         del self.sampled_params
-        del self.sampled_targets
         del self.sampled_chols
+        del self.sampled_targets
 
         gc.collect()
         tf.keras.backend.clear_session()
 
         self.sampled_params = params_cpu
-        self.sampled_targets = targets_cpu
         self.sampled_chols = chols_cpu
+        self.sampled_targets = targets_cpu
