@@ -46,7 +46,7 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
         return self.output_scaler, self.bias
 
     @tf.function
-    def weights(self) -> Tuple[tf.Tensor, ...]:
+    def processed_weights(self) -> Tuple[tf.Tensor, ...]:
         return self.kernel_raw * self.output_scaler, self.bias
 
     def build(self, input_shape: List) -> None:
@@ -58,20 +58,20 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
         kernel_min, kernel_max, bias_init = self.inits(W_num_in, W_num_out)
 
         self.kernel_raw = self.add_weight(
-            "kernel_raw",
+            name="kernel_raw",
             shape=(W_num_in, W_num_out),
             initializer=tf.keras.initializers.RandomUniform(minval=kernel_min,
                                                             maxval=kernel_max),
             trainable=True,
         )
         self.output_scaler = self.add_weight(                                  # The output scaler exists to help with initialization
-            "kernel_scaler",
+            name="kernel_scaler",
             shape=(1, self.num_matmul_outputs()),
             initializer=tf.keras.initializers.Ones(),
             trainable=False,
         )
         self.bias = self.add_weight(
-            "bias",
+            name="bias",
             shape=(W_num_out,),
             initializer=tf.keras.initializers.Constant(bias_init),
             trainable=True,
@@ -216,7 +216,7 @@ class _LinearLayer(_SimNetLayer):
             inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerInputs]:
 
-        W, b = self.weights()
+        W, b = self.processed_weights()
         return tf.linalg.matmul(inputs, W) + b
 
 
@@ -234,7 +234,7 @@ class _FiftyFiftyLayer(_SimNetLayer):
             inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
-        W, b = self.weights()
+        W, b = self.processed_weights()
         potentials = tf.linalg.matmul(inputs, W) + b
         tanh_outputs = potentials[:, 0:self.num_outputs_per_activation]
         elu_outputs = potentials[:, self.num_outputs_per_activation:]
@@ -259,7 +259,7 @@ class _MultiplyerLayer(_SimNetLayer):
             inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
-        W, b = self.weights()
+        W, b = self.processed_weights()
         potentials = tf.linalg.matmul(inputs, W) + b
 
         outputs = potentials * inputs
@@ -321,7 +321,7 @@ class _MonotonicLinearLayer(_SimNetLayer):
             inputs: Tensor2[tf32, Samples, LayerInputs],
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
-        Wlog, b = self.weights()
+        Wlog, b = self.processed_weights()
         W = tf.math.exp(Wlog)
         potentials = tf.linalg.matmul(inputs, W) + b
         activations = self.activation_function(potentials)
@@ -429,26 +429,26 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
         )
 
         self.kernel_raw = self.add_weight(
-            "kernel_raw",
+            name="kernel_raw",
             shape=(kernel_rows, kernel_cols),
             initializer=tf.keras.initializers.Zeros(),
             trainable=True,
         )
         self.output_scaler = self.add_weight(
             # The output scaler exists to help with initialization
-            "output_scaler",
+            name="output_scaler",
             shape=(1, self.num_matmul_outputs()),
             initializer=tf.keras.initializers.Ones(),
             trainable=False,
         )
         self.output_shifter = self.add_weight(
-            "output_shifter",
+            name="output_shifter",
             shape=(1, self.num_matmul_outputs()),
             initializer=tf.keras.initializers.Zeros(),
             trainable=False,
         )
         self.bias = self.add_weight(
-            "bias",
+            name="bias",
             shape=(kernel_cols,),
             # We use the kernel_min and kernel_max for the BIAS since, when
             #     combined with zero kernel as initialization, it will
@@ -467,13 +467,13 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
         )
 
     @tf.function
-    def weights(
+    def processed_weights(
             self,
             params=None,
     ):
 
         if params is None:
-            raise Exception("self.weights() called on with-params layer "
+            raise Exception("self.processed_weights() called on with-params layer "
                             "without passing also params!")
 
         batch_size, _ = params.shape
@@ -506,7 +506,7 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
     ) -> Tensor2[tf32, Samples, LayerOutputs]:
 
         ins_mono, params = self.ins_mono_and_params(inputs)
-        Wlog, b = self.weights(params)
+        Wlog, b = self.processed_weights(params)
         W = tf.math.exp(Wlog)
 
         # IMPORTANT: W is a 3d tensor of one weights matrix per data point

@@ -80,7 +80,7 @@ class _ReduceLROnPlateauTrackBest(tf.keras.callbacks.ReduceLROnPlateau):
     ) -> None:
 
         current_loss = self.current_loss(logs)
-        best_before_call = self.best
+        best_before_call = self.best or float("inf")
         wait_before_call = self.wait
 
         if epoch is not None:
@@ -114,7 +114,8 @@ class _ReduceLROnPlateauTrackBest(tf.keras.callbacks.ReduceLROnPlateau):
                      f"  vs tolerable: {self.loss_increase_tol}")
             self.restore_best()
             if wipe_momentum_on_restore:
-                lr = backend.get_value(self.model.optimizer.lr)
+                opt = self.model.optimizer
+                lr = float(tf.convert_to_tensor(opt.learning_rate).numpy())
                 self.initialize_optimizer(lr)
 
         else:
