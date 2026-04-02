@@ -153,7 +153,7 @@ class NeuralCIs(_DataSaver):
             ],
             estimates_fn: Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
-                Tuple[Tensor1[tf32, Samples], ...]
+                Dict["str", Tensor1[tf32, Samples]]
             ],
             unknown_param_names: Sequence[str],
             stat_names: Sequence[str],

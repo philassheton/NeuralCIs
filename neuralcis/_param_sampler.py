@@ -173,13 +173,13 @@ class _ParamSampler(_DataSaver):
         return bools
 
     def fit(self, *args, **kwargs):
-        self.inner_data_generator.fit(*args, **kwargs)
+        self.inner_data_generator.fit()
         self.inner_feeler_net.fit(*args, **kwargs)
         self.inner_data_generator.release_gpu_memory()
         self.inner_sampling_net.fit(*args, **kwargs)
         self.hits_inside_net.fit(*args, **kwargs)
 
-        self.outer_data_generator.fit(*args, **kwargs)
+        self.outer_data_generator.fit()
         self.outer_feeler_net.fit(*args, **kwargs)
         self.outer_data_generator.release_gpu_memory()
 
