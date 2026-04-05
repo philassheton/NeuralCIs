@@ -4,7 +4,7 @@ from . import _utils, common
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
 
-from typing import Callable, Tuple, Sequence, Optional
+from typing import Callable, Tuple, Sequence, Optional, Union
 from .common import Params, KnownParams, Stats, Zs, Samples
 from .common import NetInputs, NetOutputs
 import tensor_annotations.tensorflow as ttf
@@ -18,8 +18,7 @@ NetInputBlob = Tuple[Tensor2[tf32, Samples, Stats],                 # -> ys
 NetTargetBlob = Tensor0
 
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
-                      Tensor1[tf32, Samples],          # Jacobian determinants
-                      Tensor1[tf32, Samples]]          # dz0 / dcontrast
+                      Tensor1[tf32, Samples]]          # Jacobian determinants
 
 
 class _ZNet(_SimulatorNet):
@@ -44,11 +43,18 @@ class _ZNet(_SimulatorNet):
                 Tuple[Tensor2[tf32, Samples, Stats],
                       Tensor2[tf32, Samples, Params]],
             ],
+            transform_on_stats_fn: Callable[
+                [Tensor2[tf32, Samples, Stats],
+                 Tensor2[tf32, Samples, Params]],
+                Tuple[Tensor2[tf32, Samples, Stats],
+                      Tensor2[tf32, Samples, Params]],
+            ],
             num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
             num_params_remaining_after_transform: int,
+            num_stats_remaining_after_transform: int,
             profile: str,
             **network_setup_args,
     ) -> None:
@@ -67,7 +73,7 @@ class _ZNet(_SimulatorNet):
         super().__init__(
             profile=profile,
             num_inputs_for_each_net=(
-                num_stat + 1 + num_known_param,
+                num_stats_remaining_after_transform + 1 + num_known_param,
                 num_stat + num_params_remaining_after_transform
             ),
             num_outputs_for_each_net=(1, num_stat - 1),
@@ -85,6 +91,7 @@ class _ZNet(_SimulatorNet):
         self.param_sampling_fn = param_sampling_fn
         self.contrast_fn = contrast_fn
         self.transform_on_params_fn = transform_on_params_fn
+        self.transform_on_stats_fn = transform_on_stats_fn
 
         self.known_param_indices = known_param_indices
 
@@ -113,10 +120,9 @@ class _ZNet(_SimulatorNet):
             target_outputs: None = None,
     ) -> ttf.float32:
 
-        outputs, jacobians, dz0_dcontrast = net_outputs
+        outputs, jacobians = net_outputs
         neg_log_likelihoods = self.neg_log_likelihoods(outputs, jacobians)
-        dz0_dcontrast_is_neg = 100. * tf.keras.activations.relu(dz0_dcontrast)
-        loss = tf.math.reduce_mean(neg_log_likelihoods + dz0_dcontrast_is_neg)
+        loss = tf.math.reduce_mean(neg_log_likelihoods)
 
         tf.debugging.check_numerics(loss,
                                     "Na or inf in loss in multiple Z Net opt")
@@ -129,11 +135,11 @@ class _ZNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> NetOutputBlob:
 
-        out, det, dz0_dcon = self.net_outputs_and_transformation_jacobdets(
+        out, det = self.net_outputs_and_transformation_jacobdets(
             input_blob,
             training=True,
         )
-        return out, det, dz0_dcon
+        return out, det
 
     @tf.function
     def net_inputs(
@@ -144,9 +150,26 @@ class _ZNet(_SimulatorNet):
 
         # TODO: relate this to the contrast rather than "known param" naming
         stats, params = input_blob
-        contrast = self.contrast_fn(params)
-        return self.net_inputs_from_contrast(contrast, stats, params,
-                                             transform)
+        if transform:
+            stats_strans, params_strans = self.transform_on_stats_fn(
+                stats, params,
+            )
+            stats_ptrans, params_ptrans = self.transform_on_params_fn(
+                stats, params,
+            )
+        else:
+            stats_strans, params_strans = stats, params
+            stats_ptrans, params_ptrans = stats, params
+
+        contrast_strans = self.contrast_fn(params_strans)[:, None]
+
+        known_params = tf.gather(params, self.known_param_indices, axis=1)
+        contrast_net_inputs = tf.concat([stats_strans,
+                                         contrast_strans,
+                                         known_params],
+                                        axis=1)
+        other_net_inputs = tf.concat([stats_ptrans, params_ptrans], axis=1)
+        return contrast_net_inputs, other_net_inputs
 
     def compute_optimum_loss(self) -> ttf.float32:
         # TODO: the individual losses here are not currently saved.  Need to
@@ -192,28 +215,6 @@ class _ZNet(_SimulatorNet):
         return self._call_tf(net_inputs, training=False)
 
     @tf.function
-    def net_inputs_from_contrast(
-            self,
-            contrast: Tensor1[tf32, Samples],
-            stats: Tensor2[tf32, Samples, Stats],
-            params: Tensor2[tf32, Samples, Params],
-            transform: bool = False,
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
-
-        if transform:
-            stats_trans, params_trans = self.transform_on_params_fn(stats,
-                                                                    params)
-        else:
-            stats_trans, params_trans = stats, params
-
-        contrast = contrast[:, None]
-        known_params = tf.gather(params, self.known_param_indices, axis=1)
-        contrast_net_inputs = tf.concat([stats, contrast, known_params],
-                                        axis=1)
-        other_net_inputs = tf.concat([stats_trans, params_trans], axis=1)
-        return contrast_net_inputs, other_net_inputs
-
-    @tf.function
     def neg_log_likelihoods(
             self,
             outputs: Tensor2[tf32, Samples, Zs],
@@ -241,27 +242,21 @@ class _ZNet(_SimulatorNet):
     ) -> Tuple[
         Tensor2[tf32, Samples, Zs],                                            # Net outputs
         Tensor1[tf32, Samples],                                                # Jacobian determinants
-        Tensor1[tf32, Samples],                                                # dz0 / dcontrast
     ]:
 
         stats, params = input_blob
 
-        with tf.GradientTape(persistent=True) as tape:                         # type: ignore
+        with tf.GradientTape() as tape:                                        # type: ignore
             tape.watch(stats)
-            contrast = self.contrast_fn(params)
-            tape.watch(contrast)
+            net_inputs = self.net_inputs((stats, params), transform=True)
+            zs = self._call_tf(net_inputs, training=training)
 
-            inputs = self.net_inputs_from_contrast(contrast, stats, params,
-                                                   transform=True)
-            zs = self._call_tf(inputs, training=training)
-            z0 = zs[:, 0]
-
-        dz0_dcontrast = tape.gradient(z0, contrast)
-        jacobians = tape.batch_jacobian(zs, stats)
+        # TODO: it seems to get stuck now trying to differentiate the Jacobian
+        #       with pfor turned on, but didn't previously.  Need to fix.
+        jacobians = tape.batch_jacobian(zs, stats, experimental_use_pfor=False)
         jacobdets = tf.linalg.det(jacobians)
-        del tape
 
-        return zs, jacobdets, dz0_dcontrast                                    # type: ignore
+        return zs, jacobdets                                                   # type: ignore
 
     @tf.function
     def sample_params(
@@ -294,6 +289,6 @@ class _ZNet(_SimulatorNet):
         # We need a separate function for this, as we might not have our
         # params in the right format for the second net after a transform
         # on estimates call.
-        net0_inputs, _ = self.net_inputs((stats, params))
+        net0_inputs, _ = self.net_inputs((stats, params), transform=True)
         z = self.nets[0](net0_inputs)[:, 0]
         return z

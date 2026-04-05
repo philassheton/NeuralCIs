@@ -110,6 +110,7 @@ class _NeuralCIsKWArgs():
                 Dict["str", Tensor1[tf32, Samples]],
             ]],
             transform_on_params_param_names: Sequence[str],
+            transform_on_stats_stat_names: Sequence[str],
             profile: str,
             network_setup_args: Optional[Dict],
             optional_data_to_store: Optional[Dict],
@@ -129,6 +130,7 @@ class _NeuralCIsKWArgs():
         self.transform_on_params_fn = _TFFn.get(transform_on_params_fn)
         self.transform_on_stats_fn = _TFFn.get(transform_on_stats_fn)
         self.transform_on_params_param_names = transform_on_params_param_names
+        self.transform_on_stats_stat_names = transform_on_stats_stat_names
 
         self.profile = profile
 
@@ -148,6 +150,8 @@ class _NeuralCIsKWArgs():
             transform_on_stats_fn = self.transform_on_stats_fn,
             transform_on_params_param_names =
                                         self.transform_on_params_param_names,
+            transform_on_stats_stat_names =
+                                        self.transform_on_stats_stat_names,
             profile=self.profile,
             network_setup_args = self.network_setup_args,
             optional_data_to_store = self.optional_data_to_store,
@@ -190,6 +194,8 @@ class _NeuralCIsKWArgs():
                       "known_param_names": self.known_param_names,
                       "transform_on_params_param_names":
                                         self.transform_on_params_param_names,
+                      "transform_on_stats_stat_names":
+                                        self.transform_on_stats_stat_names,
                       "profile": profile,
                       "network_setup_args": self.network_setup_args,
                       "optional_data_to_store": self.optional_data_to_store}
