@@ -18,7 +18,8 @@ NetInputBlob = Tuple[Tensor2[tf32, Samples, Stats],                 # -> ys
 NetTargetBlob = Tensor0
 
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
-                      Tensor1[tf32, Samples]]          # Jacobian determinants
+                      Tensor1[tf32, Samples],          # Jacobian determinants
+                      Tensor1[tf32, Samples]]          # dz0 / dcontrast
 
 
 class _ZNet(_SimulatorNet):
@@ -113,9 +114,12 @@ class _ZNet(_SimulatorNet):
             target_outputs: None = None,
     ) -> ttf.float32:
 
-        outputs, jacobians = net_outputs
+        outputs, jacobians, dz0_dcontrast = net_outputs
         neg_log_likelihoods = self.neg_log_likelihoods(outputs, jacobians)
-        loss = tf.math.reduce_mean(neg_log_likelihoods)
+        dz0_dcontrast_is_neg = tf.keras.activations.relu(dz0_dcontrast)
+        dz0_dcontrast_penalty = \
+            common.DZ0_DCONTRAST_PENALTY_WEIGHT * dz0_dcontrast_is_neg
+        loss = tf.math.reduce_mean(neg_log_likelihoods + dz0_dcontrast_penalty)
 
         tf.debugging.check_numerics(loss,
                                     "Na or inf in loss in multiple Z Net opt")
@@ -128,11 +132,11 @@ class _ZNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> NetOutputBlob:
 
-        out, det = self.net_outputs_and_transformation_jacobdets(
+        out, det, dz0_dcon = self.net_outputs_and_transformation_jacobdets(
             input_blob,
             training=True,
         )
-        return out, det
+        return out, det, dz0_dcon
 
     @tf.function
     def net_inputs(
@@ -210,22 +214,40 @@ class _ZNet(_SimulatorNet):
     ) -> Tuple[
         Tensor2[tf32, Samples, Zs],                                            # Net outputs
         Tensor1[tf32, Samples],                                                # Jacobian determinants
+        Tensor1[tf32, Samples],                                                # dz0 / dcontrast
     ]:
 
         stats, params = input_blob
 
-        with tf.GradientTape() as tape:                                        # type: ignore
+        with tf.GradientTape(persistent=True) as tape:                         # type: ignore
             tape.watch(stats)
+            tape.watch(params)
             input_blob = stats, params
             net_inputs = self.net_inputs(input_blob)
             zs = self._call_tf(net_inputs, training=training)
+            z0 = zs[:, 0:1]
 
         # TODO: it seems to get stuck now trying to differentiate the Jacobian
         #       with pfor turned on, but didn't previously.  Need to fix.
         jacobians = tape.batch_jacobian(zs, stats, experimental_use_pfor=False)
         jacobdets = tf.linalg.det(jacobians)
 
-        return zs, jacobdets                                                   # type: ignore
+        # Also compute dz0 / dcontrast (UNTRANSFORMED CONTRAST)
+        dz0_dtheta = tape.batch_jacobian(z0, params,
+                                         experimental_use_pfor=False)[:, 0, :]
+        del tape
+
+        with tf.GradientTape() as tape:
+            tape.watch(params)
+            contrast_untransformed = self.contrast_fn(params)[:, None]
+        dcon_dtheta = tape.batch_jacobian(contrast_untransformed, params,
+                                          experimental_use_pfor=False)
+        dcon_dtheta = dcon_dtheta[:, 0, :]
+
+        dz0_dcontrast = (tf.reduce_sum(dcon_dtheta * dz0_dtheta, axis=1)
+                         / tf.reduce_sum(tf.square(dcon_dtheta), axis=1))
+
+        return zs, jacobdets, dz0_dcontrast                                    # type: ignore
 
     @tf.function
     def sample_params(
