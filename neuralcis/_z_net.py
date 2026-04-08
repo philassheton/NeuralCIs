@@ -6,7 +6,7 @@ import tensorflow_probability as tfp                                           #
 
 from typing import Callable, Tuple, Sequence, Optional, Union
 from .common import Params, KnownParams, Stats, Zs, Samples
-from .common import NetInputs, NetOutputs
+from .common import NetInputs
 import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 tf32 = ttf.float32
@@ -37,12 +37,6 @@ class _ZNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
-            transform_on_params_fn: Callable[
-                [Tensor2[tf32, Samples, Stats],
-                 Tensor2[tf32, Samples, Params]],
-                Tuple[Tensor2[tf32, Samples, Stats],
-                      Tensor2[tf32, Samples, Params]],
-            ],
             transform_on_stats_fn: Callable[
                 [Tensor2[tf32, Samples, Stats],
                  Tensor2[tf32, Samples, Params]],
@@ -53,7 +47,6 @@ class _ZNet(_SimulatorNet):
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
-            num_params_remaining_after_transform: int,
             num_stats_remaining_after_transform: int,
             profile: str,
             **network_setup_args,
@@ -74,7 +67,8 @@ class _ZNet(_SimulatorNet):
             profile=profile,
             num_inputs_for_each_net=(
                 num_stats_remaining_after_transform + 1 + num_known_param,
-                num_stat + num_params_remaining_after_transform
+                num_stats_remaining_after_transform + num_unknown_param
+                                                    + num_known_param
             ),
             num_outputs_for_each_net=(1, num_stat - 1),
             layer_kwargs=layer_kwargs,
@@ -90,7 +84,6 @@ class _ZNet(_SimulatorNet):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_fn = param_sampling_fn
         self.contrast_fn = contrast_fn
-        self.transform_on_params_fn = transform_on_params_fn
         self.transform_on_stats_fn = transform_on_stats_fn
 
         self.known_param_indices = known_param_indices
@@ -145,31 +138,23 @@ class _ZNet(_SimulatorNet):
     def net_inputs(
             self,
             input_blob: NetInputBlob,
-            transform: bool = False,
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
         # TODO: relate this to the contrast rather than "known param" naming
         stats, params = input_blob
-        if transform:
-            stats_strans, params_strans = self.transform_on_stats_fn(
-                stats, params,
-            )
-            stats_ptrans, params_ptrans = self.transform_on_params_fn(
-                stats, params,
-            )
-        else:
-            stats_strans, params_strans = stats, params
-            stats_ptrans, params_ptrans = stats, params
+        stats_trans, params_trans = self.transform_on_stats_fn(stats, params)
+        contrast_trans = self.contrast_fn(params_trans)
 
-        contrast_strans = self.contrast_fn(params_strans)[:, None]
+        known_params = tf.gather(params_trans,
+                                 self.known_param_indices, axis=1)
+        contrast_net_inputs = tf.concat([stats_trans,
+                                         contrast_trans[:, None],
+                                         known_params], axis=1)
+        other_net_inputs = tf.concat([stats_trans,
+                                      params_trans], axis=1)
+        net_inputs = contrast_net_inputs, other_net_inputs
 
-        known_params = tf.gather(params, self.known_param_indices, axis=1)
-        contrast_net_inputs = tf.concat([stats_strans,
-                                         contrast_strans,
-                                         known_params],
-                                        axis=1)
-        other_net_inputs = tf.concat([stats_ptrans, params_ptrans], axis=1)
-        return contrast_net_inputs, other_net_inputs
+        return net_inputs
 
     def compute_optimum_loss(self) -> ttf.float32:
         # TODO: the individual losses here are not currently saved.  Need to
@@ -194,25 +179,8 @@ class _ZNet(_SimulatorNet):
             known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor1[tf32, Samples]:
 
-        # TODO: Might want to clean this up to make it more idiomatic
-        net0_inputs = tf.concat([stats, contrast[:, None], known_params],
-                                axis=1)
-        z = self.nets[0](net0_inputs)
-        return z[:, 0]
-
-    @tf.function
-    def call_tf_transformed(
-            self,
-            input_blob: NetInputBlob,
-    ) -> Tensor2[tf32, Samples, NetOutputs]:
-
-        # This is only for use in the p_workings function to analyse the net.
-        #  -- NB This is ONLY needed if we are accessing the second z-net,
-        #     since at inference time the first should be transformed on
-        #     estimates which is done in the neuralcis object
-        # TODO: must be a cleaner way -- eg. transform input_blob directly
-        net_inputs = self.net_inputs(input_blob, transform=True)
-        return self._call_tf(net_inputs, training=False)
+        raise Exception('call_tf_contrast_only needs rewriting now that stats'
+                        'are transformed!!')
 
     @tf.function
     def neg_log_likelihoods(
@@ -248,7 +216,8 @@ class _ZNet(_SimulatorNet):
 
         with tf.GradientTape() as tape:                                        # type: ignore
             tape.watch(stats)
-            net_inputs = self.net_inputs((stats, params), transform=True)
+            input_blob = stats, params
+            net_inputs = self.net_inputs(input_blob)
             zs = self._call_tf(net_inputs, training=training)
 
         # TODO: it seems to get stuck now trying to differentiate the Jacobian
@@ -289,6 +258,6 @@ class _ZNet(_SimulatorNet):
         # We need a separate function for this, as we might not have our
         # params in the right format for the second net after a transform
         # on estimates call.
-        net0_inputs, _ = self.net_inputs((stats, params), transform=True)
+        net0_inputs, _ = self.net_inputs((stats, params))
         z = self.nets[0](net0_inputs)[:, 0]
         return z

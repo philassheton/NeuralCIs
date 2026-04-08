@@ -56,21 +56,6 @@ class NeuralCIs(_DataSaver):
         sampling and contrast functions) which ARE known a priori and
         therefore can simply be conditioned upon. (For example, for a t-test,
         this might be ['n'].)
-    :param transform_on_params_fn: An optional function that maps the stat
-        and param tensors (passed as named arguments) to transformed values
-        that are expected to give the same p-value.  These transforms should
-        be based ONLY on the PARAM values.  Transformed stat and
-        parameters are returned in a dict.  The transformed parameters may
-        be given new names, in which case they can be differently transformed
-        in the model, which can be beneficial.
-
-        If provided, `transform_on_stats_fn` MUST also be provided.
-
-        For example, for a t-test, we could divide all values (except n) by
-        our parameter sigma and end up with the same geometry, just rescaled.
-
-        IMPORTANT: This function is only used during training; the
-        `transform_on_stats_fn` is then used during inference.
     :param transform_on_stats_fn: An optional function that maps the
         stat and param tensors (passed as named arguments) to transformed
         values that are expected to give the same p-value.  This function
@@ -81,19 +66,9 @@ class NeuralCIs(_DataSaver):
         divide all values by sigma_hat; in this case, sigma_hat is equal to
         one and we might have {'sigma_hat': 1.0, 'sigma': sigma / sigma_hat}.
 
-        If provided, `transform_on_params_fn` MUST also be provided.
-
         For example, for a t-test, we could divide all values (except n) by
         our estimates of sigma and end up with the same geometry, just
         rescaled.
-
-        IMPORTANT: This function is only used during inference; the
-        `transform_on_params_fn` is then used during inference.
-    :param transform_on_params_param_names: An optional list or tuple of strs.
-        Required if transform functions are supplied.  Gives the names of
-        parameters as returned by the transform function.  (Statistics are
-        currently assumed to be returned under the same names, but this may
-        be relaxed in later versions.)
     :param transform_on_stats_stat_names: An optional list or tuple of strs.
         Required if transform functions are supplied.  Gives the names of
         statistics as returned by the transform function.  (Parameters are
@@ -163,15 +138,10 @@ class NeuralCIs(_DataSaver):
             unknown_param_names: Sequence[str],
             stat_names: Sequence[str],
             known_param_names: Sequence[str] = (),
-            transform_on_params_fn: Optional[Callable[
-                [Tuple[Tensor1[tf32, Samples], ...]],
-                Dict["str", Tensor1[tf32, Samples]]
-            ]] = None,
             transform_on_stats_fn: Optional[Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]],
             ]] = None,
-            transform_on_params_param_names: Optional[Sequence[str]] = None,
             transform_on_stats_stat_names: Optional[Sequence[str]] = None,
             train_initial_weights: bool = True,
             profile: str = FULL,                                               # If you want a more minimal setup, "testing" is much lighter and "inference" even lighter still
@@ -179,22 +149,6 @@ class NeuralCIs(_DataSaver):
             optional_data_to_store: Optional[Dict] = None,
             **variable_defs: Variable,
     ) -> None:
-
-        if ((transform_on_params_fn is None) !=
-            (transform_on_stats_fn is None)):
-            raise Exception("If you provide a transform_on_params_fn, you MUST"
-                            " also provide a transform_on_stats_fn and"
-                            " vice versa.")
-
-        if transform_on_params_fn is None:
-            if (transform_on_params_param_names is not None
-                and len(transform_on_params_param_names) > 0):
-                raise Exception(f"Your transform_on_params_param_names must be"
-                                f" either empty or None if you do not enter"
-                                f" a transform_on_params_fn!!  You entered"
-                                f" {transform_on_params_param_names}.")
-            transform_on_params_param_names = (known_param_names
-                                               + unknown_param_names)
 
         if transform_on_stats_fn is None:
             if (transform_on_stats_stat_names is not None
@@ -214,9 +168,7 @@ class NeuralCIs(_DataSaver):
             unknown_param_names,
             stat_names,
             known_param_names,
-            transform_on_params_fn,
             transform_on_stats_fn,
-            transform_on_params_param_names,
             transform_on_stats_stat_names,
             profile,
             network_setup_args,
@@ -231,15 +183,11 @@ class NeuralCIs(_DataSaver):
         self.num_known_param = len(self.kwargs.known_param_names)
         self.num_stat = len(self.stat_names())
 
-        self.has_transform = not self.kwargs.transform_on_params_fn.is_none()
-        has_stat_transform = not self.kwargs.transform_on_stats_fn.is_none()
-        if self.has_transform != has_stat_transform:
-            raise Exception("If you enter a transform_on_params_fn, you MUST"
-                            " enter a transform_on_stats_fn and vice versa!")
+        self.has_transform = not self.kwargs.transform_on_stats_fn.is_none()
 
         # TODO: Add checks for other functions too.
         self._check_simulation_names()
-        self._check_transform_on_params_fn_names()
+        self._check_transform_on_stats_fn_names()
         self._check_names_are_not_shared()
 
         for known_param_name in known_param_names:
@@ -276,13 +224,11 @@ class NeuralCIs(_DataSaver):
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
             self._contrast_fn_net_interface,
-            self._transform_on_params_fn_net_interface,
             self._transform_on_stats_fn_net_interface,
             self.num_stat,
             self.num_unknown_param,
             self.num_known_param,
             self.known_param_indices,
-            len(self.kwargs.transform_on_params_param_names),
             len(self.kwargs.transform_on_stats_stat_names),
             self.param_sampler,
             profile,
@@ -651,38 +597,12 @@ class NeuralCIs(_DataSaver):
         return unknown_params_net
 
     @tf.function
-    def _transform_on_params_fn_net_interface(
-            self,
-            stats_net: Tensor2[tf32, Samples, Stats],
-            params_net: Tensor2[tf32, Samples, Params],
-    ) -> Tuple[Tensor2[tf32, Samples, Stats],
-               Tensor2[tf32, Samples, Params]]:
-
-        if not self.has_transform:
-            return stats_net, params_net
-
-        stats_human = self._stats_net_to_human(stats_net)
-        params_human = self._params_net_to_human(params_net)
-
-        inputs = stats_human | params_human
-        outputs = self.kwargs.transform_on_params_fn(**inputs)
-
-        stats_net = self._stats_human_to_net(**outputs)
-        params_net = self._params_transformed_human_to_net(**outputs)
-
-        return stats_net, params_net
-
-    @tf.function
     def _transform_on_stats_fn_net_interface(
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
             params_net: Tensor2[tf32, Samples, Params],
     ) -> Tuple[Tensor2[tf32, Samples, Stats],
                Tensor2[tf32, Samples, Params]]:
-
-        # TODO: Not currently refactoring this with
-        #       transform_on_params_net_interface as hoping to get rid of it
-        #       in the next update, hopefully.  If that fails, refactor!!
 
         if not self.has_transform:
             return stats_net, params_net
@@ -849,15 +769,6 @@ class NeuralCIs(_DataSaver):
         return self._human_to_net(self.stat_names(), **stats_human)
 
     @tf.function
-    def _params_transformed_human_to_net(
-            self,
-            **params_transformed_human: Tensor1[tf32, Samples],
-    ) -> Tensor2[tf32, Samples, Params]:
-
-        return self._human_to_net(self.kwargs.transform_on_params_param_names,
-                                  **params_transformed_human)
-
-    @tf.function
     def _stats_transformed_human_to_net(
             self,
             **stats_transformed_human: Tensor1[tf32, Samples],
@@ -937,69 +848,35 @@ class NeuralCIs(_DataSaver):
                             f" but does not appear as an output from your"
                             f" simulation fn!!  {missing}")
 
-    def _check_transform_on_params_fn_names(
+    def _check_transform_on_stats_fn_names(
             self,
     ) -> None:
 
-        if self.kwargs.transform_on_params_fn.is_none():
+        if self.kwargs.transform_on_stats_fn.is_none():
             return
 
-        # Check inputs to the function are every single param and stat name
-        fn_args = self.kwargs.transform_on_params_fn.arg_names()
+        # Check **inputs** to the function are every single param and stat name
+        fn_args = self.kwargs.transform_on_stats_fn.arg_names()
 
         unexpected = np.setdiff1d(fn_args, self.param_names()
                                            + self.stat_names())
         if len(unexpected):
-            raise Exception(f"Your transform_on_params_fn should only have"
+            raise Exception(f"Your transform_on_stats_fn should only have"
                             f" argument names matching inputs or outputs"
                             f" of the sampling_distribution_fn.  Unexpected:"
                             f" {unexpected}.")
         missing = np.setdiff1d(self.param_names(), fn_args)
         if len(missing):
-            raise Exception(f"Your transform_on_params_fn must take every"
+            raise Exception(f"Your transform_on_stats_fn must take every"
                             f" single param as argument, even if it does not"
                             f" modify it.  Yours is missing: {missing}")
         missing = np.setdiff1d(self.stat_names(), fn_args)
         if len(missing):
-            raise Exception(f"Your transform_on_params_fn must take every"
+            raise Exception(f"Your transform_on_stats_fn must take every"
                             f" single stat as argument, even if it does"
                             f" not modify it.  Yours is missing: {missing}")
 
-        # Now analyse outputs of the transform on params function
-        test_inputs = {name: tf.random.uniform((common.BATCH_SIZE,))
-                       for name in fn_args}
-        test_outputs = self.kwargs.transform_on_params_fn(**test_inputs)
-        output_names = list(test_outputs.keys())
-
-        missing = np.setdiff1d(self.stat_names(), output_names)
-        if len(missing):
-            raise Exception(f"Your transform_on_params_fn must return every"
-                            f" stat after the transform.  Missing:"
-                            f" {missing}.")
-        missing = np.setdiff1d(self.kwargs.transform_on_params_param_names,
-                               output_names)
-        if len(missing):
-            raise Exception(f"Your transform_on_params_fn must return every"
-                            f" param in transform_on_params_param_names. "
-                            f" Missing: {missing}.")
-
-        expected_outputs = (self.stat_names()
-                            + self.kwargs.transform_on_params_param_names)
-        unexpected = np.setdiff1d(output_names, expected_outputs)
-        if len(unexpected):
-            raise Exception(f"Your transform_on_params_fn must return only"
-                            f" variables with variable definitions. "
-                            f" Unexpected: {unexpected}.")
-        unexpected = np.setdiff1d(output_names, self.defined_vars())
-        if len(unexpected):
-            raise Exception(f"Your transform_on_params_fn must return only"
-                            f" variables with variable definitions." 
-                            f" Unexpected: {unexpected}.")
-
-        # Now analyse outputs of the transform on stats function
-        # TODO: This bit would also need refactoring with the params fn
-        #       checking if we don't get rid of it.
-
+        # Now analyse **outputs** of the transform on stats function
         test_inputs = {name: tf.random.uniform((common.BATCH_SIZE,))
                        for name in fn_args}
         test_outputs = self.kwargs.transform_on_stats_fn(**test_inputs)
@@ -1014,7 +891,7 @@ class NeuralCIs(_DataSaver):
                                output_names)
         if len(missing):
             raise Exception(f"Your transform_on_stats_fn must return every"
-                            f" param in transform_on_stats_stat_names. "
+                            f" stat in transform_on_stats_stat_names. "
                             f" Missing: {missing}.")
 
         expected_outputs = (self.param_names()
@@ -1026,8 +903,8 @@ class NeuralCIs(_DataSaver):
                             f" Unexpected: {unexpected}.")
         unexpected = np.setdiff1d(output_names, self.defined_vars())
         if len(unexpected):
-            raise Exception(f"Your transform_on_stats_fn must return only"
-                            f" variables with variable definitions."
+            raise Exception(f"Your transform_on_stat_fn must return only"
+                            f" variables with variable definitions. "
                             f" Unexpected: {unexpected}.")
 
     def _check_names_are_not_shared(self):

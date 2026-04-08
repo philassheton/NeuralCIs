@@ -96,20 +96,15 @@ class _NeuralCIsKWArgs():
             ],
             estimates_fn: Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
-                Tuple[Tensor1[tf32, Samples], ...]
+                Dict["str", Tensor1[tf32, Samples]]
             ],
             unknown_param_names: Sequence[str],
             stat_names: Sequence[str],
             known_param_names: Sequence[str],
-            transform_on_params_fn: Optional[Callable[
-                [Tuple[Tensor1[tf32, Samples], ...]],
-                Dict["str", Tensor1[tf32, Samples]]
-            ]],
             transform_on_stats_fn: Optional[Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]],
             ]],
-            transform_on_params_param_names: Sequence[str],
             transform_on_stats_stat_names: Sequence[str],
             profile: str,
             network_setup_args: Optional[Dict],
@@ -127,9 +122,7 @@ class _NeuralCIsKWArgs():
         self.stat_names = stat_names
         self.known_param_names = known_param_names
 
-        self.transform_on_params_fn = _TFFn.get(transform_on_params_fn)
         self.transform_on_stats_fn = _TFFn.get(transform_on_stats_fn)
-        self.transform_on_params_param_names = transform_on_params_param_names
         self.transform_on_stats_stat_names = transform_on_stats_stat_names
 
         self.profile = profile
@@ -146,10 +139,7 @@ class _NeuralCIsKWArgs():
             unknown_param_names = self.unknown_param_names,
             stat_names = self.stat_names,
             known_param_names = self.known_param_names,
-            transform_on_params_fn = self.transform_on_params_fn,
             transform_on_stats_fn = self.transform_on_stats_fn,
-            transform_on_params_param_names =
-                                        self.transform_on_params_param_names,
             transform_on_stats_stat_names =
                                         self.transform_on_stats_stat_names,
             profile=self.profile,
@@ -175,9 +165,6 @@ class _NeuralCIsKWArgs():
         self.estimates_fn.save(
             foldername, "estimates_fn",
         )
-        self.transform_on_params_fn.save(
-            foldername, "transform_on_params_fn",
-        )
         self.transform_on_stats_fn.save(
             foldername, "transform_on_stats_fn",
         )
@@ -192,8 +179,6 @@ class _NeuralCIsKWArgs():
         other_args = {"unknown_param_names": self.unknown_param_names,
                       "stat_names": self.stat_names,
                       "known_param_names": self.known_param_names,
-                      "transform_on_params_param_names":
-                                        self.transform_on_params_param_names,
                       "transform_on_stats_stat_names":
                                         self.transform_on_stats_stat_names,
                       "profile": profile,
@@ -215,9 +200,6 @@ class _NeuralCIsKWArgs():
             ),
             estimates_fn = _TFFn.load(
                 foldername, "estimates_fn",
-            ),
-            transform_on_params_fn = _TFFn.load(
-                foldername, "transform_on_params_fn"
             ),
             transform_on_stats_fn = _TFFn.load(
                 foldername, "transform_on_stats_fn",

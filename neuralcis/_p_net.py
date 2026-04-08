@@ -27,12 +27,6 @@ class _PNet(_DataSaver):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
-            transform_on_params_fn: Callable[
-                [Tensor2[tf32, Samples, Stats],
-                 Tensor2[tf32, Samples, Params]],
-                Tuple[Tensor2[tf32, Samples, Stats],
-                      Tensor2[tf32, Samples, Params]]
-            ],
             transform_on_stats_fn: Callable[
                 [Tensor2[tf32, Samples, Stats],
                  Tensor2[tf32, Samples, Params]],
@@ -43,7 +37,6 @@ class _PNet(_DataSaver):
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
-            num_params_remaining_after_transform: int,
             num_stats_remaining_after_transform: int,
             param_sampler: _ParamSampler,
             profile: str,
@@ -63,13 +56,11 @@ class _PNet(_DataSaver):
             self.sampling_distribution_fn,                                     # type: ignore
             self.param_sampler.sample_params,
             contrast_fn,
-            transform_on_params_fn,
             transform_on_stats_fn,
             num_stat,
             num_unknown_param,
             num_known_param,
             known_param_indices,
-            num_params_remaining_after_transform,
             num_stats_remaining_after_transform,
             profile,
             **network_setup_args,
@@ -134,7 +125,7 @@ class _PNet(_DataSaver):
         #       used in training of CINet, this is important.  Not sure though
         #       and should check.
 
-        zs = self.znet.call_tf_transformed((estimates, params_null))
+        zs = self.znet.call_tf((estimates, params_null))
         ps = self.p_from_z(zs[:, 0])
         inner_feeler = self.param_sampler.inner_feeler_net
         inner_feeler_outputs = inner_feeler.call_tf((params_null, params_null))  # type: ignore
