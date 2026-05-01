@@ -20,6 +20,7 @@ def sampling_distribution_fn(
         n,
 ):
 
+    batch_size = tf.shape(n)[0]
     rho_ab = (rho_ac * rho_bc
               + rho_ab_partial * tf.sqrt((1. - tf.square(rho_ac)) *
                                          (1. - tf.square(rho_bc))))
@@ -35,7 +36,7 @@ def sampling_distribution_fn(
 
     cholesky = tf.linalg.cholesky(correlation_matrix)
 
-    z = tf.random.normal((len(n), 3, N_MAX))
+    z = tf.random.normal((batch_size, 3, N_MAX))
     z_correlated = tf.linalg.matmul(cholesky, z)
 
     a, b, c = tf.split(z_correlated, 3, axis=1)
@@ -121,7 +122,7 @@ cis = neuralcis.NeuralCIs(
     ["rho_ab_hat", "rho_bc_hat", "rho_ac_hat", "prop_a_hat"],
     ["n"],
 
-    None, None, [],
+    None, None,
 
     rho_ab_partial=Correlation(),
     rho_ac=Correlation(),
@@ -139,4 +140,4 @@ cis = neuralcis.NeuralCIs(
 )
 
 cis.fit()
-cis.save('savedmodels/Biserial Partial 10-100', 'full')
+cis.save('saved_model', 'full')
