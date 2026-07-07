@@ -12,7 +12,8 @@ from . import common
 from typing import Optional, Callable, Tuple
 from .common import Samples, Stats, Params, UnknownParams, KnownParams
 from .common import MinAndMax, ImportanceIngredients, Chains
-from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3, Tensor4
+from tensor_annotations.tensorflow import (Tensor0, Tensor1, Tensor2,
+                                           Tensor3, Tensor4)
 from tensor_annotations import tensorflow as ttf
 
 tf32 = ttf.float32
@@ -105,6 +106,8 @@ class _SamplingFeelerGenerator(_DataSaver):
             peripheral_batch_size: int =
                                        common.FEELER_NET_PERIPHERAL_BATCH_SIZE,
             num_peripheral_batches: int = common.FEELER_NET_PERIPHERAL_BATCHES,
+            regularize_jitter_multiply: float = 1.,
+            regularize_jitter_add: float = 0.,
     ):
 
         _DataSaver.__init__(self,
@@ -138,6 +141,11 @@ class _SamplingFeelerGenerator(_DataSaver):
         self.chain_length = chain_length
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
+
+        self.regularize_jitter = ((regularize_jitter_add != 0.)
+                                  or (regularize_jitter_multiply != 1.))
+        self.regularize_jitter_add = regularize_jitter_add
+        self.regularize_jitter_multiply = regularize_jitter_multiply
 
         # Choosing alpha (concentration1) and beta (concentration2) makes
         # our beta distribution here symmetric.  A value of 1. for both of
@@ -524,12 +532,8 @@ class _SamplingFeelerGenerator(_DataSaver):
         #       by computing both together.
         overlaps = self.overlaps_estimates_box(centroid, cov_chol)
 
-        # TODO: Should we have twice the cov_chol to capture being 2SD?
-        collision_prob_is_prop_to = tf.reduce_prod(
-            tf.linalg.diag_part(cov_chol) + self.estimates_widths,
-            axis=1,
-        )
-        importance_if_overlaps = tf.constant(1.) / collision_prob_is_prop_to
+        cov_det = tf.reduce_prod(tf.linalg.diag_part(cov_chol), axis=1)
+        importance_if_overlaps = tf.constant(1.) / cov_det
 
         # For those params outside of valid ranges, we keep the samples, so we
         #   can learn not to generate them, and zero out their importance and
@@ -622,7 +626,18 @@ class _SamplingFeelerGenerator(_DataSaver):
         params_pp = self.preprocess_params_fn(params)
         estimates_grouped = self.draw_estimates_grouped(params_pp, num_chains)
         xbar = tf.reduce_mean(estimates_grouped, axis=1)
+
+        if self.regularize_jitter:
+            estimates_std = tf.math.reduce_std(estimates_grouped, 1,
+                                               keepdims=True)
+            estimates_grouped += tf.random.normal(
+                estimates_grouped.shape,
+                stddev=self.regularize_jitter_multiply * estimates_std
+                       + self.regularize_jitter_add,
+            )
+
         l = tfp.stats.cholesky_covariance(estimates_grouped, sample_axis=1)
+        tf.debugging.check_numerics(l, "Cholesky problem!!")
         identity = tf.eye(self.num_estimate, batch_shape=(num_chains, ))
         inv_l = tf.linalg.triangular_solve(l, identity)
         det_l = tf.reduce_prod(tf.linalg.diag_part(l), axis=1)

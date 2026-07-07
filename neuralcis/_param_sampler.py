@@ -56,6 +56,8 @@ class _ParamSampler(_DataSaver):
                                     common.OUTER_FEELER_PERIPHERAL_BATCH_SIZE,
             num_peripheral_batches_outer: int =
                                     common.OUTER_FEELER_PERIPHERAL_BATCHES,
+            regularize_jitter_multiply: float = 1.,
+            regularize_jitter_add: float = 0.,
             **network_setup_args,
     ) -> None:
 
@@ -78,6 +80,8 @@ class _ParamSampler(_DataSaver):
             chain_length,
             peripheral_batch_size_inner,
             num_peripheral_batches_inner,
+            regularize_jitter_multiply,
+            regularize_jitter_add,
         )
 
         self.inner_feeler_net = _SamplingFeelerNet(
@@ -127,6 +131,8 @@ class _ParamSampler(_DataSaver):
             chain_length,
             peripheral_batch_size_outer,
             num_peripheral_batches_outer,
+            regularize_jitter_multiply,
+            regularize_jitter_add,
         )
 
         self.outer_feeler_net = _SamplingFeelerNet(

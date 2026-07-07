@@ -14,7 +14,8 @@ from . import common
 from typing import Optional, Callable, Tuple
 from .common import Samples, Stats, Params, UnknownParams, KnownParams
 from .common import ImportanceIngredients, Chains
-from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3, Tensor4
+from tensor_annotations.tensorflow import (Tensor0, Tensor1, Tensor2,
+                                           Tensor3, Tensor4)
 from tensor_annotations import tensorflow as ttf
 
 tf32 = ttf.float32
@@ -107,7 +108,6 @@ class _OuterFeelerGenerator(_DataSaver):
             ],
             num_unknown_param: int,
             num_known_param: int,
-            estimates_widths: Tensor1[tf32, UnknownParams],
             profile: str,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
             sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
@@ -117,6 +117,8 @@ class _OuterFeelerGenerator(_DataSaver):
                                      common.OUTER_FEELER_PERIPHERAL_BATCH_SIZE,
             num_peripheral_batches: int =
                                      common.OUTER_FEELER_PERIPHERAL_BATCHES,
+            regularize_jitter_multiply: float = 1.,
+            regularize_jitter_add: float = 0.,
     ):
 
         if self._skip_when_profile(profile):
@@ -142,7 +144,10 @@ class _OuterFeelerGenerator(_DataSaver):
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
 
-        self.estimates_widths = estimates_widths
+        self.regularize_jitter = ((regularize_jitter_add != 0.)
+                                  or (regularize_jitter_multiply != 1.))
+        self.regularize_jitter_add = regularize_jitter_add
+        self.regularize_jitter_multiply = regularize_jitter_multiply
 
         # https://eurekastatistics.com/beta-distribution-pdf-grapher/
         self.beta = tfp.distributions.Beta(concentration1=1.,
@@ -515,22 +520,14 @@ class _OuterFeelerGenerator(_DataSaver):
     def importance_ingredients(
             self,
             params: Tensor2[tf32, Chains, Params],
-            cov_chol: Tensor1[tf32, Chains],
+            cov_chol: Tensor3[tf32, Chains, Params, Params],
             hits_inner: Tensor1[tf32, Chains],
     ) -> Tensor2[tf32, Chains, ImportanceIngredients]:
 
         eps = common.SMALLEST_LOGABLE_NUMBER
 
-        # TODO: This currently uses the same collision prob as for the inner
-        #       feeler generator.  But should we make this use the larger area
-        #       rather than the estimates box area?  Needs thought.  If so,
-        #       could potentially get away with a simple Cholesky factor of
-        #       the "inside" training data.
-        collision_prob_is_prop_to = tf.reduce_prod(
-            tf.linalg.diag_part(cov_chol) + self.estimates_widths,
-            axis=1,
-        )
-        importance_if_overlaps = tf.constant(1.) / collision_prob_is_prop_to
+        cov_det = tf.reduce_prod(tf.linalg.diag_part(cov_chol), axis=1)
+        importance_if_overlaps = tf.constant(1.) / cov_det
 
         # For those params outside of valid ranges, we keep the samples, so we
         #   can learn not to generate them, and zero out their importance and
@@ -599,6 +596,16 @@ class _OuterFeelerGenerator(_DataSaver):
         estimates_grouped = tf.reshape(estimates, (num_chains,
                                                    self.sample_size,
                                                    self.num_estimate))
+
+        if self.regularize_jitter:
+            estimates_std = tf.math.reduce_std(estimates_grouped, 1,
+                                               keepdims=True)
+            estimates_grouped += tf.random.normal(
+                estimates_grouped.shape,
+                stddev=self.regularize_jitter_multiply * estimates_std
+                       + self.regularize_jitter_add,
+            )
+
         xbar = tf.reduce_mean(estimates_grouped, axis=1)
         l = tfp.stats.cholesky_covariance(estimates_grouped, sample_axis=1)
         identity = tf.eye(self.num_estimate, batch_shape=(num_chains, ))

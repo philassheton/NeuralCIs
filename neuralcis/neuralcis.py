@@ -74,6 +74,16 @@ class NeuralCIs(_DataSaver):
         statistics as returned by the transform function.  (Parameters are
         currently assumed to be returned under the same names, but this may
         be relaxed in later versions.)
+    :param param_sampling_regularize_jitter_multiply: An optional float
+        (default 1) which can be used to jitter the samples in the param
+        sampling Jeffreys prior estimate.  See
+        param_sampling_regularize_jitter_add.
+    :param param_sampling_regularize_jitter_add: An optional float (default 0)
+        which controls the magnitude of random jitter added to samples when
+        estimating the Fisher information for the Jeffreys prior.  This is
+        the standard deviation of random jitter added.  It is also possible
+        to add an amount of random jitter that is a multiple of the SD in each
+        respective direction using param_smapling_regularize_jitter_multiply.
     :param foldername: Optional string; will load network weights from a
         previous training session.
     :param train_initial_weights:  A bool (default True) that controls whether
@@ -143,6 +153,8 @@ class NeuralCIs(_DataSaver):
                 Dict["str", Tensor1[tf32, Samples]],
             ]] = None,
             transform_on_stats_stat_names: Optional[Sequence[str]] = None,
+            param_sampling_regularize_jitter_multiply: float = 1.,
+            param_sampling_regularize_jitter_add: float = 0.,
             train_initial_weights: bool = True,
             profile: str = FULL,                                               # If you want a more minimal setup, "testing" is much lighter and "inference" even lighter still
             network_setup_args: Optional[Dict] = None,
@@ -219,6 +231,8 @@ class NeuralCIs(_DataSaver):
             self.known_param_indices,
             profile,
             train_initial_weights=train_initial_weights,
+            regularize_jitter_multiply=regularize_jitter_multiply,
+            regularize_jitter_add=regularize_jitter_add,
             **network_setup_args,
         )
         self.pnet = _PNet(
