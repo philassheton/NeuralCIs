@@ -8,13 +8,6 @@ import tensorflow_probability as tfp
 
 from tqdm import tqdm
 
-# typing
-from tensor_annotations.tensorflow import Tensor0
-from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
-
-
-# tf.config.run_functions_eagerly(True)
-
 
 @tf.function(jit_compile=True)
 def welch_test(mudiff_hat, sigma1_hat, sigma2_hat,
@@ -101,8 +94,7 @@ def run_welch_ps(
             batch_ps.append(tf.stack([this_ps, this_ps_pow], axis=1))
 
         filename = behfish.data_filename(method_name, "ps", params_sample_num)
-        # path = behfish.convert_relative_path(filename)
-        path = "/media/phil/Shared/neuralcis/behrens_fisher_files/%s" % filename
+        path = behfish.convert_relative_path(filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         ps = tf.concat(batch_ps, axis=0)
         np.save(path, ps.numpy())
@@ -110,6 +102,3 @@ def run_welch_ps(
 
 if __name__ == "__main__":
     run_welch_ps("welch", 1_000_000)
-    run_welch_ps("welch_powersim", 10_000,
-                 batch_size=10_000,
-                 simulate_from_power_mudiff=True)
