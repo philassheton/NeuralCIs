@@ -220,6 +220,34 @@ class _LinearLayer(_SimNetLayer):
         return tf.linalg.matmul(inputs, W) + b
 
 
+class _StdLayer(_LinearLayer):
+    layer_type_name = "std"
+
+    @tf.function
+    def call(
+            self,
+            inputs: Tensor2[tf32, Samples, LayerInputs]
+    ) -> Tensor2[tf32, Samples, LayerInputs]:
+
+        outputs = tf.keras.activations.elu(super().call(inputs))
+        mean = tf.math.reduce_mean(outputs, axis=1)
+        sd = tf.math.reduce_std(outputs, axis=1)
+        outputs = (outputs - mean[:, None]) / sd[:, None]
+        return outputs
+
+
+class _StdEluSkipLayer(_StdLayer):
+    layer_type_name = "std elu skip"
+
+    @tf.function
+    def call(
+            self,
+            inputs: Tensor2[tf32, Samples, LayerInputs]
+    ) -> Tensor2[tf32, Samples, LayerInputs]:
+
+        return tf.keras.activations.elu(super().call(inputs)) + inputs
+
+
 class _FiftyFiftyLayer(_SimNetLayer):
     layer_type_name = "5050"
 
