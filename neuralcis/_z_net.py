@@ -280,3 +280,12 @@ class _ZNet(_SimulatorNet):
         net0_inputs, _ = self.net_inputs((stats, params))
         z = self.nets[0](net0_inputs)[:, 0]
         return z
+
+    def fit(
+            self,
+            steps_per_epoch: int = common.STEPS_PER_EPOCH_ZNET,
+            epochs: int = common.EPOCHS_ZNET,
+            *args, **kwargs,
+    ):
+
+        return super().fit(steps_per_epoch, epochs, *args, **kwargs)
