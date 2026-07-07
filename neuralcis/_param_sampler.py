@@ -123,7 +123,6 @@ class _ParamSampler(_DataSaver):
             estimates_fn,
             num_unknown_param,
             num_known_param,
-            self.inner_data_generator.estimates_widths,
             profile,
             sample_size,
             sd_known,

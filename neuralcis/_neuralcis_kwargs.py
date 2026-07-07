@@ -106,8 +106,8 @@ class _NeuralCIsKWArgs():
                 Dict["str", Tensor1[tf32, Samples]],
             ]],
             transform_on_stats_stat_names: Sequence[str],
-            regularize_jitter_multiply: float,
-            regularize_jitter_add: float,
+            param_sampling_regularize_jitter_multiply: float,
+            param_sampling_regularize_jitter_add: float,
             profile: str,
             network_setup_args: Optional[Dict],
             optional_data_to_store: Optional[Dict],
@@ -127,8 +127,10 @@ class _NeuralCIsKWArgs():
         self.transform_on_stats_fn = _TFFn.get(transform_on_stats_fn)
         self.transform_on_stats_stat_names = transform_on_stats_stat_names
 
-        self.regularize_jitter_multiply = regularize_jitter_multiply
-        self.regularize_jitter_add = regularize_jitter_add
+        self.param_sampling_regularize_jitter_multiply = \
+                                    param_sampling_regularize_jitter_multiply
+        self.param_sampling_regularize_jitter_add = \
+                                    param_sampling_regularize_jitter_add
 
         self.profile = profile
 
@@ -146,9 +148,11 @@ class _NeuralCIsKWArgs():
             known_param_names = self.known_param_names,
             transform_on_stats_fn = self.transform_on_stats_fn,
             transform_on_stats_stat_names =
-                                        self.transform_on_stats_stat_names,
-            regularize_jitter_multiply = self.regularize_jitter_multiply,
-            regularize_jitter_add = self.regularize_jitter_add,
+                                self.transform_on_stats_stat_names,
+            param_sampling_regularize_jitter_multiply =
+                                self.param_sampling_regularize_jitter_multiply,
+            param_sampling_regularize_jitter_add =
+                                self.param_sampling_regularize_jitter_add,
             profile=self.profile,
             network_setup_args = self.network_setup_args,
             optional_data_to_store = self.optional_data_to_store,

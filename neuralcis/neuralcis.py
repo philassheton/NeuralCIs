@@ -182,6 +182,8 @@ class NeuralCIs(_DataSaver):
             known_param_names,
             transform_on_stats_fn,
             transform_on_stats_stat_names,
+            param_sampling_regularize_jitter_multiply,
+            param_sampling_regularize_jitter_add,
             profile,
             network_setup_args,
             optional_data_to_store,
@@ -231,8 +233,9 @@ class NeuralCIs(_DataSaver):
             self.known_param_indices,
             profile,
             train_initial_weights=train_initial_weights,
-            regularize_jitter_multiply=regularize_jitter_multiply,
-            regularize_jitter_add=regularize_jitter_add,
+            regularize_jitter_multiply=\
+                                  param_sampling_regularize_jitter_multiply,
+            regularize_jitter_add=param_sampling_regularize_jitter_add,
             **network_setup_args,
         )
         self.pnet = _PNet(
