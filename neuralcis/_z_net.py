@@ -255,10 +255,7 @@ class _ZNet(_SimulatorNet):
             n: int,
     ) -> Tensor2[tf32, Samples, Params]:
 
-        assert n % 2 == 0
-        n_outer = n // 2
-        n_inner = n // 2
-        return self.param_sampling_fn(n_inner, n_outer)
+        return self.param_sampling_fn(0, n)
 
     @tf.function
     def sample_stats_and_params(
