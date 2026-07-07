@@ -488,13 +488,13 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     def loss_and_gradient(
             self,
             input_blob: NetInputBlob,
-            targets: NetTargetBlob,
+            target_blob: NetTargetBlob,
     ) -> Tuple[ttf.float32, list]:
 
         with tf.GradientTape() as tape2:
             tape2.watch(self.simnet_weights)
-            net_outs = self.call_tf_training(input_blob)
-            loss = self.get_loss(net_outs, targets)
+            output_blob = self.call_tf_training(input_blob)
+            loss = self.get_loss(output_blob, target_blob)
         gradient = tape2.gradient(loss, self.simnet_weights)
 
         return loss, gradient

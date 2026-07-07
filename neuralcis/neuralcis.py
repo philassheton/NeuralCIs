@@ -604,11 +604,11 @@ class NeuralCIs(_DataSaver):
         known_params_human = self._params_net_to_human(known_params_net,
                                                        known_params_only=True)
         inputs_human = stats_human | known_params_human
-        unknown_params_human = self.kwargs.estimates_fn(**inputs_human)
-        unknown_params_net = self._params_human_to_net(**unknown_params_human,
+        estimates_human = self.kwargs.estimates_fn(**inputs_human)
+        estimates_net = self._params_human_to_net(**estimates_human,
                                                        unknown_params=True,
                                                        known_params=False)
-        return unknown_params_net
+        return estimates_net
 
     @tf.function
     def _transform_on_stats_fn_net_interface(
