@@ -512,10 +512,14 @@ class NeuralCIs(_DataSaver):
             profile: Optional[str] = None,                                     # Will default to TESTING if possible, else INFERENCE.
             network_setup_args: Optional[dict] = None,
             network_setup_arg_overrides: Optional[dict] = None,
+            **new_kwargs_for_backward_compatibility,
     ) -> T:
 
         # TODO: Don't load saved data if in inference profile
-        kwargs_object = _NeuralCIsKWArgs.load(foldername)
+        kwargs_object = _NeuralCIsKWArgs.load(
+            foldername,
+            new_kwargs_for_backward_compatibility,
+        )
         kwargs = kwargs_object.kwargs()
 
         saved_profile = kwargs["profile"]

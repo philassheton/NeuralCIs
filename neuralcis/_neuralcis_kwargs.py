@@ -194,13 +194,18 @@ class _NeuralCIsKWArgs():
                                         self.transform_on_stats_stat_names,
                       "profile": profile,
                       "network_setup_args": self.network_setup_args,
-                      "optional_data_to_store": self.optional_data_to_store}
+                      "optional_data_to_store": self.optional_data_to_store,
+                      "param_sampling_regularize_jitter_multiply":
+                                self.param_sampling_regularize_jitter_multiply,
+                      "param_sampling_regularize_jitter_add":
+                                self.param_sampling_regularize_jitter_add}
         self._save_pickle(foldername, "other_args", other_args)
 
     @classmethod
     def load(
             cls: Type[T],
             foldername: str,
+            new_kwargs_for_backward_compatibility: dict,
     ) -> T:
         kwargs = cls._wrap_up_kwargs(
             sampling_distribution_fn = _TFFn.load(
@@ -223,6 +228,9 @@ class _NeuralCIsKWArgs():
         variable_defs = cls._load_pickle(foldername, "variable_defs")
         for variable_def in variable_defs.values():
             variable_def.reapply_tf_functions()
+
+        if new_kwargs_for_backward_compatibility is not None:
+            other_args |= new_kwargs_for_backward_compatibility
 
         kwargs |= {"variable_defs": variable_defs} | other_args
         return cls(**kwargs)
