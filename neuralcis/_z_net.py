@@ -3,6 +3,7 @@ from . import _utils, common
 
 import tensorflow as tf
 import tensorflow_probability as tfp                                           # type: ignore
+import numpy as np
 
 from typing import Callable, Tuple, Sequence, Optional, Union
 from .common import Params, KnownParams, Stats, Zs, Samples
@@ -24,6 +25,7 @@ NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
 
 class _ZNet(_SimulatorNet):
     absolute_loss_increase_tol = common.ABS_LOSS_INCREASE_TOL_Z_NET
+    root2pi = tf.math.log(tf.math.sqrt(2 * np.pi))
     def __init__(
             self,
             sampling_distribution_fn: Callable[
@@ -196,13 +198,13 @@ class _ZNet(_SimulatorNet):
         eps = common.SMALLEST_LOGABLE_NUMBER
 
         jacobdets_floored = _utils._soft_floor_at_zero(sample_jacobdets)
+        log_jacobdets_floored = tf.math.log(jacobdets_floored + eps)
 
-        normal_pd = tfp.distributions.Normal(0.0, 1.0).prob(outputs)
-        normal_pd_joint = tf.math.reduce_prod(normal_pd, axis=1) + eps
+        log_normal_pds = -0.5 * tf.square(outputs) - self.root2pi
+        log_normal_pd_joint = tf.math.reduce_sum(log_normal_pds, axis=1)
 
         # work first additively in log space to avoid overflows
-        neg_log_likelihoods = (-tf.math.log(normal_pd_joint)
-                               - tf.math.log(jacobdets_floored + eps))
+        neg_log_likelihoods = -log_normal_pd_joint - log_jacobdets_floored
 
         return neg_log_likelihoods
 
