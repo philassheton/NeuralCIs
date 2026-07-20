@@ -30,16 +30,16 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 #  TODO: This is a very very crude first cut, with loads of approximations
 #        and whatnot that will need hopefully refining in a later version:
 #           1) We are just defining the boundary as fixed ranges for our
-#              estimates.  This will cause us some issues with the contrast
+#              estimates.  This will cause us some issues with the interest
 #              as it will not have full information (e.g. for ANOVA, where the
-#              contrast makes an ellipse, but the fixed ranges make a
+#              interest makes an ellipse, but the fixed ranges make a
 #              rectangular shape.  I'm still not clear about the best approach
 #              between defining a range of OK parameters (in which case, I
 #              think we need to then learn the volume of estimates that that
 #              range of params can produce, and then further learn the range
 #              of params that can throw estimates into that volume.  This
 #              would allow for params to be overridden by a preference for
-#              defining the contrast.  HOWEVER, it does NOT allow for such an
+#              defining the interest.  HOWEVER, it does NOT allow for such an
 #              easy definition of what we can and cannot put into the model
 #              (since it is now defined by what parameter ranges come out --
 #              though we can use the initial volume of estimates that we first
@@ -52,11 +52,11 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 #              use" guidelines for users and is very simple to implement (find
 #              all the params that can throw estimates into that given volume)
 #              but is not yet clear to me if they will get distorted when they
-#              only see some of the possibilities for a given contrast value.
+#              only see some of the possibilities for a given interest value.
 #              That could perhaps be remedied by expanding the volume to avoid
 #              that happening, but then there are still questions of how: do
-#              we just crudely say that estimates passed through the contrast
-#              fn would be good enough as estimates of the contrast here?
+#              we just crudely say that estimates passed through the interest
+#              fn would be good enough as estimates of the interest here?
 #              That could lead to pretty horrible results though....
 #           2) Using the negative log importances and MSE makes sense in
 #              in general, in particular in that the peripheral zeros will

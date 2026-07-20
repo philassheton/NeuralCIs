@@ -23,7 +23,7 @@ class _PNet(_DataSaver):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor2[tf32, Samples, Stats]
             ],
-            contrast_fn: Callable[
+            interest_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
@@ -55,7 +55,7 @@ class _PNet(_DataSaver):
         self.znet = _ZNet(
             self.sampling_distribution_fn,                                     # type: ignore
             self.param_sampler.sample_params,
-            contrast_fn,
+            interest_fn,
             transform_on_stats_fn,
             num_stat,
             num_unknown_param,
@@ -87,10 +87,10 @@ class _PNet(_DataSaver):
         return self.p_from_z(z)
 
     @tf.function
-    def p_from_contrast(
+    def p_from_interest(
             self,
             estimates: Tensor2[tf32, Samples, Stats],
-            contrast: Tensor1[tf32, Samples],
+            interest: Tensor1[tf32, Samples],
             known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor1[tf32, Samples]:
 
@@ -98,7 +98,7 @@ class _PNet(_DataSaver):
         #       could be done away with.  But will need to reformulate the
         #       users of this func.
 
-        z = self.znet.call_tf_contrast_only(estimates, contrast, known_params)
+        z = self.znet.call_tf_interest_only(estimates, interest, known_params)
         return self.p_from_z(z[:, None])
 
     @tf.function

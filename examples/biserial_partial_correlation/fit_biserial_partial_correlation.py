@@ -61,7 +61,7 @@ def sampling_distribution_fn(
     }
 
 
-def contrast_fn(
+def interest_fn(
         rho_ab_partial,
         rho_ac,
         rho_bc,
@@ -116,7 +116,7 @@ def estimates_fn(
 
 cis = neuralcis.NeuralCIs(
     sampling_distribution_fn,
-    contrast_fn,
+    interest_fn,
     estimates_fn,
     ["rho_ab_partial", "rho_bc", "rho_ac", "prop_a"],
     ["rho_ab_hat", "rho_bc_hat", "rho_ac_hat", "prop_a_hat"],

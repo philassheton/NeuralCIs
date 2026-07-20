@@ -131,12 +131,12 @@ class _CINet(_SimulatorNet):
     def p_from_pnet(
             self,
             estimates: Tensor2[tf32, Samples, Stats],
-            contrast: Tensor1[tf32, Samples],
+            interest: Tensor1[tf32, Samples],
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
         known_params = self.known_params(params)
-        return self.pnet.p_from_contrast(estimates, contrast, known_params)
+        return self.pnet.p_from_interest(estimates, interest, known_params)
 
     @tf.function
     def output_activation(

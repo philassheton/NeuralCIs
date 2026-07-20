@@ -96,7 +96,7 @@ OUTER_FEELER_INCLUDE_BOOST = 3.
 
 # other
 DEFAULT_CONFIDENCE_LEVEL = .95
-DZ0_DCONTRAST_PENALTY_WEIGHT = 100.
+DZ0_DINTEREST_PENALTY_WEIGHT = 100.
 ZNET_ANALYSER_NUM_SAMPLES = 1000
 SAMPLES_TO_TEST_PARAM_MAPPINGS = 1024
 ERROR_ALLOWED_FOR_PARAM_MAPPINGS = 1e-5
@@ -133,7 +133,7 @@ TrainingBatches = typing.NewType("TrainingBatches", axes.Axis)
 FixedParams = typing.NewType("FixedParams", axes.Axis)
 ParamsAndKS = typing.NewType("ParamsAndKS", axes.Axis)
 One = typing.NewType("One", axes.Axis)
-Contrast = typing.NewType("Contrast", axes.Axis)
+Interest = typing.NewType("Interest", axes.Axis)
 J = typing.NewType("J", axes.Axis)
 Indices = typing.NewType("Indices", axes.Axis)
 Chains = typing.NewType("Chains", axes.Axis)

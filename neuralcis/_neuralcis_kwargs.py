@@ -90,7 +90,7 @@ class _NeuralCIsKWArgs():
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]]
             ],
-            contrast_fn: Callable[
+            interest_fn: Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Tensor1[tf32, Samples]
             ],
@@ -117,7 +117,7 @@ class _NeuralCIsKWArgs():
             optional_data_to_store = {}
 
         self.sampling_distribution_fn = _TFFn.get(sampling_distribution_fn)
-        self.contrast_fn = _TFFn.get(contrast_fn)
+        self.interest_fn = _TFFn.get(interest_fn)
         self.estimates_fn = _TFFn.get(estimates_fn)
 
         self.unknown_param_names = unknown_param_names
@@ -141,7 +141,7 @@ class _NeuralCIsKWArgs():
     def kwargs(self) -> Dict:
         return self._wrap_up_kwargs(
             sampling_distribution_fn = self.sampling_distribution_fn,
-            contrast_fn = self.contrast_fn,
+            interest_fn = self.interest_fn,
             estimates_fn = self.estimates_fn,
             unknown_param_names = self.unknown_param_names,
             stat_names = self.stat_names,
@@ -170,8 +170,8 @@ class _NeuralCIsKWArgs():
         self.sampling_distribution_fn.save(
             foldername, "sampling_distribution_fn",
         )
-        self.contrast_fn.save(
-            foldername, "contrast_fn",
+        self.interest_fn.save(
+            foldername, "interest_fn",
         )
         self.estimates_fn.save(
             foldername, "estimates_fn",
@@ -211,8 +211,8 @@ class _NeuralCIsKWArgs():
             sampling_distribution_fn = _TFFn.load(
                 foldername, "sampling_distribution_fn",
             ),
-            contrast_fn = _TFFn.load(
-                foldername, "contrast_fn",
+            interest_fn = _TFFn.load(
+                foldername, "interest_fn",
             ),
             estimates_fn = _TFFn.load(
                 foldername, "estimates_fn",

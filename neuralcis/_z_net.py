@@ -20,7 +20,7 @@ NetTargetBlob = Tensor0
 
 NetOutputBlob = Tuple[Tensor2[tf32, Samples, Zs],      # net outputs (z values)
                       Tensor1[tf32, Samples],          # Jacobian determinants
-                      Tensor1[tf32, Samples]]          # dz0 / dcontrast
+                      Tensor1[tf32, Samples]]          # dz0 / dinterest
 
 
 class _ZNet(_SimulatorNet):
@@ -36,7 +36,7 @@ class _ZNet(_SimulatorNet):
                 [int, int],                                       # n
                 Tensor2[tf32, Samples, Params]                    # -> params
             ],
-            contrast_fn: Callable[
+            interest_fn: Callable[
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
@@ -57,7 +57,7 @@ class _ZNet(_SimulatorNet):
 
         # Allow MonotonicWithParams layers to be used on first net if needed.
         #  This counts all estimates except the first (num_y - 1) plus the
-        #  contrast (1) plus all known params as "not needing to be monotone"
+        #  interest (1) plus all known params as "not needing to be monotone"
         # TODO: Probably now don't need Monotonic Layers any more, so consider
         #       getting rid of this (but must remove monotonic layers at the
         #       same time).
@@ -86,7 +86,7 @@ class _ZNet(_SimulatorNet):
 
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_fn = param_sampling_fn
-        self.contrast_fn = contrast_fn
+        self.interest_fn = interest_fn
         self.transform_on_stats_fn = transform_on_stats_fn
 
         self.known_param_indices = known_param_indices
@@ -116,12 +116,12 @@ class _ZNet(_SimulatorNet):
             target_outputs: None = None,
     ) -> ttf.float32:
 
-        outputs, jacobians, dz0_dcontrast = net_outputs
+        outputs, jacobians, dz0_dinterest = net_outputs
         neg_log_likelihoods = self.neg_log_likelihoods(outputs, jacobians)
-        dz0_dcontrast_is_neg = tf.keras.activations.relu(dz0_dcontrast)
-        dz0_dcontrast_penalty = \
-            common.DZ0_DCONTRAST_PENALTY_WEIGHT * dz0_dcontrast_is_neg
-        loss = tf.math.reduce_mean(neg_log_likelihoods + dz0_dcontrast_penalty)
+        dz0_dinterest_is_neg = tf.keras.activations.relu(dz0_dinterest)
+        dz0_dinterest_penalty = \
+            common.DZ0_DINTEREST_PENALTY_WEIGHT * dz0_dinterest_is_neg
+        loss = tf.math.reduce_mean(neg_log_likelihoods + dz0_dinterest_penalty)
 
         tf.debugging.check_numerics(loss,
                                     "Na or inf in loss in multiple Z Net opt")
@@ -146,19 +146,19 @@ class _ZNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        # TODO: relate this to the contrast rather than "known param" naming
+        # TODO: relate this to the interest rather than "known param" naming
         stats, params = input_blob
         stats_trans, params_trans = self.transform_on_stats_fn(stats, params)
-        contrast_trans = self.contrast_fn(params_trans)
+        interest_trans = self.interest_fn(params_trans)
 
         known_params = tf.gather(params_trans,
                                  self.known_param_indices, axis=1)
-        contrast_net_inputs = tf.concat([stats_trans,
-                                         contrast_trans[:, None],
+        interest_net_inputs = tf.concat([stats_trans,
+                                         interest_trans[:, None],
                                          known_params], axis=1)
         other_net_inputs = tf.concat([stats_trans,
                                       params_trans], axis=1)
-        net_inputs = contrast_net_inputs, other_net_inputs
+        net_inputs = interest_net_inputs, other_net_inputs
 
         return net_inputs
 
@@ -178,15 +178,15 @@ class _ZNet(_SimulatorNet):
     ###########################################################################
 
     @tf.function
-    def call_tf_contrast_only(
+    def call_tf_interest_only(
             self,
             stats: Tensor2[tf32, Samples, Stats],
-            contrast: Tensor1[tf32, Samples],
+            interest: Tensor1[tf32, Samples],
             known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor1[tf32, Samples]:
 
-        raise Exception('call_tf_contrast_only needs rewriting now that stats'
-                        'are transformed!!')
+        raise Exception('call_tf_interest_only needs rewriting now that stats'
+                        ' are transformed!!')
 
     @tf.function
     def neg_log_likelihoods(
@@ -234,22 +234,22 @@ class _ZNet(_SimulatorNet):
         jacobians = tape.batch_jacobian(zs, stats, experimental_use_pfor=False)
         jacobdets = tf.linalg.det(jacobians)
 
-        # Also compute dz0 / dcontrast (UNTRANSFORMED CONTRAST)
+        # Also compute dz0 / dinterest (UNTRANSFORMED INTEREST)
         dz0_dtheta = tape.batch_jacobian(z0, params,
                                          experimental_use_pfor=False)[:, 0, :]
         del tape
 
         with tf.GradientTape() as tape:
             tape.watch(params)
-            contrast_untransformed = self.contrast_fn(params)[:, None]
-        dcon_dtheta = tape.batch_jacobian(contrast_untransformed, params,
+            interest_untransformed = self.interest_fn(params)[:, None]
+        dcon_dtheta = tape.batch_jacobian(interest_untransformed, params,
                                           experimental_use_pfor=False)
         dcon_dtheta = dcon_dtheta[:, 0, :]
 
-        dz0_dcontrast = (tf.reduce_sum(dcon_dtheta * dz0_dtheta, axis=1)
+        dz0_dinterest = (tf.reduce_sum(dcon_dtheta * dz0_dtheta, axis=1)
                          / tf.reduce_sum(tf.square(dcon_dtheta), axis=1))
 
-        return zs, jacobdets, dz0_dcontrast                                    # type: ignore
+        return zs, jacobdets, dz0_dinterest                                    # type: ignore
 
     @tf.function
     def sample_params(

@@ -33,7 +33,7 @@ def sampling_distribution_fn(
             "sigma2_hat": sigma2_hat}
 
 
-def contrast_fn(
+def interest_fn(
         mudiff, sigma1, sigma2,  # Unknown params
         n1, n2,                  # Known params
 ):
@@ -67,7 +67,7 @@ def transform_on_stats_fn(
 
 cis = neuralcis.NeuralCIs(
     sampling_distribution_fn,
-    contrast_fn,
+    interest_fn,
     estimates_fn,
     ["mudiff", "sigma1", "sigma2"],
     ["mudiff_hat", "sigma1_hat", "sigma2_hat"],

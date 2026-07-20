@@ -39,13 +39,13 @@ class NeuralCIs(_DataSaver):
         sample.  The statistics must have different names than the parameters
         (e.g. if there is a parameter called 'mu', you may have a statistic
         called 'mu_hat', but not called 'mu').  See example below.
-    :param contrast_fn:  This function will be fed the same 1D Tensorflow
+    :param interest_fn:  This function will be fed the same 1D Tensorflow
         Tensors as the sampling_distribution_fn, and should compute from
         those parameters, the parameter value to be estimated.  See example
         below.
     :param unknown_param_names:  A list or tuple of strs.  Gives the names of
         params that should match those in the arguments of the sampling and
-        contrast functions, which are NOT known a priori and therefore must
+        interest functions, which are NOT known a priori and therefore must
         be either estimated or removed as nuisance parameters.  (For example,
         for a t-test, this might be ['mu', 'sigma'].
     :param stat_names:  A list or tuple of strs.  Gives the names of
@@ -53,7 +53,7 @@ class NeuralCIs(_DataSaver):
         example, for a t-test, this might be ['mu_hat', 'sigma_hat'].)
     :param known_param_names:  An optional list or tuple of strs.  Gives the
         names any of the params (should match those in the arguments of the
-        sampling and contrast functions) which ARE known a priori and
+        sampling and interest functions) which ARE known a priori and
         therefore can simply be conditioned upon. (For example, for a t-test,
         this might be ['n'].)
     :param transform_on_stats_fn: An optional function that maps the
@@ -113,12 +113,12 @@ class NeuralCIs(_DataSaver):
         mu_hat = std_normal * sigma / tf.math.sqrt(n) + mu
         return {"mu_hat": mu_hat}
 
-    def contrast_fn(mu, sigma, n):
+    def interest_fn(mu, sigma, n):
         return mu
 
     cis = neuralcis.NeuralCIs(
         normal_sampling_fn,
-        contrast_fn,
+        interest_fn,
         unknown_param_names=['mu'],
         known_param_names=['sigma', 'n'],
         stat_names=['mu_hat'],
@@ -137,7 +137,7 @@ class NeuralCIs(_DataSaver):
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]]
             ],
-            contrast_fn: Callable[
+            interest_fn: Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Tensor1[tf32, Samples]
             ],
@@ -175,7 +175,7 @@ class NeuralCIs(_DataSaver):
         self.kwargs = _NeuralCIsKWArgs(
             variable_defs,
             sampling_distribution_fn,
-            contrast_fn,
+            interest_fn,
             estimates_fn,
             unknown_param_names,
             stat_names,
@@ -189,7 +189,7 @@ class NeuralCIs(_DataSaver):
             optional_data_to_store,
         )
 
-        # TODO: look at adding variable defs for contrast also
+        # TODO: look at adding variable defs for interest also
         # TODO: look at allowing estimates also to have different variable defs
         #       after transform
 
@@ -240,7 +240,7 @@ class NeuralCIs(_DataSaver):
         )
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
-            self._contrast_fn_net_interface,
+            self._interest_fn_net_interface,
             self._transform_on_stats_fn_net_interface,
             self.num_stat,
             self.num_unknown_param,
@@ -463,7 +463,7 @@ class NeuralCIs(_DataSaver):
             values = {'p': p.numpy()}
 
         if conf_levels is not None:
-            # TODO: Contrast is not currently transformed.  Should change that.
+            # TODO: Interest is not currently transformed.  Should change that.
             #       (Could actually do that to give it unif probability too!)
             #       And if so, then it would need to be de-transformed here.
             target_p = tf.constant(1. - conf_levels)
@@ -590,15 +590,15 @@ class NeuralCIs(_DataSaver):
         return stats_net
 
     @tf.function
-    def _contrast_fn_net_interface(
+    def _interest_fn_net_interface(
             self,
             params_net: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[tf32, Samples]:
 
         params_human = self._params_net_to_human(params_net)
-        contrasts = self.kwargs.contrast_fn(**params_human)
+        interest_param = self.kwargs.interest_fn(**params_human)
 
-        return contrasts
+        return interest_param
 
     @tf.function
     def _estimates_fn_net_interface(
