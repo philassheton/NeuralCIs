@@ -252,22 +252,10 @@ class NeuralCIs(_DataSaver):
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
-        self.cinet = _CINet(
-            self.pnet,
-            self._sampling_dist_net_interface,
-            self.param_sampler.sample_params,
-            self.num_param(),
-            self.known_param_indices,
-            profile,
-            train_initial_weights=train_initial_weights,
-            **network_setup_args,
-        )
-
         _DataSaver.__init__(
             self,
             {"paramsampnet": self.param_sampler,
-             "pnet": self.pnet,
-             "cinet": self.cinet},
+             "pnet": self.pnet},
         )
 
     @staticmethod
@@ -350,7 +338,6 @@ class NeuralCIs(_DataSaver):
 
         self.param_sampler.fit(*args, **kwargs)
         self.pnet.fit(*args, **kwargs)
-        self.cinet.fit(*args, **kwargs)
 
     def values_grid(
             self,
@@ -414,7 +401,7 @@ class NeuralCIs(_DataSaver):
     ) -> Dict[str, np.ndarray]:
 
         """Calculate the p-values and confidence intervals for a series of
-        novel cases.
+        novel cases.  (CONFIDENCE INTERVALS HAVE BEEN TEMPORARILY REMOVED.)
 
         :param **stats_and_params: A set of named params, giving values
             for the stats and null hypothesis params (named as per their
@@ -452,8 +439,6 @@ class NeuralCIs(_DataSaver):
         stats_net = stats_human_to_net(**stats_tf)
         params_net = self._params_human_to_net(**params_tf)
 
-        # TODO: This should probably live here and be passed down.
-        known_params = self.cinet.known_params(params_net)
         if len(extra_values_names) > 0:
             values = self.pnet.p_workings(stats_net, params_net)
             values = {"p": values["p"].numpy()} | \
@@ -463,14 +448,9 @@ class NeuralCIs(_DataSaver):
             values = {'p': p.numpy()}
 
         if conf_levels is not None:
-            # TODO: Interest is not currently transformed.  Should change that.
-            #       (Could actually do that to give it unif probability too!)
-            #       And if so, then it would need to be de-transformed here.
-            target_p = tf.constant(1. - conf_levels)
-            lower, upper = self.cinet.ci(stats_net, known_params, target_p)
-
-            values["lower"] = lower.numpy()
-            values["upper"] = upper.numpy()
+            raise Exception("Generation of CIs is temporarily disabled in"
+                            " NeuralCIs.  This will hopefully be returned"
+                            " to a version very soon.")
 
         return values
 
