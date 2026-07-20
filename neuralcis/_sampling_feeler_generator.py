@@ -483,18 +483,15 @@ class _SamplingFeelerGenerator(_DataSaver):
             cov_chol: Tensor3[tf32, Chains, UnknownParams, UnknownParams],
     ) -> Tensor2[tf32, Chains, Params]:
 
-        # TODO: Nothing currently to stop a step into an invalid param
-        step = common.PARAM_MARKOV_CHAIN_STEP_SIZE
-
         z_unknown = tf.random.normal((self.num_chains, self.num_unknown_param))
         z_known = tf.random.normal((self.num_chains, self.num_known_param))
         params_unknown = params[:, :self.num_unknown_param]
         params_known = params[:, self.num_unknown_param:]
         new_params_unknown = (
             params_unknown +
-            step * tf.linalg.matmul(cov_chol, z_unknown[:, :, None])[:, :, 0]
+            tf.linalg.matmul(cov_chol, z_unknown[:, :, None])[:, :, 0]
         )
-        new_params_known = params_known + step * self.sd_known * z_known
+        new_params_known = params_known + self.sd_known * z_known
         new_params = tf.concat([new_params_unknown, new_params_known], axis=1)
 
         return new_params
