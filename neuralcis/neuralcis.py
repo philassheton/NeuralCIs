@@ -396,7 +396,6 @@ class NeuralCIs(_DataSaver):
             self,
             conf_levels: Optional[np.ndarray] = None,
             extra_values_names: Sequence[str] = (),
-            apply_transform: bool = True,
             **stats_and_params: Union[Tensor1[tf32, Samples], np.ndarray],
     ) -> Dict[str, np.ndarray]:
 
@@ -414,30 +413,17 @@ class NeuralCIs(_DataSaver):
         :param extra_values_names: An optional sequence of strs, giving
             extra values to be returned from the p-net.  Currently, supports
             "z0", "z1", ...  up to the number of zs but may be expanded later.
-        :param apply_transform: A bool, default True.  If False, the
-            transform_on_stats function will be bypassed.  For testing
-            purposes only.
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        stats_and_params_tf = {k: tf.constant(v, tf.float32)
-                               for k, v in stats_and_params.items()}
+        stats_and_params_tf = {n: tf.constant(v, tf.float32)
+                               for n, v in stats_and_params.items()}
 
-        if apply_transform:
-            stats_and_params_tf = self._transform_on_stats(
-                **stats_and_params_tf
-            )
-            stat_names = self.stat_names_transformed()
-            stats_human_to_net = self._stats_human_to_net
-        else:
-            stat_names = self.stat_names()
-            stats_human_to_net = self._stats_transformed_human_to_net
+        stats_human = {n: stats_and_params_tf[n] for n in self.stat_names()}
+        params_human = {n: stats_and_params_tf[n] for n in self.param_names()}
 
-        stats_tf = {n: stats_and_params_tf[n] for n in stat_names}
-        params_tf = {n: stats_and_params_tf[n] for n in self.param_names()}
-
-        stats_net = stats_human_to_net(**stats_tf)
-        params_net = self._params_human_to_net(**params_tf)
+        stats_net = self._stats_human_to_net(**stats_human)
+        params_net = self._params_human_to_net(**params_human)
 
         if len(extra_values_names) > 0:
             values = self.pnet.p_workings(stats_net, params_net)
