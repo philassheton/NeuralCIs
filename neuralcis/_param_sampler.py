@@ -56,7 +56,7 @@ class _ParamSampler(_DataSaver):
                                     common.OUTER_FEELER_PERIPHERAL_BATCH_SIZE,
             num_peripheral_batches_outer: int =
                                     common.OUTER_FEELER_PERIPHERAL_BATCHES,
-            regularize_jitter_multiply: float = 1.,
+            regularize_jitter_multiply: float = 0.,
             regularize_jitter_add: float = 0.,
             **network_setup_args,
     ) -> None:

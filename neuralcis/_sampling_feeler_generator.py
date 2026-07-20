@@ -106,7 +106,7 @@ class _SamplingFeelerGenerator(_DataSaver):
             peripheral_batch_size: int =
                                        common.FEELER_NET_PERIPHERAL_BATCH_SIZE,
             num_peripheral_batches: int = common.FEELER_NET_PERIPHERAL_BATCHES,
-            regularize_jitter_multiply: float = 1.,
+            regularize_jitter_multiply: float = 0.,
             regularize_jitter_add: float = 0.,
     ):
 
@@ -142,8 +142,8 @@ class _SamplingFeelerGenerator(_DataSaver):
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
 
-        self.regularize_jitter = ((regularize_jitter_add != 0.)
-                                  or (regularize_jitter_multiply != 1.))
+        self.regularize_jitter = ((regularize_jitter_add > 0.)
+                                  or (regularize_jitter_multiply > 0.))
         self.regularize_jitter_add = regularize_jitter_add
         self.regularize_jitter_multiply = regularize_jitter_multiply
 

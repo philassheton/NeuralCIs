@@ -153,7 +153,7 @@ class NeuralCIs(_DataSaver):
                 Dict["str", Tensor1[tf32, Samples]],
             ]] = None,
             transform_on_stats_stat_names: Optional[Sequence[str]] = None,
-            param_sampling_regularize_jitter_multiply: float = 1.,
+            param_sampling_regularize_jitter_multiply: float = 0.,
             param_sampling_regularize_jitter_add: float = 0.,
             train_initial_weights: bool = True,
             profile: str = FULL,                                               # If you want a more minimal setup, "testing" is much lighter and "inference" even lighter still

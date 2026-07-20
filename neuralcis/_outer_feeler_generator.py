@@ -117,7 +117,7 @@ class _OuterFeelerGenerator(_DataSaver):
                                      common.OUTER_FEELER_PERIPHERAL_BATCH_SIZE,
             num_peripheral_batches: int =
                                      common.OUTER_FEELER_PERIPHERAL_BATCHES,
-            regularize_jitter_multiply: float = 1.,
+            regularize_jitter_multiply: float = 0.,
             regularize_jitter_add: float = 0.,
     ):
 
@@ -144,8 +144,8 @@ class _OuterFeelerGenerator(_DataSaver):
         self.num_peripheral_batches = num_peripheral_batches
         self.peripheral_batch_size = peripheral_batch_size
 
-        self.regularize_jitter = ((regularize_jitter_add != 0.)
-                                  or (regularize_jitter_multiply != 1.))
+        self.regularize_jitter = ((regularize_jitter_add > 0.)
+                                  or (regularize_jitter_multiply > 0.))
         self.regularize_jitter_add = regularize_jitter_add
         self.regularize_jitter_multiply = regularize_jitter_multiply
 
@@ -593,6 +593,7 @@ class _OuterFeelerGenerator(_DataSaver):
         estimates_grouped = tf.reshape(estimates, (num_chains,
                                                    self.sample_size,
                                                    self.num_estimate))
+        xbar = tf.reduce_mean(estimates_grouped, axis=1)
 
         if self.regularize_jitter:
             estimates_std = tf.math.reduce_std(estimates_grouped, 1,
@@ -603,7 +604,6 @@ class _OuterFeelerGenerator(_DataSaver):
                        + self.regularize_jitter_add,
             )
 
-        xbar = tf.reduce_mean(estimates_grouped, axis=1)
         l = tfp.stats.cholesky_covariance(estimates_grouped, sample_axis=1)
         identity = tf.eye(self.num_estimate, batch_shape=(num_chains, ))
         inv_l = tf.linalg.triangular_solve(l, identity)
