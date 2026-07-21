@@ -1,3 +1,3 @@
 from .neuralcis import NeuralCIs
-from .variables import Location, Scale, PositiveCount, SampleSize
-from .variables import Correlation, Proportion
+from .variables import Stat, Param, KnownParam
+from .variables import Location, Scale, PositiveCount, Correlation, Proportion

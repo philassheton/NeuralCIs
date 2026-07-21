@@ -4,11 +4,12 @@ import tensorflow as tf
 tf.config.optimizer.set_jit(True)  # TODO: selectively turn on XLA instead
 
 import neuralcis
-from neuralcis import Correlation, Proportion, SampleSize
+from neuralcis import Stat, Param, KnownParam
+from neuralcis import Correlation, Proportion, PositiveCount
 import tensorflow_probability as tfp
 
 
-N_MIN = 10
+N_MIN = 20
 N_MAX = 100
 
 
@@ -124,17 +125,17 @@ cis = neuralcis.NeuralCIs(
 
     None, None,
 
-    rho_ab_partial=Correlation(),
-    rho_ac=Correlation(),
-    rho_bc=Correlation(),
+    rho_ab_partial=Param(Correlation(), (-.99, .99)),
+    rho_ac=Param(Correlation(), (-.99, .99)),
+    rho_bc=Param(Correlation(), (-.99, .99)),
+    prop_a=Param(Proportion(), (0.05, 0.95)),
 
-    rho_ab_hat=Correlation(),
-    rho_ac_hat=Correlation(),
-    rho_bc_hat=Correlation(),
-    prop_a_hat=Proportion(0.05, 0.95),
+    n=KnownParam(PositiveCount((N_MIN, N_MAX))),
 
-    prop_a=Proportion(0.05, 0.95),
-    n=SampleSize(N_MIN, N_MAX),
+    rho_ab_hat=Stat(Correlation()),
+    rho_ac_hat=Stat(Correlation()),
+    rho_bc_hat=Stat(Correlation()),
+    prop_a_hat=Stat(Proportion()),
 
     param_sampling_regularize_jitter_multiply=0.1,
     param_sampling_regularize_jitter_add=0.03,

@@ -4,7 +4,8 @@ import tensorflow as tf
 tf.config.optimizer.set_jit(True)  # Enable XLA globally
 
 import neuralcis
-from neuralcis import Location, Scale, SampleSize
+from neuralcis import Stat, Param, KnownParam
+from neuralcis import Location, Scale, PositiveCount
 import tensorflow_probability as tfp
 
 
@@ -76,17 +77,18 @@ cis = neuralcis.NeuralCIs(
     transform_on_stats_fn,
     ["sigma2_1_ratio_hat"],
 
-    mudiff=Location(-3., 3., 0., 0.),
-    sigma1=Scale(.3, 3., 1., 1.),
-    sigma2=Scale(.1, 10., 0.333, 3.),
-    n1=SampleSize(3, 100),
-    n2=SampleSize(3, 100),
+    mudiff=Param(Location((-3., 3.)), (0., 0.)),
+    sigma1=Param(Scale((0.333, 3.)), (1., 1.)),
+    sigma2=Param(Scale((0.1, 10.)), (0.333, 3.)),
 
-    mudiff_hat=Location(-3., 3.),
-    sigma1_hat=Scale(.3, 3.),
-    sigma2_hat=Scale(.1, 10.),
+    n1=KnownParam(PositiveCount((3., 100.))),
+    n2=KnownParam(PositiveCount((3., 100.))),
 
-    sigma2_1_ratio_hat=Scale(.3, 3.),
+    mudiff_hat=Stat(Location((-3., 3.))),
+    sigma1_hat=Stat(Scale((.3, 3.))),
+    sigma2_hat=Stat(Scale((.1, 10.))),
+
+    sigma2_1_ratio_hat=Stat(Scale((.3, 3.))),
 
     train_initial_weights=False,
 )

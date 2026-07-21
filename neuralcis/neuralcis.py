@@ -204,11 +204,8 @@ class NeuralCIs(_DataSaver):
         self._check_transform_on_stats_fn_names()
         self._check_names_are_not_shared()
 
-        for known_param_name in known_param_names:
-            self.variable_defs()[known_param_name].make_known_param()
-
         estimates_min_and_max = tf.stack([
-            self.variable_defs()[param].min_and_max_net
+            self.variable_defs()[param].estimates_box_min_and_max_net
             for param in self.param_names(unknown_params=True,
                                           known_params=False)
         ], axis=0)
@@ -615,7 +612,7 @@ class NeuralCIs(_DataSaver):
         params_net_split = self._unstack_params_net(params_net,
                                                     known_params_only)
         vars = self.variable_defs()
-        is_valid_list = [vars[name].is_valid_param(param)
+        is_valid_list = [vars[name].is_within_hard_limits(param)
                          for name, param in zip(param_names, params_net_split)]
         is_valid_tensor = tf.stack(is_valid_list, axis=1)
         return is_valid_tensor
@@ -794,7 +791,9 @@ class NeuralCIs(_DataSaver):
 
         n = common.BATCH_SIZE
         vars = self.kwargs.variable_defs
-        params = {name: vars[name].from_std_uniform(tf.random.uniform((n,)))
+        net_width = common.PARAMS_MAX - common.PARAMS_MIN
+        net = tf.random.uniform((n,)) * net_width + common.PARAMS_MIN
+        params = {name: vars[name].from_net(net)
                   for name in self.param_names()}
         return params
 
