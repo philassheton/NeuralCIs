@@ -1,7 +1,5 @@
 import os
-os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 import tensorflow as tf
-tf.config.optimizer.set_jit(True)  # TODO: selectively turn on XLA instead
 
 import neuralcis
 from neuralcis import Stat, Param, KnownParam

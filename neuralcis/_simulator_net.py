@@ -77,6 +77,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     loss_to_watch = "loss"
     absolute_loss_increase_tol = None
     relative_loss_increase_tol = None
+    jit_compile = True
 
     def __init__(
             self,
@@ -301,7 +302,8 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
                 optimizer = tf.keras.optimizers.Nadam()
                 self.schedule_free = False
 
-        tf.keras.Model.compile(self, optimizer, loss=None, jit_compile=False,
+        tf.keras.Model.compile(self, optimizer, loss=None,
+                               jit_compile=self.jit_compile,
                                *args, **kwargs)
 
     def train_step(self, data):

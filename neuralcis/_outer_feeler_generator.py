@@ -77,6 +77,7 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 
 class _OuterFeelerGenerator(_DataSaver):
     smallest_profile_found_in = FULL
+    jit_compile = False  # For some reason, getting a blow up with XLA
     def __init__(
             self,
             sample_params_inner_fn: Callable[
