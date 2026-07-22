@@ -171,14 +171,6 @@ class _SamplingFeelerGenerator(_DataSaver):
             var = tf.Variable(nans, dtype=dtype)
             return var
 
-        def samples_variable(shape_inner, dtype=tf.float32):
-            # Important to have chain length as first index (if a little
-            #   "wrong"-sounding, because we will want to index in by that).
-            shape = [self.chain_length, self.num_chains] + list(shape_inner)
-            nans = tf.fill(shape, np.nan)
-            var = tf.Variable(nans, dtype=dtype)
-            return var
-
         num_param = self.num_param
         num_estimate = self.num_estimate
 
@@ -189,9 +181,9 @@ class _SamplingFeelerGenerator(_DataSaver):
         self.chol_det = state_variable(())
         self.importance = state_variable(())
 
-        self.sampled_params = samples_variable((num_param,))
-        self.sampled_chols = samples_variable((num_estimate, num_estimate))
-        self.sampled_targets = samples_variable((NUM_IMPORTANCE_INGREDIENTS,))
+        self.sampled_params = None
+        self.sampled_chols = None
+        self.sampled_targets = None
 
         self.iteration_num = tf.Variable(0, dtype=tf.int64)                    # tf.int32 cannot be placed on GPU
 

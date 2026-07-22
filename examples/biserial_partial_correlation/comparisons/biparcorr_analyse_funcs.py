@@ -101,7 +101,7 @@ def replicate_params(
 
 # n_mask ensures we only have n z values (the rest will be zeroed)
 #  -- this means we work with constant memory size.
-def n_mask(n: Tensor1[tf32, Batch]) -> Tensor1[tf32, Samples]:
+def n_mask(n: Tensor1[tf32, Batch]) -> Tensor2[tf32, Batch, Samples]:
     n = tf.cast(n, tf.int64)
     return tf.cast(tf.sequence_mask(n, N_MAX), tf.float32)
 
@@ -126,6 +126,17 @@ def estimate_correlations_safe(
     correlations_hat = X_sum_pairwise / tf.sqrt(X_sum_sq_pairwise + 1e-10)
 
     return correlations_hat
+
+
+def estimate_prop_a(
+        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
+        n: Tensor1[tf32, Batch],
+) -> Tensor1[tf32, Batch]:
+
+    a = stats_tensor[:, :, 0] * n_mask(n)
+    num_a = tf.reduce_sum(a, axis=1)
+    prop_a_hat = num_a / n
+    return prop_a_hat
 
 
 def __make_cdf_summaries(
@@ -250,7 +261,9 @@ def __load_data_file_as_pvalues(
         ps = data
         extra_results = {}
     else:
-        raise Exception(f"Unknown method {method}")
+        raise Exception(f"Unknown data_type {data_type}")
+
+    assert np.isfinite(ps).all()
 
     return ps, extra_results
 

@@ -80,7 +80,7 @@ class _ReduceLROnPlateauTrackBest(tf.keras.callbacks.ReduceLROnPlateau):
     ) -> None:
 
         current_loss = self.current_loss(logs)
-        best_before_call = self.best or float("inf")
+        best_before_call = self.best if self.best is not None else float("inf")
         wait_before_call = self.wait
 
         if epoch is not None:

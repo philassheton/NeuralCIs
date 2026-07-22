@@ -44,10 +44,11 @@ def pvalues_for_batch(
         **sim_params,
     )
     rs = biparcorr.estimate_correlations_safe(samples_raw, params_human["n"])
+    prop_a_hat = biparcorr.estimate_prop_a(samples_raw, params_human["n"])
     stats_human = {"rho_ab_hat": rs[:, 0],
                    "rho_bc_hat": rs[:, 1],
                    "rho_ac_hat": rs[:, 2],
-                   "prop_a_hat": tf.reduce_mean(samples_raw[:, :, 0], axis=1)}
+                   "prop_a_hat": prop_a_hat}
     stats_net = cis._stats_human_to_net(**stats_human)
 
     ps_null = cis.pnet.p(stats_net, params_net)

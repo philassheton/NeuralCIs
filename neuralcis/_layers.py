@@ -231,7 +231,7 @@ class _StdLayer(_LinearLayer):
 
         outputs = tf.keras.activations.elu(super().call(inputs))
         mean = tf.math.reduce_mean(outputs, axis=1)
-        sd = tf.math.reduce_std(outputs, axis=1)
+        sd = tf.math.reduce_std(outputs, axis=1) + 1e-12
         outputs = (outputs - mean[:, None]) / sd[:, None]
         return outputs
 

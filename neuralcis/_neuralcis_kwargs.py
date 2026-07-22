@@ -3,6 +3,7 @@ import pickle
 import os
 from datetime import datetime
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
+
 from .variables import Variable
 
 # for typing

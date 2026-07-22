@@ -135,11 +135,12 @@ class _ZNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> NetOutputBlob:
 
-        out, det, dz0_dcon = self.net_outputs_and_transformation_jacobdets(
-            input_blob,
-            training=True,
-        )
-        return out, det, dz0_dcon
+        out, det, dz0_dinterest = \
+            self.net_outputs_and_transformation_jacobdets(
+                input_blob,
+                training=True,
+            )
+        return out, det, dz0_dinterest
 
     @tf.function
     def net_inputs(
@@ -217,7 +218,7 @@ class _ZNet(_SimulatorNet):
     ) -> Tuple[
         Tensor2[tf32, Samples, Zs],                                            # Net outputs
         Tensor1[tf32, Samples],                                                # Jacobian determinants
-        Tensor1[tf32, Samples],                                                # dz0 / dcontrast
+        Tensor1[tf32, Samples],                                                # dz0 / dinterest
     ]:
 
         stats, params = input_blob

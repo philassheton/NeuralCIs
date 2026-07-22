@@ -350,15 +350,8 @@ def data_filename(
         params_sample_num: int,
 ) -> str:
 
-    if method_name == "neural elu":
-        base = "/media/phil/Shared/neuralcis/behrens_fisher_files/data_elu"
-    elif method_name == "neural":
-        base = "data"
-    elif method_name == "welch":
-        base = "/media/phil/Shared/neuralcis/behrens_fisher_files/data"
-    else:
-        raise Exception(f"What method is {method_name}?")
-    return f"{base}/{method_name}_{data_type}_{params_sample_num:04d}.npy"
+    return (f"data/{method_name}/"
+            f"{method_name}_{data_type}_{params_sample_num:04d}.npy")
 
 
 def convert_relative_path(basename: str) -> str:

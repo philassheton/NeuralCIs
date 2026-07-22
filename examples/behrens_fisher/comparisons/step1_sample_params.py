@@ -1,8 +1,3 @@
-# The goal here is to generate a grid of params to test our methods against.
-# In order to make sure we have nice clean sampling distributions, we will
-# avoid boundary cases that can generate degenerate samples (e.g. all values
-# zero or one in the binary variable).
-
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
