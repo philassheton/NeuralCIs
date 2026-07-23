@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 import numpy as np
 import os
 from tqdm import tqdm
@@ -6,7 +7,7 @@ from tqdm import tqdm
 # typing
 from typing import Optional, Dict, Tuple
 from collections.abc import Sequence
-from tensor_annotations.tensorflow import Tensor1
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32
 
 
@@ -37,70 +38,68 @@ def replicate_params(
             for n, p in params_dict.items()}
 
 def __make_cdf_summaries(
-        ps: np.ndarray,
+        ps: Tensor2[tf32, Samples, Two],
 ) -> np.ndarray:
 
-    full_summary_quantiles = np.linspace(0., 1., 1000, endpoint=False)
-    left_tail_quantiles = np.linspace(0., 0.1, 1000, endpoint=False)
+    full_summary_quantiles = tf.linspace(0.0005, 0.9995, 1000)
+    left_tail_quantiles = tf.linspace(0.00005, 0.09995, 1000)
 
-    full_summary_quantiles += full_summary_quantiles[1] / 2
-    left_tail_quantiles += left_tail_quantiles[1] / 2
+    full_summary = tf.keras.ops.quantile(ps, full_summary_quantiles, axis=0)
+    left_summary = tf.keras.ops.quantile(ps, left_tail_quantiles, axis=0)
 
-    full_summary = np.quantile(ps, full_summary_quantiles, axis=0)
-    left_summary = np.quantile(ps, left_tail_quantiles, axis=0)
-
-    summaries = np.stack([full_summary, left_summary])
+    summaries = tf.stack([full_summary, left_summary])
 
     return summaries
 
 
 def __kl_div_vs_uniform_hist(
-    ps: np.ndarray,
+    ps: Tensor1[tf32, Samples],
     bins: int = 1000,
-) -> float:
+) -> Tensor0[tf32]:
 
-    ps = np.asarray(ps, dtype=np.float64)
-    if (ps < 0).any() or (ps > 1).any():
-        raise ValueError("p-values must be in [0,1].")
+    ps = tf.cast(ps, dtype=tf.float64)
 
-    counts, _ = np.histogram(ps, bins=bins, range=(0.0, 1.0))
-    counts = counts.astype(np.float64)
+    counts = tf.histogram_fixed_width(ps, (0., 1.), nbins=bins)
+    counts = tf.cast(counts, dtype=tf.float64)
 
     # Smoothed bin probabilities (Dirichlet prior with 0.5 per bin)
     pseudocount = 0.5  # corresponds to Jeffreys prior, avoids infinities
-    ps_bin = (counts + pseudocount) / (counts.sum() + pseudocount*bins)
+    ps_bin = ((counts + pseudocount)
+              / (tf.reduce_sum(counts) + pseudocount*bins))
 
     uniform_bin = 1.0 / bins
 
-    kl = np.sum(ps_bin * np.log(ps_bin / uniform_bin))
-    return float(kl)
+    kl = tf.reduce_sum(ps_bin * tf.math.log(ps_bin / uniform_bin))
+    return tf.cast(kl, dtype=tf.float32)
 
 
 def __ks_dist_vs_uniform_over_region(
-        ps: np.ndarray,
-        right_p_boundary: float = 1.,
+        ps: Tensor1[tf32, Samples],
+        left_n_proportion: float = 1.,
 ):
 
     n_total = len(ps)
-    ps = ps[ps < right_p_boundary]
-    n_in_region = len(ps)
+    x = tf.concat([[0.], tf.sort(ps), [1.]], axis=0)
+    y_ecdf = tf.linspace(0., 1., n_total + 1)
+
+    if left_n_proportion < 1.:
+        n_in_region = int(n_total * left_n_proportion)
+        x = x[:n_in_region+2]
+        y_ecdf = y_ecdf[:n_in_region+1]
 
     # The empirical CDF is a stepped function with
     #  - variable step widths, and
     #  - fixed step heights
-    x = np.concatenate([[0], np.sort(ps), [right_p_boundary]])
-    y_ecdf = np.linspace(0, 1, n_total + 1)[:n_in_region+1]
     y_uniform_start_of_step = x[:-1]
     y_uniform_end_of_step = x[1:]
 
     amount_above_at_start_of_step = y_ecdf - y_uniform_start_of_step
     amount_below_at_end_of_step = y_uniform_end_of_step - y_ecdf
-    ks_dist = np.maximum(
-        amount_above_at_start_of_step.max(),
-        amount_below_at_end_of_step.max(),
+    ks_dist = tf.maximum(
+        tf.reduce_max(amount_above_at_start_of_step),
+        tf.reduce_max(amount_below_at_end_of_step),
     )
-
-    return ks_dist.item()
+    return ks_dist
 
 
 def __likelihoods_to_ps(
@@ -166,8 +165,8 @@ def __load_data_file_as_pvalues(
 
 
 def __summarise_pvalues(
-        ps: np.ndarray,
-        ps_powersim: np.ndarray,
+        ps: Tensor2[tf32, Samples, Two],
+        ps_powersim: Tensor2[tf32, Samples, Two],
         method_name: str,
         alphas: Sequence[float],
 ) -> Dict[str, float]:
@@ -176,24 +175,32 @@ def __summarise_pvalues(
     results = {
         f"ks_dist_{method_name}":
             __ks_dist_vs_uniform_over_region(ps[:, 0]),
-        f"ks_dist_tail_{method_name}":
-            __ks_dist_vs_uniform_over_region(ps[:, 0], right_p_boundary=0.1),
+        f"ks_dist_tail_0.10_{method_name}":
+            __ks_dist_vs_uniform_over_region(ps[:, 0], left_n_proportion=0.10),
+        f"ks_dist_tail_0.05_{method_name}":
+            __ks_dist_vs_uniform_over_region(ps[:, 0], left_n_proportion=0.05),
         f"kl_div_{method_name}":
             __kl_div_vs_uniform_hist(ps[:, 0]),
     }
 
     # LOCAL COMPARISONS AT GIVEN ALPHAS
     for alpha in alphas:
-        cutoff_null_dist = np.percentile(ps[:, 0],
-                                         alpha * 100)
-        cutoff_power_dist = np.percentile(ps_powersim[:, 1],
-                                          alpha * 100)
+        cutoff_null_dist = tfp.stats.percentile(ps[:, 0], alpha * 100)
+        cutoff_power_dist = tfp.stats.percentile(ps_powersim[:, 1],
+                                                 alpha * 100)
 
-        error_rate, power = (ps < alpha).mean(0).tolist()
-        error_rate_perfect, power_adj_null = \
-            (ps < cutoff_null_dist).mean(0).tolist()
-        error_rate_adj_power, power_perfect = \
-            (ps < cutoff_power_dist).mean(0).tolist()
+        ps_below_alpha = tf.cast(ps < alpha, tf.float32)
+        ps_below_null = tf.cast(ps < cutoff_null_dist, tf.float32)
+        ps_below_power = tf.cast(ps < cutoff_power_dist, tf.float32)
+
+        prop_below_alpha = tf.reduce_mean(ps_below_alpha, axis=0)
+        prop_below_null = tf.reduce_mean(ps_below_null, axis=0)
+        prop_below_power = tf.reduce_mean(ps_below_power, axis=0)
+
+        error_rate, power = tf.unstack(prop_below_alpha)
+        error_rate_perfect, power_adj_null = tf.unstack(prop_below_null)
+        error_rate_adj_power, power_perfect = tf.unstack(prop_below_power)
+
         suffix = f"{alpha:.3f}_{method_name}"
         results |= {
             f"error_rate_{suffix}": error_rate,
@@ -204,6 +211,21 @@ def __summarise_pvalues(
             f"power_perfect_{suffix}": power_perfect,
         }
     return results
+
+
+# TODO: if we can swap tf.histogram_fixed_width for an XLA-compatible
+#       equivalent, then we can also jit_compile.
+@tf.function(jit_compile=False)
+def __compute_summaries(
+        ps: Tensor2[tf32, Samples, Two],
+        ps_powersim: Tensor2[tf32, Samples, Two],
+        method_name: str,
+        alphas: Sequence[float],
+) -> Tuple[Dict[str, Tensor0], Tensor3[tf32, Two, Samples, Two]]:
+
+    main_results = __summarise_pvalues(ps, ps_powersim, method_name, alphas)
+    summary_grids = __make_cdf_summaries(ps)
+    return main_results, summary_grids
 
 
 def __summarise_data_file(
@@ -219,9 +241,15 @@ def __summarise_data_file(
     ps_powersim, _ = __load_data_file_as_pvalues(params_sample_num,
                                                  f"{method_name}_powersim",
                                                  data_type)
-    main_results = __summarise_pvalues(ps, ps_powersim, method_name, alphas)
 
-    summary_grids = __make_cdf_summaries(ps)
+    ps = tf.constant(ps)
+    ps_powersim = tf.constant(ps_powersim)
+
+    main_results, summary_grids = __compute_summaries(ps, ps_powersim,
+                                                      method_name, alphas)
+
+    main_results = {n:v.numpy().item() for n, v in main_results.items()}
+    summary_grids = summary_grids.numpy()
 
     return main_results | extra_results, summary_grids
 
