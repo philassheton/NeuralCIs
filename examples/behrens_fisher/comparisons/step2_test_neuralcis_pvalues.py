@@ -116,4 +116,8 @@ def run_neural_ps(
 
 
 if __name__ == "__main__":
-    run_neural_ps("neural", 1_000_000)
+    run_neural_ps("neural", 1_000_000, start_from_param_num=4400)
+    run_neural_ps("neural_powersim",
+                  num_sims_per_param_sample=10_000,
+                  batch_size=10_000,
+                  simulate_from_power_mudiff=True)

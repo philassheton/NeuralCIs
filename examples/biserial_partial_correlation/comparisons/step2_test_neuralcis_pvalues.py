@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 
 # typing
-from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor3
+from tensor_annotations.tensorflow import Tensor0
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
 
 
