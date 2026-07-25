@@ -19,21 +19,52 @@ PARAM_NAMES = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
                'rho_ab_partial_power', 'target_power']
 
 N_MAX = 100
+SEED_FOR_BATCH_INCONSISTENT = 12345
 
 
 def generate_random_normals(
-        row_shape: Tuple[int, int],
-        params_num: Tensor0[ti32],
-        first_row_num: Tensor0[ti32],
         num_rows: int,
+        row_shape: Tuple[int, int],
+        simulation_block_num: Tensor0[ti32],
+        batch_consistent_randoms: bool = False,
+        first_row_num: Optional[Tensor0[ti32]] = None,
+) -> Tensor3:
+
+    if batch_consistent_randoms:
+        return generate_random_normals_batch_consistent(num_rows, row_shape,
+                                                        simulation_block_num,
+                                                        first_row_num)
+    else:
+        return generate_random_normals_batch_inconsistent(num_rows, row_shape,
+                                                          simulation_block_num)
+
+
+def generate_random_normals_batch_consistent(
+        num_rows: int,
+        row_shape: Tuple[int, int],
+        simulation_block_num: Tensor0[ti32],
+        first_row_num: Optional[Tensor0[ti32]] = None,
 ) -> Tensor3:
 
     row_nums = tf.range(num_rows) + first_row_num
     return tf.map_fn(
         lambda row: tf.random.stateless_normal(row_shape,
-                                               tf.stack([params_num, row])),
+                                               tf.stack([simulation_block_num, row])),
         row_nums,
         dtype=tf.float32,
+    )
+
+
+def generate_random_normals_batch_inconsistent(
+        num_rows: int,
+        row_shape: Tuple[int, int],
+        simulation_block_num: Tensor0[ti32],
+) -> Tensor3:
+
+    shape = [num_rows] + list(row_shape)
+    return tf.random.stateless_normal(
+        shape,
+        tf.stack([simulation_block_num, SEED_FOR_BATCH_INCONSISTENT]),
     )
 
 
@@ -44,11 +75,24 @@ def sampling_distribution_fn_raw(
         prop_a: Tensor1[tf32, Batch],
         n: Tensor1[tf32, Batch],
         simulation_block_num: Tensor0[ti32],
-        first_row_num_within_simulation_block: Tensor0[ti32],
         num_rows: int,
+
+        # Using this batch_consistent_randoms option will mean that a batched
+        # process can generate reproducible stats that can be compared across
+        # different runs.  If set to True, must also provide first_row_num
+        # to locate the batch within the list of simulations for this
+        # simulation block.  However, this is also much slower.
+        batch_consistent_randoms: bool = False,
+        first_row_num_within_simulation_block: Optional[Tensor0[ti32]] = None,
+
         is_powersim_run: bool = False,
         is_bootstrap_simulation: bool = False,
 ) -> Tensor3[tf32, Batch, Samples, Stats]:
+
+    if batch_consistent_randoms:
+        assert first_row_num_within_simulation_block is not None
+    else:
+        assert first_row_num_within_simulation_block is None
 
     if is_powersim_run:
         simulation_block_num += 1_000_000_000
@@ -71,10 +115,11 @@ def sampling_distribution_fn_raw(
     cholesky = tf.linalg.cholesky(correlation_matrix)
 
     mask = n_mask(n)[:, None, :]
-    z = generate_random_normals((3, N_MAX),
+    z = generate_random_normals(num_rows,
+                                (3, N_MAX),
                                 simulation_block_num,
-                                first_row_num_within_simulation_block,
-                                num_rows) * mask
+                                batch_consistent_randoms,
+                                first_row_num_within_simulation_block) * mask
     z_correlated = tf.linalg.matmul(cholesky, z)
 
     a, b, c = tf.split(z_correlated, 3, axis=1)

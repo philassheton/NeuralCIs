@@ -320,6 +320,7 @@ def likelihoods_for_batch(
         n=params["n"],
 
         simulation_block_num=simulation_block_num,
+        batch_consistent_randoms=True,
         first_row_num_within_simulation_block=first_sim_num,
         num_rows=num_sims,
         is_powersim_run=simulate_from_power_rho,

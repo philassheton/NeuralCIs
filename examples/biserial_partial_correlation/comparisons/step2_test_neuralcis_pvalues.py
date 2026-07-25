@@ -38,6 +38,7 @@ def pvalues_for_batch(
 
     samples_raw = biparcorr.sampling_distribution_fn_raw(
         simulation_block_num=params_num,
+        batch_consistent_randoms=True,
         first_row_num_within_simulation_block=first_sim_num,
         num_rows=num_sims,
         is_powersim_run=simulate_from_power_rho,
