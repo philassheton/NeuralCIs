@@ -270,6 +270,7 @@ def __summarise_data_file(
         method_name: str = "neural",
         data_type: str = "ps",
         alphas: Sequence[float] = (0.05, 0.01),
+        only_first_n_pvalues: Optional[int] = None,
 ) -> Tuple[Dict[str, float], np.ndarray]:
 
     ps, extra_results = __load_data_file_as_pvalues(params_sample_num,
@@ -278,6 +279,12 @@ def __summarise_data_file(
     ps_powersim, _ = __load_data_file_as_pvalues(params_sample_num,
                                                  f"{method_name}_powersim",
                                                  data_type)
+
+    if only_first_n_pvalues is not None:
+        assert data_type == "ps"
+        ps = ps[0:only_first_n_pvalues, :]
+        ps_powersim = ps_powersim[0:only_first_n_pvalues, :]
+
     if data_type in ("likelihoods", "likelihoods_pow"):
         failure_proportions = __failure_proportions_from_likelihoods_file(
             params_sample_num,
@@ -306,13 +313,15 @@ def summarise_pvalues_files(
         alphas: Sequence[float] = (0.05, 0.01),
         add_params: bool = False,
         num_params: Optional[int] = None,
+        only_first_n_pvalues: Optional[int] = None,
 ) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
 
     params = load_params_dict(param_names, comparison_name)
     if num_params is None:
         num_params = get_num_param_samples(params)
 
-    summaries = [__summarise_data_file(i, method_name, data_type, alphas)
+    summaries = [__summarise_data_file(i, method_name, data_type, alphas,
+                                       only_first_n_pvalues)
                      for i in tqdm(range(num_params))]
     summary_dict = {n:np.stack([dict[n] for (dict, grid) in summaries], axis=0)
                     for n in summaries[0][0]}

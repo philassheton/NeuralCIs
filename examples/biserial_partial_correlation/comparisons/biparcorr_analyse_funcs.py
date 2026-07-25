@@ -147,11 +147,13 @@ def summarise_pvalues_files(
         alphas: Sequence[float] = (0.05, 0.01),
         add_params: bool = False,
         num_params: Optional[int] = None,
+        only_first_n_pvalues: Optional[int] = None,
 ) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
 
     return comparisons_funcs.summarise_pvalues_files(
         PARAM_NAMES, COMPARISON_NAME,
         method_name, data_type, alphas, add_params, num_params,
+        only_first_n_pvalues,
     )
 
 
