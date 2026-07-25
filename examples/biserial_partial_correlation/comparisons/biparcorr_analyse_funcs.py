@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
 
-from neuralcis.comparisons_funcs import (Batch, Samples,
+from neuralcis.comparisons_funcs import (Batch, Samples, Params, UnknownParams,
                                          Ys, Stats, PairwiseCorrelations)
 
 
@@ -43,14 +43,17 @@ def sampling_distribution_fn_raw(
         rho_ac: Tensor1[tf32, Batch],
         prop_a: Tensor1[tf32, Batch],
         n: Tensor1[tf32, Batch],
-        params_num: Tensor0[ti32],
-        first_row_num: Tensor0[ti32],
+        simulation_block_num: Tensor0[ti32],
+        first_row_num_within_simulation_block: Tensor0[ti32],
         num_rows: int,
-        seed_differently: bool,
+        is_powersim_run: bool = False,
+        is_bootstrap_simulation: bool = False,
 ) -> Tensor3[tf32, Batch, Samples, Stats]:
 
-    if seed_differently:
-        params_num += 1_000_000_000
+    if is_powersim_run:
+        simulation_block_num += 1_000_000_000
+    if is_bootstrap_simulation:
+        simulation_block_num += 2_000_000_000
 
     rho_ab = (rho_bc * rho_ac
               + rho_ab_partial * tf.sqrt((1. - tf.square(rho_bc)) *
@@ -69,8 +72,8 @@ def sampling_distribution_fn_raw(
 
     mask = n_mask(n)[:, None, :]
     z = generate_random_normals((3, N_MAX),
-                                params_num,
-                                first_row_num,
+                                simulation_block_num,
+                                first_row_num_within_simulation_block,
                                 num_rows) * mask
     z_correlated = tf.linalg.matmul(cholesky, z)
 

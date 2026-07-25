@@ -1,14 +1,15 @@
-from examples.biserial_partial_correlation.comparisons import \
-    biparcorr_analyse_funcs as biparcorr
+import biparcorr_analyse_funcs as biparcorr
 
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+import functools
+
 # typing
-from typing import Union, Tuple
-from examples.biserial_partial_correlation.comparisons.biparcorr_analyse_funcs import Batch, Samples, Stats, UnknownParams
-from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3
-from tensor_annotations.tensorflow import float32 as tf32
+from typing import Union, Tuple, Optional
+from biparcorr_analyse_funcs import Batch, Samples, Stats, UnknownParams, Ys
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
+from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
 
 
 MAX_ABS_RHO = 0.99
@@ -131,8 +132,8 @@ def log_likelihood_from_transformed_params_fixed_ab(
 
 
 def transform_correlations(
-        correlations: Union[Tensor1, Tensor2],
-) -> Union[Tensor1, Tensor2]:
+        correlations: Union[Tensor0, Tensor1, Tensor2],
+) -> Union[Tensor0, Tensor1, Tensor2]:
 
     corrs_clipped = tf.clip_by_value(correlations, -MAX_ABS_RHO, MAX_ABS_RHO)
     corrs_tranformed = tf.math.atanh(corrs_clipped)
@@ -170,3 +171,170 @@ def untransform_params(
     prop_a = (prop_a_stretched + 1.) / 2.
 
     return tuple(true_correlations + [prop_a])
+
+
+def likelihoods_via_bfgs(
+        rho_ab_partial_null: Tensor1[tf32, Batch],
+        rho_ab_partial_power: Optional[Tensor1[tf32, Batch]],
+        rho_bc: Tensor1[tf32, Batch],
+        rho_ac: Tensor1[tf32, Batch],
+        prop_a: Tensor1[tf32, Batch],
+        n: Tensor1[tf32, Batch],
+        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
+) -> Tensor1[tf32, Ys]:
+
+    # We will even allow it to cheat by knowing the population params!!
+    params_unknown_transformed_init = transform_params(
+        rho_ab_partial_null,
+        rho_bc,
+        rho_ac,
+        prop_a,
+    )
+
+    neg_log_likelihood_fn_alternative = functools.partial(
+        lambda *args, **kw:
+            -log_likelihood_from_transformed_params(*args, **kw),
+        stats_tensor, n,
+    )
+
+    rho_ab_partial_null_trans = transform_correlations(rho_ab_partial_null)
+    neg_log_likelihood_fn_null = functools.partial(
+        lambda *args, **kw:
+            -log_likelihood_from_transformed_params_fixed_ab(*args, **kw),
+        stats_tensor, n, rho_ab_partial_null_trans,
+    )
+
+    res_alt = tfp.optimizer.bfgs_minimize(
+        lambda params_unknown_transformed: tfp.math.value_and_gradient(
+            neg_log_likelihood_fn_alternative,
+            params_unknown_transformed,
+        ),
+        params_unknown_transformed_init,
+        stopping_condition=tfp.optimizer.converged_all,
+    )
+    params_unknown_transformed_alt = res_alt.position
+    likelihood_alt = -neg_log_likelihood_fn_alternative(
+        params_unknown_transformed_alt,
+        penalise_boundaries=False,
+    )
+
+    res_null = tfp.optimizer.bfgs_minimize(
+        lambda params_unknown_transformed: tfp.math.value_and_gradient(
+            neg_log_likelihood_fn_null,
+            params_unknown_transformed,
+        ),
+        params_unknown_transformed_alt[:, 1:] + 0.01,                          # Need to add a 0.01 here as, if the values passed in already converged, it will crash with NaNs!!
+        stopping_condition=tfp.optimizer.converged_all,
+    )
+    likelihood_null = -neg_log_likelihood_fn_null(
+        res_null.position,
+        penalise_boundaries=False,
+    )
+
+    if rho_ab_partial_power is not None:
+        rho_ab_partial_pow_trans = transform_correlations(
+            rho_ab_partial_power,
+        )
+        neg_log_likelihood_fn_power_null = functools.partial(
+            lambda *args, **kw:
+            -log_likelihood_from_transformed_params_fixed_ab(*args, **kw),
+            stats_tensor, n, rho_ab_partial_pow_trans,
+        )
+        res_power_null = tfp.optimizer.bfgs_minimize(
+            lambda params_unknown_transformed: tfp.math.value_and_gradient(
+                neg_log_likelihood_fn_power_null,
+                params_unknown_transformed,
+            ),
+            params_unknown_transformed_alt[:, 1:] + 0.01,                      # Need to add a 0.01 here as, if the values passed in already converged, it will crash with NaNs!!
+            stopping_condition=tfp.optimizer.converged_all,
+        )
+        likelihood_power_null = -neg_log_likelihood_fn_power_null(
+            res_power_null.position,
+            penalise_boundaries=False,
+        )
+    else:
+        likelihood_power_null = likelihood_null
+        res_power_null = res_null
+
+    num_true_a = tf.reduce_sum(stats_tensor[:, :, 0], axis=1)
+    float32 = tf.float32
+    all_a_same = tf.cast((num_true_a == 0.) | (num_true_a == n), float32)
+    not_converged_alt = tf.cast(~res_alt.converged, float32)
+    not_converged_null = tf.cast(~res_alt.converged, float32)
+
+    failed_alt = tf.cast(res_alt.failed, float32)
+    failed_null = tf.cast(res_null.failed, float32)
+    if rho_ab_partial_power is not None:
+        not_converged_power_null = tf.cast(~res_power_null.converged, float32)
+        failed_power_null = tf.cast(res_power_null.failed, float32)
+    else:
+        not_converged_power_null = tf.zeros_like(not_converged_null, float32)
+        failed_power_null = tf.zeros_like(failed_null, float32)
+
+    failure_code = (not_converged_alt
+                    + not_converged_null * 2.
+                    + not_converged_power_null * 4.
+                    + failed_alt * 8.
+                    + failed_null * 16.
+                    + failed_power_null * 32.
+                    + all_a_same * 64.)
+
+    likelihoods = tf.stack([likelihood_alt,
+                            likelihood_null,
+                            likelihood_power_null], axis=1)
+
+    results = tf.concat([likelihoods,
+                         failure_code[:, None],
+                         res_alt.position,
+                         res_null.position,
+                         res_power_null.position], axis=1)
+
+    return results
+
+
+@tf.function(jit_compile=True)
+def likelihoods_for_batch(
+        simulation_block_num: Tensor0[ti32],
+        first_sim_num: Tensor0[ti32],
+        num_sims: int,
+        simulate_from_power_rho: bool = False,
+        is_bootstrap_simulation: bool = False,
+        **params: Tensor0[tf32],  # optionally including rho_ab_partial_power
+):
+    print("Compiling likelihoods_for_batch")
+    params = {n: tf.repeat(p, num_sims) if p is not None else None
+              for n, p in params.items()}
+
+    if simulate_from_power_rho:
+        assert "rho_ab_partial_power" in params
+        assert params["rho_ab_partial_power"] is not None
+        simulation_rho_ab_partial = params["rho_ab_partial_power"]
+    else:
+        simulation_rho_ab_partial = params["rho_ab_partial"]
+
+    stats = biparcorr.sampling_distribution_fn_raw(
+        rho_ab_partial=simulation_rho_ab_partial,
+        rho_bc=params["rho_bc"],
+        rho_ac=params["rho_ac"],
+        prop_a=params["prop_a"],
+        n=params["n"],
+
+        simulation_block_num=simulation_block_num,
+        first_row_num_within_simulation_block=first_sim_num,
+        num_rows=num_sims,
+        is_powersim_run=simulate_from_power_rho,
+        is_bootstrap_simulation=is_bootstrap_simulation,
+    )
+
+    likelihoods = likelihoods_via_bfgs(
+        rho_ab_partial_null=params["rho_ab_partial"],
+        rho_ab_partial_power=params.get("rho_ab_partial_power", None),
+        rho_bc=params["rho_bc"],
+        rho_ac=params["rho_ac"],
+        prop_a=params["prop_a"],
+        n=params["n"],
+
+        stats_tensor=stats,
+    )
+
+    return likelihoods

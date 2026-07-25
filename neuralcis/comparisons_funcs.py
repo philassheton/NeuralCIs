@@ -19,6 +19,7 @@ Batch = typing.NewType("Batch", axes.Axis)
 Samples = typing.NewType("Samples", axes.Axis)
 Stats = typing.NewType("Stats", axes.Axis)
 UnknownParams = typing.NewType("UnknownParams", axes.Axis)
+Params = typing.NewType("Params", axes.Axis)
 Ys = typing.NewType("Ys", axes.Axis)
 One = typing.NewType("One", axes.Axis)
 Two = typing.NewType("Two", axes.Axis)
@@ -135,6 +136,42 @@ def __likelihoodspow_to_ps(
     return __likelihoods_to_ps(likelihoods)
 
 
+def __failure_proportions_from_likelihoods_file(
+        params_sample_num: int = 0,
+        method: str = "bfgs",
+        data_type: str = "likelihoods",  # might also be likelihoods_pow
+) -> Dict[str, float]:
+
+    assert data_type in ("likelihoods", "likelihoods_pow")
+    filename = data_filename(method, data_type, params_sample_num)
+    data = np.load(filename)
+    failure_code = data[:, 3]
+
+    def next_failure(
+            failure_code: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        next_failure_bool = (failure_code % 2).astype(bool)
+        next_code_to_pass_back = np.floor(failure_code / 2)
+        return next_failure_bool, next_code_to_pass_back
+
+    failure_types = ["not_converged_alt",
+                     "not_converged_null",
+                     "not_converged_power_null",
+                     "failed_alt",
+                     "failed_null",
+                     "failed_power_null",
+                     "all_a_same"]
+
+    code = failure_code
+    failures = {}
+    for ftype in failure_types:
+        failures[ftype], code = next_failure(code)
+
+    failure_proportions = {k: v.mean().item() for k, v in failures.items()}
+
+    return failure_proportions
+
+
 def __load_data_file_as_pvalues(
         params_sample_num: int = 0,
         method: str = "neural",
@@ -241,6 +278,13 @@ def __summarise_data_file(
     ps_powersim, _ = __load_data_file_as_pvalues(params_sample_num,
                                                  f"{method_name}_powersim",
                                                  data_type)
+    if data_type in ("likelihoods", "likelihoods_pow"):
+        failure_proportions = __failure_proportions_from_likelihoods_file(
+            params_sample_num,
+            method_name,
+            data_type,
+        )
+        extra_results |= failure_proportions
 
     ps = tf.constant(ps)
     ps_powersim = tf.constant(ps_powersim)

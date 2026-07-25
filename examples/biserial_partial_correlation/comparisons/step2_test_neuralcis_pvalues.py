@@ -37,10 +37,10 @@ def pvalues_for_batch(
         sim_params = params_human
 
     samples_raw = biparcorr.sampling_distribution_fn_raw(
-        params_num=params_num,
-        first_row_num=first_sim_num,
+        simulation_block_num=params_num,
+        first_row_num_within_simulation_block=first_sim_num,
         num_rows=num_sims,
-        seed_differently=simulate_from_power_rho,
+        is_powersim_run=simulate_from_power_rho,
         **sim_params,
     )
     rs = biparcorr.estimate_correlations_safe(samples_raw, params_human["n"])
