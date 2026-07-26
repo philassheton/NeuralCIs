@@ -1,6 +1,5 @@
 import biparcorr_analyse_funcs as biparcorr
-
-import pandas as pd
+from neuralcis import comparisons_funcs as comp
 
 
 NUM_PARAM_SAMPLES = 500
@@ -20,10 +19,8 @@ summary_dict_neural, summary_grids_neural = biparcorr.summarise_pvalues_files(
     only_first_n_pvalues=500,
 )
 
-summary_dict = summary_dict_bootlr | summary_dict_neural
-summary_df = pd.DataFrame(summary_dict)
+params = biparcorr.load_params_dict()
+params = {k:p[0:NUM_PARAM_SAMPLES].numpy() for k, p in params.items()}
 
-summary_df.to_parquet(f"summaries/summary_{method_name}.parquet",
-                      engine="pyarrow",
-                      compression="zstd",
-                      index=False)
+summary_dict = summary_dict_bootlr | summary_dict_neural | params
+comp.save_summary_parquet(f"summary_{method_name}", summary_dict)

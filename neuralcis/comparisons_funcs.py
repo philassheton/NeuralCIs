@@ -1,6 +1,7 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
+import pandas as pd
 import os
 from tqdm import tqdm
 
@@ -26,7 +27,8 @@ Two = typing.NewType("Two", axes.Axis)
 PairwiseCorrelations = typing.NewType("PairwiseCorrelations", axes.Axis)
 
 
-PARAMS_DICT_FILENAME = 'param_samples.npy'
+PARAMS_DICT_FILENAME = "param_samples.npy"
+SUMMARIES_FOLDER = "summaries"
 
 
 def replicate_params(
@@ -176,6 +178,34 @@ def __failure_proportions_from_likelihoods_file(
     failure_proportions = {k: v.mean().item() for k, v in failures.items()}
 
     return failure_proportions
+
+
+def __get_and_make_summaries_path(filename: str):
+    folder = SUMMARIES_FOLDER
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, filename)
+    return path
+
+
+def save_summary_parquet(
+        name: str,
+        data: pd.DataFrame | Dict[str, np.ndarray],
+) -> None:
+
+    if isinstance(data, dict):
+        data = pd.DataFrame(data)
+
+    path = __get_and_make_summaries_path(f"{name}.parquet")
+    data.to_parquet(path, engine="pyarrow", compression="zstd", index=False)
+
+
+def save_summary_numpy(
+        name: str,
+        data: np.ndarray,
+) -> None:
+
+    path = __get_and_make_summaries_path(f"{name}.npy")
+    np.save(path, data)
 
 
 def __load_data_file_as_pvalues(

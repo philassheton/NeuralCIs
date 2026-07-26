@@ -5,6 +5,7 @@ import pandas as pd
 from neuralcis import NeuralCIs
 
 import biparcorr_analyse_funcs as biparcorr
+from neuralcis import comparisons_funcs as comp
 
 from tqdm import tqdm
 
@@ -174,7 +175,4 @@ if __name__ == "__main__":
     summary_df = pd.DataFrame(summary_dict)
     params_df = pd.DataFrame(params)
     summary_df = pd.concat([summary_df, params_df], axis=1)
-    summary_df.to_parquet(f"summaries/summary_neural_large_sample.parquet",
-                            engine="pyarrow",
-                            compression="zstd",
-                            index=False)
+    comp.save_summary_parquet("summary_neural_large_sample", summary_df)
