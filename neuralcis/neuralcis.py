@@ -346,7 +346,8 @@ class NeuralCIs(_DataSaver):
         """
 
         self.param_sampler.fit(*args, **kwargs)
-        self.pnet.fit(*args, **kwargs)
+        history = self.pnet.fit(*args, **kwargs)
+        return history
 
     def values_grid(
             self,
