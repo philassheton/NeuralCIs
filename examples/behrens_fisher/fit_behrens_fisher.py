@@ -83,10 +83,11 @@ cis = neuralcis.NeuralCIs(
     n2=KnownParam(PositiveCount((3., 100.))),
 
     mudiff_hat=Stat(Location((-3., 3.))),
-    sigma1_hat=Stat(Scale((.3, 3.))),
-    sigma2_hat=Stat(Scale((.1, 10.))),
+    sigma1_hat=Stat(Scale((0.333, 3.))),
+    sigma2_hat=Stat(Scale((0.1, 10.))),
 
-    sigma2_1_ratio_hat=Stat(Scale((.3, 3.))),
+    sigma2_1_ratio_hat=Stat(Scale((0.333, 3.))),
+
 
     train_initial_weights=False,
 )
