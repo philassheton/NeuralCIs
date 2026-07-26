@@ -118,24 +118,6 @@ def __likelihoods_to_ps(
     return ps, num_negative, num_negative_power
 
 
-def __likelihoodspow_to_ps(
-        likelihoods: np.ndarray,
-        likelihoodspow: np.ndarray,
-) -> Tuple[np.ndarray, int, int]:
-
-    # This is a short-cut for the case where power targeting was redesigned
-    # and only power values were to be resampled.  Special extra files called
-    # "likelihoodspow" instead of "likelihoods" store only the likelihoods
-    # for the power component (having been initialised using the original
-    # fit of the non-power null, extracted from the original likelihoods
-    # file).
-    #
-    # This function merges the p-values from the new file into the old one.
-
-    likelihoods[:, 2] = likelihoodspow[:, 0]
-    return __likelihoods_to_ps(likelihoods)
-
-
 def __failure_proportions_from_likelihoods_file(
         params_sample_num: int = 0,
         method: str = "bfgs",
@@ -182,12 +164,6 @@ def __load_data_file_as_pvalues(
     data = np.load(filename)
     if data_type == "likelihoods":
         ps, num_negative, num_negative_power = __likelihoods_to_ps(data)
-        extra_results = {f"neg_likelihoods_{method}": num_negative,
-                         f"neg_likelihoods_power_{method}": num_negative_power}
-    elif data_type == "likelihoodspow":
-        filename_main = filename.replace("likelihoodspow", "likelihoods")
-        data_main = np.load(filename_main)
-        ps, num_negative, num_negative_power = __likelihoodspow_to_ps(data_main, data)  # PHIL!!  Hacks!!
         extra_results = {f"neg_likelihoods_{method}": num_negative,
                          f"neg_likelihoods_power_{method}": num_negative_power}
     elif data_type == "ps":

@@ -8,7 +8,7 @@ import numpy as np
 method_name = "bfgs"
 summary_dict, summary_grids = biparcorr.summarise_pvalues_files(
     method_name=method_name,
-    data_type="likelihoodspow",
+    data_type="likelihoods",
 )
 
 os.makedirs("summaries", exist_ok=True)
