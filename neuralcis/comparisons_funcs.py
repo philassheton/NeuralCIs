@@ -149,6 +149,30 @@ def __failure_proportions_from_likelihoods_file(
     for ftype in failure_types:
         failures[ftype], code = next_failure(code)
 
+    failures["any_failure_null"] = (
+        failures["not_converged_alt"]
+        | failures["not_converged_null"]
+        | failures["failed_alt"]
+        | failures["failed_null"]
+    )
+
+    failures["any_failure_power"] = (
+        failures["not_converged_alt"]
+        | failures["not_converged_power_null"]
+        | failures["failed_alt"]
+        | failures["failed_power_null"]
+    )
+
+    failures["any_failure_or_all_same_null"] = (
+        failures["any_failure_null"]
+        | failures["all_a_same"]
+    )
+
+    failures["any_failure_or_all_same_power"] = (
+        failures["any_failure_power"]
+        | failures["all_a_same"]
+    )
+
     failure_proportions = {k: v.mean().item() for k, v in failures.items()}
 
     return failure_proportions
@@ -241,6 +265,14 @@ def __compute_summaries(
     return main_results, summary_grids
 
 
+def __unpack_bootstrap_failure_rates(
+        failures: np.ndarray,
+) -> Dict["str", np.ndarray]:
+
+    failure_names = "failed", "failed_power", "all_a_same", "all_a_same_power"
+    return dict(zip((failure_names), np.unstack(failures, axis=1)))
+
+
 def __summarise_data_file(
         params_sample_num: int = 0,
         method_name: str = "neural",
@@ -268,6 +300,15 @@ def __summarise_data_file(
             data_type,
         )
         extra_results |= failure_proportions
+
+    if method_name == "bootstrap_lr":
+        ps, failures = np.split(ps, (2,), axis=1)
+        ps_powersim, failures_powersim = np.split(ps_powersim, (2,), axis=1)
+        failures = __unpack_bootstrap_failure_rates(failures)
+        failures_powersim = __unpack_bootstrap_failure_rates(failures_powersim)
+        failures_powersim = {f"{k}_powersim":v
+                             for k, v in failures_powersim.items()}
+        extra_results |= failures | failures_powersim
 
     ps = tf.constant(ps)
     ps_powersim = tf.constant(ps_powersim)
