@@ -99,7 +99,6 @@ def sample_params():
             'n': n[0:NUM_PARAM_SAMPLES]}
 
 
-@tf.function(jit_compile=True)
 def pvalues_for_whole_param(
         cis: NeuralCIs,
         params_num: Tensor0[ti32],
@@ -131,10 +130,30 @@ def pvalues_for_whole_param(
     return ps_null[:, None]
 
 
+@tf.function(jit_compile=True)
+def summaries_for_whole_param(
+        cis: NeuralCIs,
+        params_num: Tensor0[ti32],
+        num_sims_per_param: int,
+        **params_human: Tensor0[tf32],
+) -> Dict[str, Tensor0[tf32]]:
+
+    ps = pvalues_for_whole_param(cis, params_num, num_sims_per_param,
+                                 **params_human)
+
+    def error_rate(ps, alpha):
+        return tf.reduce_mean(tf.cast(ps < alpha, tf.float32))
+
+    error_rate_dict = {f"error_rate_{a:.03f}_neural": error_rate(ps, a)
+                       for a in (0.01, 0.05)}
+    uniformity_dict = comp.compute_uniformity_measures(ps[:, 0], "neural",
+                                                       include_kl=False)       # KL does not currently JIT compile so takes five times as long to run!
+    return error_rate_dict | uniformity_dict
+
+
 def run_neural_ps(
         params: Dict[str, Tensor1[tf32, Samples]],
         num_sims_per_param_sample: int = 1_000_000,
-        start_from_param_num: int = 0,
 ) -> List[Dict[str, float]]:
 
     print("Loading trained net!")
@@ -142,28 +161,21 @@ def run_neural_ps(
 
     # Do an initial run to force a compile so that our timings are pure
     print("Compiling!")
-    pvalues_for_whole_param(cis,
-                            params_num=tf.constant(0, tf.int32),
-                            num_sims_per_param=num_sims_per_param_sample,
-                            **{n: p[0] for n, p in params.items()})
+    summaries_for_whole_param(cis,
+                              params_num=tf.constant(0, tf.int32),
+                              num_sims_per_param=num_sims_per_param_sample,
+                              **{n: p[0] for n, p in params.items()})
     print("Done compiling.")
 
     summary_dicts = []
     for params_sample_num in tqdm(range(len(params["rho_ab_partial"]))):
-
         params_sample_num_tf = tf.constant(params_sample_num, tf.int32)
         this_params = {n: p[params_sample_num] for n, p in params.items()}
-        ps = pvalues_for_whole_param(cis,
-                                     params_sample_num_tf,
-                                     num_sims_per_param_sample,
-                                     **this_params)
-
-        def error_rate(ps, alpha):
-            return tf.reduce_mean(tf.cast(ps < alpha, tf.float32))
-
-        summary_dict = {f"error_rate_{a:.03f}_neural": error_rate(ps, a)
-                        for a in (0.01, 0.05)}
-
+        summary_dict = summaries_for_whole_param(cis,
+                                                 params_sample_num_tf,
+                                                 num_sims_per_param_sample,
+                                                 ** this_params)
+        summary_dict = {k:v.numpy().item() for k, v in summary_dict.items()}
         summary_dicts.append(summary_dict)
     return summary_dicts
 

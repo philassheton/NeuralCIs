@@ -231,6 +231,26 @@ def __load_data_file_as_pvalues(
     return ps, extra_results
 
 
+def compute_uniformity_measures(
+        ps: Tensor1[tf32, Samples],
+        method_name: str,
+        include_kl: bool = True,  # KL doesn't currently JIT compile
+) -> Dict[str, Tensor0[tf32]]:
+
+    measures = {
+        f"ks_dist_{method_name}":
+            __ks_dist_vs_uniform_over_region(ps),
+        f"ks_dist_tail_0.10_{method_name}":
+            __ks_dist_vs_uniform_over_region(ps, left_n_proportion=0.10),
+        f"ks_dist_tail_0.05_{method_name}":
+            __ks_dist_vs_uniform_over_region(ps, left_n_proportion=0.05),
+    }
+    if include_kl:
+        measures |= {f"kl_div_{method_name}": __kl_div_vs_uniform_hist(ps)}
+
+    return measures
+
+
 def __summarise_pvalues(
         ps: Tensor2[tf32, Samples, Two],
         ps_powersim: Tensor2[tf32, Samples, Two],
@@ -239,16 +259,7 @@ def __summarise_pvalues(
 ) -> Dict[str, float]:
 
     # GLOBAL COMPARISONS WITH UNIFORM
-    results = {
-        f"ks_dist_{method_name}":
-            __ks_dist_vs_uniform_over_region(ps[:, 0]),
-        f"ks_dist_tail_0.10_{method_name}":
-            __ks_dist_vs_uniform_over_region(ps[:, 0], left_n_proportion=0.10),
-        f"ks_dist_tail_0.05_{method_name}":
-            __ks_dist_vs_uniform_over_region(ps[:, 0], left_n_proportion=0.05),
-        f"kl_div_{method_name}":
-            __kl_div_vs_uniform_hist(ps[:, 0]),
-    }
+    results = compute_uniformity_measures(ps[:, 0])
 
     # LOCAL COMPARISONS AT GIVEN ALPHAS
     for alpha in alphas:
