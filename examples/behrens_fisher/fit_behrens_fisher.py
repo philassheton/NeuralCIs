@@ -2,7 +2,7 @@ import os
 import tensorflow as tf
 
 import neuralcis
-from neuralcis import Stat, Param, KnownParam
+from neuralcis import Stat, Param, KnownParam, Interest
 from neuralcis import Location, Scale, PositiveCount
 import tensorflow_probability as tfp
 
@@ -64,6 +64,15 @@ def transform_on_stats_fn(
             "n2": n2}
 
 
+def transform_interest_on_stats_fn(
+        mudiff_hat, sigma1_hat, sigma2_hat,  # Statistics
+        interest,                            # Interest parameter
+):
+
+    return {"sigma2_1_ratio_hat": sigma2_hat / sigma1_hat,
+            "interest": (interest - mudiff_hat) / sigma1_hat}
+
+
 cis = neuralcis.NeuralCIs(
     sampling_distribution_fn,
     interest_fn,
@@ -74,6 +83,7 @@ cis = neuralcis.NeuralCIs(
 
     transform_on_stats_fn,
     ["sigma2_1_ratio_hat"],
+    transform_interest_on_stats_fn,
 
     mudiff=Param(Location((-3., 3.)), (0., 0.)),
     sigma1=Param(Scale((0.333, 3.)), (1., 1.)),
@@ -88,6 +98,7 @@ cis = neuralcis.NeuralCIs(
 
     sigma2_1_ratio_hat=Stat(Scale((0.333, 3.))),
 
+    interest=Interest(Location((-3., 3.))),
 
     train_initial_weights=False,
 )

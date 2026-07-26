@@ -2,7 +2,7 @@ import os
 import tensorflow as tf
 
 import neuralcis
-from neuralcis import Stat, Param, KnownParam
+from neuralcis import Stat, Param, KnownParam, Interest
 from neuralcis import Correlation, Proportion, PositiveCount
 import tensorflow_probability as tfp
 
@@ -134,6 +134,8 @@ cis = neuralcis.NeuralCIs(
     rho_ac_hat=Stat(Correlation()),
     rho_bc_hat=Stat(Correlation()),
     prop_a_hat=Stat(Proportion()),
+
+    interest=Interest(Correlation()),
 
     param_sampling_regularize_jitter_multiply=0.1,
     param_sampling_regularize_jitter_add=0.03,

@@ -107,6 +107,10 @@ class _NeuralCIsKWArgs():
                 Dict["str", Tensor1[tf32, Samples]],
             ]],
             transform_on_stats_stat_names: Sequence[str],
+            transform_interest_on_stats_fn: Optional[Callable[
+                [Tuple[Tensor1[tf32, Samples], ...]],
+                Dict["str", Tensor1[tf32, Samples]],
+            ]],
             param_sampling_regularize_jitter_multiply: float,
             param_sampling_regularize_jitter_add: float,
             profile: str,
@@ -127,6 +131,8 @@ class _NeuralCIsKWArgs():
 
         self.transform_on_stats_fn = _TFFn.get(transform_on_stats_fn)
         self.transform_on_stats_stat_names = transform_on_stats_stat_names
+        self.transform_interest_on_stats_fn = \
+            _TFFn.get(transform_interest_on_stats_fn)
 
         self.param_sampling_regularize_jitter_multiply = \
                                     param_sampling_regularize_jitter_multiply
@@ -150,6 +156,8 @@ class _NeuralCIsKWArgs():
             transform_on_stats_fn = self.transform_on_stats_fn,
             transform_on_stats_stat_names =
                                 self.transform_on_stats_stat_names,
+            transform_interest_on_stats_fn = \
+                                self.transform_interest_on_stats_fn,
             param_sampling_regularize_jitter_multiply =
                                 self.param_sampling_regularize_jitter_multiply,
             param_sampling_regularize_jitter_add =
@@ -179,6 +187,9 @@ class _NeuralCIsKWArgs():
         )
         self.transform_on_stats_fn.save(
             foldername, "transform_on_stats_fn",
+        )
+        self.transform_interest_on_stats_fn.save(
+            foldername, "transform_interest_on_stats_fn",
         )
 
         # Pickle variable defs separately: need special treatment on loading
@@ -217,6 +228,9 @@ class _NeuralCIsKWArgs():
             transform_on_stats_fn = _TFFn.load(
                 foldername, "transform_on_stats_fn",
             ),
+            transform_interest_on_stats_fn = _TFFn.load(
+                foldername, "transform_interest_on_stats_fn",
+            )
         )
 
         other_args: Dict

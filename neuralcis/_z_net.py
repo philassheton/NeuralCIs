@@ -47,6 +47,12 @@ class _ZNet(_SimulatorNet):
                 Tuple[Tensor2[tf32, Samples, Stats],
                       Tensor2[tf32, Samples, Params]],
             ],
+            transform_interest_on_stats_fn: Callable[
+                [Tensor2[tf32, Samples, Stats],
+                 Tensor1[tf32, Samples]],
+                Tuple[Tensor2[tf32, Samples, Stats],
+                      Tensor1[tf32, Samples]],
+            ],
             num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
@@ -89,6 +95,7 @@ class _ZNet(_SimulatorNet):
         self.param_sampling_fn = param_sampling_fn
         self.interest_fn = interest_fn
         self.transform_on_stats_fn = transform_on_stats_fn
+        self.transform_interest_on_stats_fn = transform_interest_on_stats_fn
 
         self.known_param_indices = known_param_indices
 
@@ -148,10 +155,43 @@ class _ZNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        # TODO: relate this to the interest rather than "known param" naming
+        # The natural way to assemble net inputs is to compute the transforms
+        #   and then compute the interest parameter from that...
         stats, params = input_blob
         stats_trans, params_trans = self.transform_on_stats_fn(stats, params)
         interest_trans = self.interest_fn(params_trans)
+
+        return self.net_inputs_after_transforms(stats_trans,
+                                                params_trans,
+                                                interest_trans)
+
+    @tf.function
+    def net_inputs_precomputed_interest(
+            self,
+            stats: Tensor2[tf32, Samples, Stats],
+            params: Tensor2[tf32, Samples, Params],
+            interest: Tensor1[tf32, Samples],
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
+
+        # ... but in some circumstances (training, and inference when full
+        # params are unknown), we prefer to do it this long way round, so
+        # that our pivotal z is totally independent of unknown params.
+        stats_trans, params_trans = self.transform_on_stats_fn(stats, params)
+        stats_trans2, interest_trans = self.transform_interest_on_stats_fn(
+            stats,
+            interest,
+        )
+
+        return self.net_inputs_after_transforms(stats_trans,
+                                                params_trans,
+                                                interest_trans)
+
+    def net_inputs_after_transforms(
+            self,
+            stats_trans,
+            params_trans,
+            interest_trans,
+    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
         known_params = tf.gather(params_trans,
                                  self.known_param_indices, axis=1)
@@ -222,12 +262,14 @@ class _ZNet(_SimulatorNet):
     ]:
 
         stats, params = input_blob
+        interest = self.interest_fn(params)
 
         with tf.GradientTape(persistent=True) as tape:                         # type: ignore
             tape.watch(stats)
-            tape.watch(params)
-            input_blob = stats, params
-            net_inputs = self.net_inputs(input_blob)
+            tape.watch(interest)
+            net_inputs = self.net_inputs_precomputed_interest(stats,
+                                                              params,
+                                                              interest)
             zs = self._call_tf(net_inputs, training=training)
             z0 = zs[:, 0:1]
 
@@ -237,19 +279,8 @@ class _ZNet(_SimulatorNet):
         jacobdets = tf.linalg.det(jacobians)
 
         # Also compute dz0 / dinterest (UNTRANSFORMED INTEREST)
-        dz0_dtheta = tape.batch_jacobian(z0, params,
-                                         experimental_use_pfor=False)[:, 0, :]
+        dz0_dinterest = tape.gradient(z0, interest)
         del tape
-
-        with tf.GradientTape() as tape:
-            tape.watch(params)
-            interest_untransformed = self.interest_fn(params)[:, None]
-        dcon_dtheta = tape.batch_jacobian(interest_untransformed, params,
-                                          experimental_use_pfor=False)
-        dcon_dtheta = dcon_dtheta[:, 0, :]
-
-        dz0_dinterest = (tf.reduce_sum(dcon_dtheta * dz0_dtheta, axis=1)
-                         / tf.reduce_sum(tf.square(dcon_dtheta), axis=1))
 
         return zs, jacobdets, dz0_dinterest                                    # type: ignore
 

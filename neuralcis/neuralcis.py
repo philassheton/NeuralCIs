@@ -18,11 +18,12 @@ from typing import TypeVar, Type
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
 from .common import Samples, Stats, Params, KnownParams, UnknownParams
-from .variables import Variable
+from .variables import Variable, Interest
 import tensor_annotations.tensorflow as ttf
 
 
 T = TypeVar("T", bound="NeuralCIs")
+INTEREST = "interest"
 
 
 class NeuralCIs(_DataSaver):
@@ -147,20 +148,27 @@ class NeuralCIs(_DataSaver):
             ],
             unknown_param_names: Sequence[str],
             stat_names: Sequence[str],
-            known_param_names: Sequence[str] = (),
+            known_param_names: Sequence[str],
             transform_on_stats_fn: Optional[Callable[
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]],
             ]] = None,
             transform_on_stats_stat_names: Optional[Sequence[str]] = None,
+            transform_interest_on_stats_fn: Optional[Callable[
+                [Tuple[Tensor1[tf32, Samples], ...]],
+                Dict["str", Tensor1[tf32, Samples]],
+            ]] = None,
             param_sampling_regularize_jitter_multiply: float = 0.,
             param_sampling_regularize_jitter_add: float = 0.,
             train_initial_weights: bool = True,
             profile: str = FULL,                                               # If you want a more minimal setup, "testing" is much lighter and "inference" even lighter still
             network_setup_args: Optional[Dict] = None,
             optional_data_to_store: Optional[Dict] = None,
+            interest: Interest = None,
             **variable_defs: Variable,
     ) -> None:
+
+        assert interest is not None
 
         if transform_on_stats_fn is None:
             if (transform_on_stats_stat_names is not None
@@ -173,7 +181,7 @@ class NeuralCIs(_DataSaver):
 
         # store input arguments in a format suitable for serialization:
         self.kwargs = _NeuralCIsKWArgs(
-            variable_defs,
+            variable_defs | {INTEREST: interest},
             sampling_distribution_fn,
             interest_fn,
             estimates_fn,
@@ -182,6 +190,7 @@ class NeuralCIs(_DataSaver):
             known_param_names,
             transform_on_stats_fn,
             transform_on_stats_stat_names,
+            transform_interest_on_stats_fn,
             param_sampling_regularize_jitter_multiply,
             param_sampling_regularize_jitter_add,
             profile,
@@ -198,6 +207,8 @@ class NeuralCIs(_DataSaver):
         self.num_stat = len(self.stat_names())
 
         self.has_transform = not self.kwargs.transform_on_stats_fn.is_none()
+        if self.has_transform:
+            assert self.kwargs.transform_interest_on_stats_fn is not None
 
         # TODO: Add checks for other functions too.
         self._check_simulation_names()
@@ -239,6 +250,7 @@ class NeuralCIs(_DataSaver):
             self._sampling_dist_net_interface,
             self._interest_fn_net_interface,
             self._transform_on_stats_fn_net_interface,
+            self._transform_interest_on_stats_fn_net_interface,
             self.num_stat,
             self.num_unknown_param,
             self.num_known_param,
@@ -559,9 +571,10 @@ class NeuralCIs(_DataSaver):
     ) -> Tensor1[tf32, Samples]:
 
         params_human = self._params_net_to_human(params_net)
-        interest_param = self.kwargs.interest_fn(**params_human)
+        interest_human = self.kwargs.interest_fn(**params_human)
+        interest_net = self._interest_human_to_net(interest_human)
 
-        return interest_param
+        return interest_net
 
     @tf.function
     def _estimates_fn_net_interface(
@@ -600,6 +613,29 @@ class NeuralCIs(_DataSaver):
         params_net = self._params_human_to_net(**outputs)
 
         return stats_net, params_net
+
+    @tf.function
+    def _transform_interest_on_stats_fn_net_interface(
+            self,
+            stats_net: Tensor2[tf32, Samples, Stats],
+            interest_net: Tensor1[tf32, Samples],
+    ) -> Tuple[Tensor2[tf32, Samples, Stats],
+               Tensor1[tf32, Samples]]:
+
+        if not self.has_transform:
+            return stats_net, interest_net
+
+        stats_human = self._stats_net_to_human(stats_net)
+        interest_human = self._interest_net_to_human(interest_net)
+
+        inputs = stats_human | {INTEREST: interest_human}
+        stats_human = self.kwargs.transform_interest_on_stats_fn(**inputs)
+        interest_human = stats_human.pop(INTEREST)
+
+        stats_net = self._stats_transformed_human_to_net(**stats_human)
+        interest_net = self._interest_human_to_net(interest_human)
+
+        return stats_net, interest_net
 
     @tf.function
     def _param_is_valid_net_interface(
@@ -711,30 +747,6 @@ class NeuralCIs(_DataSaver):
         return values_human
 
     @tf.function
-    def _params_net_to_human(
-            self,
-            params_net: Tensor2[tf32, Samples, Params],
-            known_params_only: bool = False,
-    ) -> Dict[str, Tensor1[tf32, Samples]]:
-
-        param_names = self.param_names(unknown_params=not known_params_only)
-        num_param = self.num_param(known_params_only)
-        params_human = self._net_to_human(param_names, num_param, params_net)
-
-        return params_human
-
-    @tf.function
-    def _params_human_to_net(
-            self,
-            unknown_params: bool = True,
-            known_params: bool = True,
-            **params_human: Tensor1[tf32, Samples],
-    ) -> Tensor2[tf32, Samples, Params]:
-
-        param_names = self.param_names(unknown_params, known_params)
-        return self._human_to_net(param_names, **params_human)
-
-    @tf.function
     def _stats_net_to_human(
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
@@ -760,6 +772,46 @@ class NeuralCIs(_DataSaver):
 
         return self._human_to_net(self.kwargs.transform_on_stats_stat_names,
                                   **stats_transformed_human)
+
+    @tf.function
+    def _params_net_to_human(
+            self,
+            params_net: Tensor2[tf32, Samples, Params],
+            known_params_only: bool = False,
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
+
+        param_names = self.param_names(unknown_params=not known_params_only)
+        num_param = self.num_param(known_params_only)
+        params_human = self._net_to_human(param_names, num_param, params_net)
+
+        return params_human
+
+    @tf.function
+    def _params_human_to_net(
+            self,
+            unknown_params: bool = True,
+            known_params: bool = True,
+            **params_human: Tensor1[tf32, Samples],
+    ) -> Tensor2[tf32, Samples, Params]:
+
+        param_names = self.param_names(unknown_params, known_params)
+        return self._human_to_net(param_names, **params_human)
+
+    @tf.function
+    def _interest_net_to_human(
+            self,
+            interest_net: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return self.variable_defs()[INTEREST].from_net(interest_net)
+
+    @tf.function
+    def _interest_human_to_net(
+            self,
+            interest_human: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return self.variable_defs()[INTEREST].to_net(interest_human)
 
     @staticmethod
     def _tensor1_first_elem_to_float(

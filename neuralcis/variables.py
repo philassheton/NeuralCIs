@@ -255,6 +255,22 @@ class Stat(Variable):
         return self.type.from_net_stat(net)
 
 
+class Interest(Variable):
+    def to_net(
+            self,
+            human: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return self.type.to_net_param(human)
+
+    def from_net(
+            self,
+            net: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return self.type.from_net_param(net)
+
+
 class Location(VariableType):
     def to_net_transform_generic(self, human):
         return human
