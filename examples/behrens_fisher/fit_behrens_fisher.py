@@ -99,8 +99,6 @@ cis = neuralcis.NeuralCIs(
     sigma2_1_ratio_hat=Stat(Scale((0.333, 3.))),
 
     interest=Interest(Location((-3., 3.))),
-
-    train_initial_weights=False,
 )
 cis.fit()
 cis.save('saved_model')

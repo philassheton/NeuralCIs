@@ -160,7 +160,7 @@ class NeuralCIs(_DataSaver):
             ]] = None,
             param_sampling_regularize_jitter_multiply: float = 0.,
             param_sampling_regularize_jitter_add: float = 0.,
-            train_initial_weights: bool = True,
+            train_initial_weights: bool = False,
             profile: str = FULL,                                               # If you want a more minimal setup, "testing" is much lighter and "inference" even lighter still
             network_setup_args: Optional[Dict] = None,
             optional_data_to_store: Optional[Dict] = None,

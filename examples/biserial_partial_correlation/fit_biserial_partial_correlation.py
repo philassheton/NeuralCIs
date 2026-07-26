@@ -139,8 +139,6 @@ cis = neuralcis.NeuralCIs(
 
     param_sampling_regularize_jitter_multiply=0.1,
     param_sampling_regularize_jitter_add=0.03,
-
-    train_initial_weights=False,
 )
 
 cis.fit()
