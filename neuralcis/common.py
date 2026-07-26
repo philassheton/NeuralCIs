@@ -1,9 +1,8 @@
-import tensorflow as tf
-import numpy as np
 import typing
-
 from tensor_annotations import axes
 
+
+TEST_RUN = False
 
 # file naming
 CIS_FILE_START = "cis"
@@ -106,6 +105,20 @@ SOFT_FLOOR_CEILING = 1e-10
 MAX_SAMPLES_AT_A_TIME = 50000
 
 
+if TEST_RUN:
+    print("\n\n\n\n           WARNING!!! \n\n\n This is a test run!!\n\n\n\n")
+    EPOCHS = 10
+    EPOCHS_ZNET = 13
+    STEPS_PER_EPOCH = 2
+    STEPS_PER_EPOCH_ZNET = 2
+
+    FEELER_NET_MARKOV_CHAIN_LENGTH = 10
+    FEELER_NET_PERIPHERAL_BATCH_SIZE = 500
+    FEELER_NET_PERIPHERAL_BATCHES = 4
+    OUTER_FEELER_PERIPHERAL_BATCH_SIZE = 125
+    OUTER_FEELER_PERIPHERAL_BATCHES = 8
+
+
 # axis labels for TensorFlow typing
 # each of these presents what sort of data populates a certain axis in a
 #  Tensor.
@@ -143,25 +156,3 @@ NetInputBlob = typing.TypeVar("NetInputBlob")
 NetOutputBlob = typing.TypeVar("NetOutputBlob")
 NetTargetBlob = typing.TypeVar("NetTargetBlob")
 NetInputSimulationBlob = typing.TypeVar("NetInputSimulationBlob")
-
-
-def combine_input_args_into_tensor(*argv):
-    """Combine various different input formats into a TensorFlow Tensor.
-
-    :param argv: Inputs to the network may be passed in here as any of:
-    (1) A Tensor
-    (2) A series of scalar values (one for each network input)
-    (3) A series of 1D Tensors (one for each network input)
-    :return: A Tensorflow Tensor.
-    """
-    if len(argv) == 1:
-        argv = argv[0]
-
-    if tf.is_tensor(argv):
-        tensor = argv
-    elif np.all([np.isscalar(arg) for arg in argv]):
-        tensor = tf.stack([[arg] for arg in argv], axis=1)
-    else:
-        tensor = tf.stack(argv, axis=1)
-
-    return tensor
