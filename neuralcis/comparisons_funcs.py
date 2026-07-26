@@ -295,12 +295,25 @@ def __compute_summaries(
     return main_results, summary_grids
 
 
-def __unpack_bootstrap_failure_rates(
+def __summarise_bootstrap_failure_rates(
         failures: np.ndarray,
-) -> Dict["str", np.ndarray]:
+) -> Dict[str, float]:
 
     failure_names = "failed", "failed_power", "all_a_same", "all_a_same_power"
-    return dict(zip((failure_names), np.unstack(failures, axis=1)))
+    failures_dict = dict(zip((failure_names), np.unstack(failures, axis=1)))
+    failure_summary_dicts = []
+    for failure_name, failure_array in failures_dict.items():
+        failure_summary_dict = {
+            f"{failure_name}_min": failure_array.min().item(),
+            f"{failure_name}_max": failure_array.max().item(),
+            f"{failure_name}_mean": failure_array.mean().item(),
+            f"{failure_name}_std": failure_array.std().item(),
+            f"{failure_name}_99": np.percentile(failure_array, 99).item(),
+        }
+        failure_summary_dicts.append(failure_summary_dict)
+    failure_summaries_dict = {k: v for dict in failure_summary_dicts
+                              for k, v in dict.items()}
+    return failure_summaries_dict
 
 
 def __summarise_data_file(
@@ -334,8 +347,10 @@ def __summarise_data_file(
     if method_name == "bootstrap_lr":
         ps, failures = np.split(ps, (2,), axis=1)
         ps_powersim, failures_powersim = np.split(ps_powersim, (2,), axis=1)
-        failures = __unpack_bootstrap_failure_rates(failures)
-        failures_powersim = __unpack_bootstrap_failure_rates(failures_powersim)
+        failures = __summarise_bootstrap_failure_rates(failures)
+        failures_powersim = __summarise_bootstrap_failure_rates(
+            failures_powersim
+        )
         failures_powersim = {f"{k}_powersim":v
                              for k, v in failures_powersim.items()}
         extra_results |= failures | failures_powersim
