@@ -1,7 +1,7 @@
 from ._simulator_net_cached import _SimulatorNetCached
-from ._sampling_feeler_generator import _SamplingFeelerGenerator
+from ._inner_feeler_generator import _InnerFeelerGenerator
 from ._outer_feeler_generator import _OuterFeelerGenerator
-from ._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
+from ._inner_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
 from .common import FULL
 from . import common
 
@@ -33,7 +33,7 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
     def __init__(
             self,
-            feeler_data_generator: Union[_SamplingFeelerGenerator,
+            feeler_data_generator: Union[_InnerFeelerGenerator,
                                          _OuterFeelerGenerator],
             num_unknown_param: int,
             num_known_param: int,

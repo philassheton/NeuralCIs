@@ -1,8 +1,8 @@
-from ._sampling_feeler_generator import _SamplingFeelerGenerator
-from ._sampling_feeler_net import _SamplingFeelerNet
+from ._inner_feeler_generator import _InnerFeelerGenerator
 from ._outer_feeler_generator import _OuterFeelerGenerator
-from ._param_sampling_net import _ParamSamplingNet
+from ._sampling_feeler_net import _SamplingFeelerNet
 from ._is_inside_net import _IsInsideNet
+from ._param_sampling_net import _ParamSamplingNet
 from ._data_saver import _DataSaver
 from .common import TESTING
 from . import common
@@ -65,7 +65,7 @@ class _ParamSampler(_DataSaver):
             return
 
         self.known_param_indices = known_param_indices
-        self.inner_data_generator = _SamplingFeelerGenerator(
+        self.inner_data_generator = _InnerFeelerGenerator(
             estimates_min_and_max,
             sampling_distribution_fn,
             preprocess_params_fn,

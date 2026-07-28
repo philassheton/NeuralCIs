@@ -73,7 +73,7 @@ NetTargetBlob = Tensor2[tf32, Samples, ImportanceIngredients]
 #
 ###############################################################################
 
-class _SamplingFeelerGenerator(_DataSaver):
+class _InnerFeelerGenerator(_DataSaver):
     smallest_profile_found_in = FULL
     def __init__(
             self,
