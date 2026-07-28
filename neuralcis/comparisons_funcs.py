@@ -42,7 +42,7 @@ def replicate_params(
 
 def __make_cdf_summaries(
         ps: Tensor2[tf32, Samples, Two],
-) -> np.ndarray:
+) -> Tensor3[tf32, Two, Samples, Two]:
 
     full_summary_quantiles = tf.linspace(0.0005, 0.9995, 1000)
     left_tail_quantiles = tf.linspace(0.00005, 0.09995, 1000)
@@ -53,27 +53,6 @@ def __make_cdf_summaries(
     summaries = tf.stack([full_summary, left_summary])
 
     return summaries
-
-
-def __kl_div_vs_uniform_hist(
-    ps: Tensor1[tf32, Samples],
-    bins: int = 1000,
-) -> Tensor0[tf32]:
-
-    ps = tf.cast(ps, dtype=tf.float64)
-
-    counts = tf.histogram_fixed_width(ps, (0., 1.), nbins=bins)
-    counts = tf.cast(counts, dtype=tf.float64)
-
-    # Smoothed bin probabilities (Dirichlet prior with 0.5 per bin)
-    pseudocount = 0.5  # corresponds to Jeffreys prior, avoids infinities
-    ps_bin = ((counts + pseudocount)
-              / (tf.reduce_sum(counts) + pseudocount*bins))
-
-    uniform_bin = 1.0 / bins
-
-    kl = tf.reduce_sum(ps_bin * tf.math.log(ps_bin / uniform_bin))
-    return tf.cast(kl, dtype=tf.float32)
 
 
 def __ks_dist_vs_uniform_over_region(
@@ -234,10 +213,9 @@ def __load_data_file_as_pvalues(
 def compute_uniformity_measures(
         ps: Tensor1[tf32, Samples],
         method_name: str,
-        include_kl: bool = True,  # KL doesn't currently JIT compile
 ) -> Dict[str, Tensor0[tf32]]:
 
-    measures = {
+    return {
         f"ks_dist_{method_name}":
             __ks_dist_vs_uniform_over_region(ps),
         f"ks_dist_tail_0.10_{method_name}":
@@ -245,10 +223,6 @@ def compute_uniformity_measures(
         f"ks_dist_tail_0.05_{method_name}":
             __ks_dist_vs_uniform_over_region(ps, left_n_proportion=0.05),
     }
-    if include_kl:
-        measures |= {f"kl_div_{method_name}": __kl_div_vs_uniform_hist(ps)}
-
-    return measures
 
 
 def __summarise_pvalues(
@@ -256,7 +230,7 @@ def __summarise_pvalues(
         ps_powersim: Tensor2[tf32, Samples, Two],
         method_name: str,
         alphas: Sequence[float],
-) -> Dict[str, float]:
+) -> Dict[str, Tensor0]:
 
     # GLOBAL COMPARISONS WITH UNIFORM
     results = compute_uniformity_measures(ps[:, 0], method_name)
@@ -291,9 +265,7 @@ def __summarise_pvalues(
     return results
 
 
-# TODO: if we can swap tf.histogram_fixed_width for an XLA-compatible
-#       equivalent, then we can also jit_compile.
-@tf.function(jit_compile=False)
+@tf.function(jit_compile=True)
 def __compute_summaries(
         ps: Tensor2[tf32, Samples, Two],
         ps_powersim: Tensor2[tf32, Samples, Two],

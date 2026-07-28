@@ -146,8 +146,7 @@ def summaries_for_whole_param(
 
     error_rate_dict = {f"error_rate_{a:.03f}_neural": error_rate(ps, a)
                        for a in (0.01, 0.05)}
-    uniformity_dict = comp.compute_uniformity_measures(ps[:, 0], "neural",
-                                                       include_kl=False)       # KL does not currently JIT compile so takes five times as long to run!
+    uniformity_dict = comp.compute_uniformity_measures(ps[:, 0], "neural")
     return error_rate_dict | uniformity_dict
 
 
