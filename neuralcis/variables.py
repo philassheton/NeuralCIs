@@ -128,11 +128,11 @@ class Variable(ABC):
     exists_pre_canonicalization = True
     def __init__(
             self,
-            type: VariableType,
+            vtype: VariableType,
             canonicalize: Optional[str] = None,
     ):
 
-        self.type = type
+        self.vtype = vtype
         self.canonicalize_str = canonicalize
         self.canonicalize_fn = None
         self.canonicalize_my_name = None
@@ -196,17 +196,17 @@ class Param(Variable):
 
     def __init__(
             self,
-            type: VariableType,
+            vtype: VariableType,
             estimates_box_min_max: Tuple[float, float],
             canonicalize: Optional[str] = None,
     ) -> None:
 
-        super().__init__(type, canonicalize)
+        super().__init__(vtype, canonicalize)
         box_min_max_tf = tf.constant(estimates_box_min_max)
         self.estimates_box_min_and_max_net = self.to_net(box_min_max_tf)
 
-        hard_min_human = self.type.param_hard_min_human
-        hard_max_human = self.type.param_hard_max_human
+        hard_min_human = self.vtype.param_hard_min_human
+        hard_max_human = self.vtype.param_hard_max_human
         self.has_hard_limits = (hard_min_human is not None
                                 or hard_max_human is not None)
         self.hard_min_net = self.__human_or_none_to_net(hard_min_human, -1.)
@@ -228,14 +228,14 @@ class Param(Variable):
             human: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.to_net_param(human)
+        return self.vtype.to_net_param(human)
 
     def from_net(
             self,
             net: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.from_net_param(net)
+        return self.vtype.from_net_param(net)
 
     def preprocess_net_interface(
             self,
@@ -243,10 +243,10 @@ class Param(Variable):
     ) -> Tensor1[tf32, Samples]:
 
         # Only convert to human if there is actually an extra_process method
-        if (type(self.type).preprocess_params
+        if (type(self.vtype).preprocess_params
                 is not VariableType.preprocess_params):
             human = self.from_net(net)
-            human = self.type.preprocess_params(human)
+            human = self.vtype.preprocess_params(human)
             net = self.to_net(human)
 
         if self.has_hard_limits:
@@ -287,7 +287,7 @@ class KnownParam(Param):
             pass # already set!
         else:
             raise Exception(f"For certain VariableTypes, such as your"
-                            f" {vtype(VariableType)}, there is no internal"
+                            f" {type(VariableType)}, there is no internal"
                             f" low and high value set, so you need to set"
                             f" this instead via the hard_min_max argument"
                             f" on the KnownParam object.")
@@ -299,49 +299,49 @@ class KnownParam(Param):
 class Stat(Variable):
     def __init__(
             self,
-            type: VariableType,
+            vtype: VariableType,
     ) -> None:
 
-        super().__init__(type, canonicalize=None)
+        super().__init__(vtype, canonicalize=None)
 
     def to_net(
             self,
             human: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.to_net_stat(human)
+        return self.vtype.to_net_stat(human)
 
     def from_net(
             self,
             net: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.from_net_stat(net)
+        return self.vtype.from_net_stat(net)
 
 
 class StatCanonical(Variable):
     exists_pre_canonicalization = False                          # A canonical stat is freshly computed from the other stats, so cannot be used in its own computation
     def __init__(
             self,
-            type: VariableType,
+            vtype: VariableType,
             canonicalize: str,
     ) -> None:
 
-        super().__init__(type, canonicalize)
+        super().__init__(vtype, canonicalize)
 
     def to_net(
             self,
             human: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.to_net_stat(human)
+        return self.vtype.to_net_stat(human)
 
     def from_net(
             self,
             net: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.from_net_stat(net)
+        return self.vtype.from_net_stat(net)
 
 
 class Interest(Variable):
@@ -350,14 +350,14 @@ class Interest(Variable):
             human: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.to_net_param(human)
+        return self.vtype.to_net_param(human)
 
     def from_net(
             self,
             net: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
 
-        return self.type.from_net_param(net)
+        return self.vtype.from_net_param(net)
 
 
 class Location(VariableType):
@@ -366,6 +366,11 @@ class Location(VariableType):
 
     def from_net_tranform_generic(self, transformed):
         return transformed
+
+
+###############################################################################
+#  Available variable types:
+###############################################################################
 
 
 class Scale(VariableType):

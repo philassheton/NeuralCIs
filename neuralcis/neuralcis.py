@@ -9,7 +9,6 @@ from . import common
 from . import variables
 from ._param_sampler import _ParamSampler
 from ._p_net import _PNet
-from ._ci_net import _CINet
 from ._neuralcis_kwargs import _NeuralCIsKWArgs
 from ._data_saver import _DataSaver
 from .common import FULL, TESTING, INFERENCE
@@ -427,7 +426,7 @@ class NeuralCIs(_DataSaver):
 
     def p_and_ci(
             self,
-            conf_level: float = common.DEFAULT_CONFIDENCE_LEVEL,
+            conf_level: Optional[float] = None,
             **stats_and_params: Tensor1[tf32, Samples],
     ) -> Dict[str, float]:
 
@@ -448,7 +447,10 @@ class NeuralCIs(_DataSaver):
 
         stats_and_params_numpy = {k: np.array([v], dtype=np.float32)
                                   for k, v in stats_and_params.items()}
-        conf_levels = np.array([conf_level], dtype=np.float32)
+        if conf_level is not None:
+            conf_levels = np.array([conf_level], dtype=np.float32)
+        else:
+            conf_levels = None
 
         ps_and_cis = self.ps_and_cis(conf_levels, **stats_and_params_numpy)
 

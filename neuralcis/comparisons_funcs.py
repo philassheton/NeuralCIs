@@ -259,7 +259,7 @@ def __summarise_pvalues(
 ) -> Dict[str, float]:
 
     # GLOBAL COMPARISONS WITH UNIFORM
-    results = compute_uniformity_measures(ps[:, 0])
+    results = compute_uniformity_measures(ps[:, 0], method_name)
 
     # LOCAL COMPARISONS AT GIVEN ALPHAS
     for alpha in alphas:
