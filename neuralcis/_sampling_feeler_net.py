@@ -1,7 +1,7 @@
 from ._simulator_net_cached import _SimulatorNetCached
 from ._inner_feeler_generator import _InnerFeelerGenerator
 from ._outer_feeler_generator import _OuterFeelerGenerator
-from ._inner_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
+from ._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
 from .common import FULL
 from . import common
 
