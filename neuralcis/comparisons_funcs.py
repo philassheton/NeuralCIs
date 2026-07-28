@@ -29,6 +29,7 @@ PairwiseCorrelations = typing.NewType("PairwiseCorrelations", axes.Axis)
 
 PARAMS_DICT_FILENAME = "param_samples.npy"
 SUMMARIES_FOLDER = "summaries"
+DATA_FOLDER = "data"
 
 
 def replicate_params(
@@ -159,8 +160,7 @@ def __failure_proportions_from_likelihoods_file(
     return failure_proportions
 
 
-def __get_and_make_summaries_path(filename: str):
-    folder = SUMMARIES_FOLDER
+def __get_and_make_output_path(folder: str, filename: str):
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, filename)
     return path
@@ -174,8 +174,32 @@ def save_summary_parquet(
     if isinstance(data, dict):
         data = pd.DataFrame(data)
 
-    path = __get_and_make_summaries_path(f"{name}.parquet")
+    path = __get_and_make_output_path(SUMMARIES_FOLDER, f"{name}.parquet")
     data.to_parquet(path, engine="pyarrow", compression="zstd", index=False)
+
+
+def save_pvalues_as_numpy_uint16(
+        path: str,
+        data: np.ndarray,
+) -> None:
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    data16 = np.minimum(np.floor(data * 65536), 65535).astype(np.uint16)
+    np.save(path, data16)
+
+
+def load_numpy_to_float32(
+        path: str,
+) -> np.ndarray:
+
+    data = np.load(path)
+    if data.dtype == np.float32:
+        return data
+    elif data.dtype == np.uint16:
+        return (data.astype(np.float32) + 0.5) / 65536
+    else:
+        raise Exception(f"I only currently know how to deal with float32 and"
+                        f" int16 data, but yours is {data.dtype}")
 
 
 def save_summary_numpy(
@@ -183,7 +207,7 @@ def save_summary_numpy(
         data: np.ndarray,
 ) -> None:
 
-    path = __get_and_make_summaries_path(f"{name}.npy")
+    path = __get_and_make_output_path(SUMMARIES_FOLDER, f"{name}.npy")
     np.save(path, data)
 
 
@@ -194,7 +218,7 @@ def __load_data_file_as_pvalues(
 ) -> Tuple[np.ndarray, Dict[str, float]]:
 
     filename = data_filename(method, data_type, params_sample_num)
-    data = np.load(filename)
+    data = load_numpy_to_float32(filename)
     if data_type == "likelihoods":
         ps, num_negative, num_negative_power = __likelihoods_to_ps(data)
         extra_results = {f"neg_likelihoods_{method}": num_negative,

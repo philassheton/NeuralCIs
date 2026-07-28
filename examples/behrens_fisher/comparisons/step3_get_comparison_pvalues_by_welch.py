@@ -1,8 +1,8 @@
 import os
 
 import behfish_analyse_funcs as behfish
+from neuralcis import comparisons_funcs
 
-import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
@@ -97,8 +97,12 @@ def run_welch_ps(
         path = behfish.convert_relative_path(filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         ps = tf.concat(batch_ps, axis=0)
-        np.save(path, ps.numpy())
+        comparisons_funcs.save_pvalues_as_numpy_uint16(path, ps.numpy())
 
 
 if __name__ == "__main__":
     run_welch_ps("welch", 1_000_000)
+    run_welch_ps("welch_powersim",
+                 num_sims_per_param_sample=10_000,
+                 batch_size=10_000,
+                 simulate_from_power_mudiff=True)

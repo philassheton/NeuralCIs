@@ -1,5 +1,5 @@
 import behfish_analyse_funcs as behfish
-from neuralcis import NeuralCIs
+from neuralcis import NeuralCIs, comparisons_funcs
 
 import numpy as np
 import tensorflow as tf
@@ -112,7 +112,7 @@ def run_neural_ps(
         path = behfish.convert_relative_path(filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         ps = tf.concat(batch_ps, axis=0)
-        np.save(path, ps.numpy())
+        comparisons_funcs.save_pvalues_as_numpy_uint16(path, ps.numpy())
 
 
 if __name__ == "__main__":
