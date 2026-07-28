@@ -1,8 +1,6 @@
-import os
 import tensorflow as tf
 
-import neuralcis
-from neuralcis import Stat, Param, KnownParam, Interest
+import neuralcis as nci
 from neuralcis import Correlation, Proportion, PositiveCount
 import tensorflow_probability as tfp
 
@@ -113,29 +111,24 @@ def estimates_fn(
             'prop_a': prop_a_hat}
 
 
-cis = neuralcis.NeuralCIs(
+cis = nci.NeuralCIs(
     sampling_distribution_fn,
     interest_fn,
     estimates_fn,
-    ["rho_ab_partial", "rho_bc", "rho_ac", "prop_a"],
-    ["rho_ab_hat", "rho_bc_hat", "rho_ac_hat", "prop_a_hat"],
-    ["n"],
 
-    None, None,
+    rho_ab_partial=nci.Param(Correlation(), (-.99, .99)),
+    rho_ac=nci.Param(Correlation(), (-.99, .99)),
+    rho_bc=nci.Param(Correlation(), (-.99, .99)),
+    prop_a=nci.Param(Proportion(), (0.05, 0.95)),
 
-    rho_ab_partial=Param(Correlation(), (-.99, .99)),
-    rho_ac=Param(Correlation(), (-.99, .99)),
-    rho_bc=Param(Correlation(), (-.99, .99)),
-    prop_a=Param(Proportion(), (0.05, 0.95)),
+    n=nci.KnownParam(PositiveCount((N_MIN, N_MAX))),
 
-    n=KnownParam(PositiveCount((N_MIN, N_MAX))),
+    rho_ab_hat=nci.Stat(Correlation()),
+    rho_ac_hat=nci.Stat(Correlation()),
+    rho_bc_hat=nci.Stat(Correlation()),
+    prop_a_hat=nci.Stat(Proportion()),
 
-    rho_ab_hat=Stat(Correlation()),
-    rho_ac_hat=Stat(Correlation()),
-    rho_bc_hat=Stat(Correlation()),
-    prop_a_hat=Stat(Proportion()),
-
-    interest=Interest(Correlation()),
+    interest=nci.Interest(Correlation()),
 
     param_sampling_regularize_jitter_multiply=0.1,
     param_sampling_regularize_jitter_add=0.03,

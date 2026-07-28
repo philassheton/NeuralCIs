@@ -41,23 +41,20 @@ class _ZNet(_SimulatorNet):
                 [Tensor2[tf32, Samples, Params]],
                 Tensor1[tf32, Samples]
             ],
-            transform_on_stats_fn: Callable[
+            canonicalize_fn: Callable[
                 [Tensor2[tf32, Samples, Stats],
-                 Tensor2[tf32, Samples, Params]],
+                 Tensor2[tf32, Samples, Params],
+                 Tensor1[tf32, Samples],
+                 bool],
                 Tuple[Tensor2[tf32, Samples, Stats],
-                      Tensor2[tf32, Samples, Params]],
-            ],
-            transform_interest_on_stats_fn: Callable[
-                [Tensor2[tf32, Samples, Stats],
-                 Tensor1[tf32, Samples]],
-                Tuple[Tensor2[tf32, Samples, Stats],
+                      Tensor2[tf32, Samples, Params],
                       Tensor1[tf32, Samples]],
             ],
             num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
             known_param_indices: Sequence[int],
-            num_stats_remaining_after_transform: int,
+            num_stats_remaining_after_canonicalization: int,
             profile: str,
             **network_setup_args,
     ) -> None:
@@ -73,12 +70,13 @@ class _ZNet(_SimulatorNet):
             {},
         ]
 
+        num_stat_inputs = num_stats_remaining_after_canonicalization
+        num_interest_inputs = 1
         super().__init__(
             profile=profile,
             num_inputs_for_each_net=(
-                num_stats_remaining_after_transform + 1 + num_known_param,
-                num_stats_remaining_after_transform + num_unknown_param
-                                                    + num_known_param
+                num_stat_inputs + num_interest_inputs + num_known_param,
+                num_stat_inputs + num_unknown_param + num_known_param,
             ),
             num_outputs_for_each_net=(1, num_stat - 1),
             layer_kwargs=layer_kwargs,
@@ -94,8 +92,7 @@ class _ZNet(_SimulatorNet):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_fn = param_sampling_fn
         self.interest_fn = interest_fn
-        self.transform_on_stats_fn = transform_on_stats_fn
-        self.transform_interest_on_stats_fn = transform_interest_on_stats_fn
+        self.canonicalize_fn = canonicalize_fn
 
         self.known_param_indices = known_param_indices
 
@@ -155,15 +152,9 @@ class _ZNet(_SimulatorNet):
             input_blob: NetInputBlob,
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        # The natural way to assemble net inputs is to compute the transforms
-        #   and then compute the interest parameter from that...
         stats, params = input_blob
-        stats_trans, params_trans = self.transform_on_stats_fn(stats, params)
-        interest_trans = self.interest_fn(params_trans)
-
-        return self.net_inputs_after_transforms(stats_trans,
-                                                params_trans,
-                                                interest_trans)
+        interest = self.interest_fn(params)
+        return self.net_inputs_precomputed_interest(stats, params, interest)
 
     @tf.function
     def net_inputs_precomputed_interest(
@@ -173,33 +164,17 @@ class _ZNet(_SimulatorNet):
             interest: Tensor1[tf32, Samples],
     ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
 
-        # ... but in some circumstances (training, and inference when full
-        # params are unknown), we prefer to do it this long way round, so
-        # that our pivotal z is totally independent of unknown params.
-        stats_trans, params_trans = self.transform_on_stats_fn(stats, params)
-        stats_trans2, interest_trans = self.transform_interest_on_stats_fn(
-            stats,
-            interest,
-        )
+        stats_canonical, params_canonical, interest_canonical = \
+            self.canonicalize_fn(stats, params, interest,
+                                 known_params_only=False)
 
-        return self.net_inputs_after_transforms(stats_trans,
-                                                params_trans,
-                                                interest_trans)
-
-    def net_inputs_after_transforms(
-            self,
-            stats_trans,
-            params_trans,
-            interest_trans,
-    ) -> Tuple[Tensor2[tf32, Samples, NetInputs], ...]:
-
-        known_params = tf.gather(params_trans,
+        known_params = tf.gather(params_canonical,
                                  self.known_param_indices, axis=1)
-        interest_net_inputs = tf.concat([stats_trans,
-                                         interest_trans[:, None],
+        interest_net_inputs = tf.concat([stats_canonical,
+                                         interest_canonical[:, None],
                                          known_params], axis=1)
-        other_net_inputs = tf.concat([stats_trans,
-                                      params_trans], axis=1)
+        other_net_inputs = tf.concat([stats_canonical,
+                                      params_canonical], axis=1)
         net_inputs = interest_net_inputs, other_net_inputs
 
         return net_inputs
@@ -227,8 +202,15 @@ class _ZNet(_SimulatorNet):
             known_params: Tensor2[tf32, Samples, KnownParams],
     ) -> Tensor1[tf32, Samples]:
 
-        raise Exception('call_tf_interest_only needs rewriting now that stats'
-                        ' are transformed!!')
+        stats_canonical, known_params_canonical, interest_canonical = \
+            self.canonicalize_fn(stats, known_params, interest,
+                                 known_params_only=True)
+
+        interest_net_inputs = tf.concat([stats_canonical,
+                                         interest_canonical[:, None],
+                                         known_params], axis=1)
+        z = self.nets[0](interest_net_inputs, training=False)[:, 0]            # net outputs has a unit dimension at axis=1 for the case where there is more than one output
+        return z
 
     @tf.function
     def neg_log_likelihoods(

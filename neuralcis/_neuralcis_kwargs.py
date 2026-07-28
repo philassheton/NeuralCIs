@@ -99,18 +99,6 @@ class _NeuralCIsKWArgs():
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]]
             ],
-            unknown_param_names: Sequence[str],
-            stat_names: Sequence[str],
-            known_param_names: Sequence[str],
-            transform_on_stats_fn: Optional[Callable[
-                [Tuple[Tensor1[tf32, Samples], ...]],
-                Dict["str", Tensor1[tf32, Samples]],
-            ]],
-            transform_on_stats_stat_names: Sequence[str],
-            transform_interest_on_stats_fn: Optional[Callable[
-                [Tuple[Tensor1[tf32, Samples], ...]],
-                Dict["str", Tensor1[tf32, Samples]],
-            ]],
             param_sampling_regularize_jitter_multiply: float,
             param_sampling_regularize_jitter_add: float,
             profile: str,
@@ -124,15 +112,6 @@ class _NeuralCIsKWArgs():
         self.sampling_distribution_fn = _TFFn.get(sampling_distribution_fn)
         self.interest_fn = _TFFn.get(interest_fn)
         self.estimates_fn = _TFFn.get(estimates_fn)
-
-        self.unknown_param_names = unknown_param_names
-        self.stat_names = stat_names
-        self.known_param_names = known_param_names
-
-        self.transform_on_stats_fn = _TFFn.get(transform_on_stats_fn)
-        self.transform_on_stats_stat_names = transform_on_stats_stat_names
-        self.transform_interest_on_stats_fn = \
-            _TFFn.get(transform_interest_on_stats_fn)
 
         self.param_sampling_regularize_jitter_multiply = \
                                     param_sampling_regularize_jitter_multiply
@@ -150,14 +129,6 @@ class _NeuralCIsKWArgs():
             sampling_distribution_fn = self.sampling_distribution_fn,
             interest_fn = self.interest_fn,
             estimates_fn = self.estimates_fn,
-            unknown_param_names = self.unknown_param_names,
-            stat_names = self.stat_names,
-            known_param_names = self.known_param_names,
-            transform_on_stats_fn = self.transform_on_stats_fn,
-            transform_on_stats_stat_names =
-                                self.transform_on_stats_stat_names,
-            transform_interest_on_stats_fn = \
-                                self.transform_interest_on_stats_fn,
             param_sampling_regularize_jitter_multiply =
                                 self.param_sampling_regularize_jitter_multiply,
             param_sampling_regularize_jitter_add =
@@ -185,22 +156,10 @@ class _NeuralCIsKWArgs():
         self.estimates_fn.save(
             foldername, "estimates_fn",
         )
-        self.transform_on_stats_fn.save(
-            foldername, "transform_on_stats_fn",
-        )
-        self.transform_interest_on_stats_fn.save(
-            foldername, "transform_interest_on_stats_fn",
-        )
 
-        # Pickle variable defs separately: need special treatment on loading
         self._save_pickle(foldername, "variable_defs", self.variable_defs)
 
-        other_args = {"unknown_param_names": self.unknown_param_names,
-                      "stat_names": self.stat_names,
-                      "known_param_names": self.known_param_names,
-                      "transform_on_stats_stat_names":
-                                        self.transform_on_stats_stat_names,
-                      "profile": profile,
+        other_args = {"profile": profile,
                       "network_setup_args": self.network_setup_args,
                       "optional_data_to_store": self.optional_data_to_store,
                       "param_sampling_regularize_jitter_multiply":
@@ -225,12 +184,6 @@ class _NeuralCIsKWArgs():
             estimates_fn = _TFFn.load(
                 foldername, "estimates_fn",
             ),
-            transform_on_stats_fn = _TFFn.load(
-                foldername, "transform_on_stats_fn",
-            ),
-            transform_interest_on_stats_fn = _TFFn.load(
-                foldername, "transform_interest_on_stats_fn",
-            )
         )
 
         other_args: Dict

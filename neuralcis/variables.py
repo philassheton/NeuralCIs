@@ -2,11 +2,12 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import tensorflow as tf
+import tensorflow_probability as tfp
 from tensorflow.python.eager.def_function import Function as TFFunction        # type: ignore
 
-from typing import Optional, Union, Tuple
 from .common import Samples
 from . import common
+from typing import Optional, Union, Tuple, Sequence
 from tensor_annotations.tensorflow import Tensor0, Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
 import tensor_annotations.tensorflow as ttf
@@ -124,8 +125,17 @@ class VariableType(ABC):
 
 
 class Variable(ABC):
-    def __init__(self, type: VariableType):
+    exists_pre_canonicalization = True
+    def __init__(
+            self,
+            type: VariableType,
+            canonicalize: Optional[str] = None,
+    ):
+
         self.type = type
+        self.canonicalize_str = canonicalize
+        self.canonicalize_fn = None
+        self.canonicalize_my_name = None
 
     @abstractmethod
     def to_net(self, human):
@@ -135,6 +145,51 @@ class Variable(ABC):
     def from_net(self, net):
         pass
 
+    def has_canonicalize(self):
+        return self.canonicalize_str is not None
+
+    def render_canonicalize_fn(
+            self,
+            my_name: str,
+            stat_names: Sequence[str],
+    ) -> None:
+
+        if not self.has_canonicalize():
+            raise Exception(f"Missing canonicalize string in {my_name}!")
+
+        stat_names_list = ", ".join(stat_names)
+        if my_name not in stat_names and self.exists_pre_canonicalization:
+            args_list = f"{my_name}, {stat_names_list}"
+        else:
+            args_list = stat_names_list
+
+        canonicalize_fn_str = f"lambda {args_list}: {self.canonicalize_str}"
+        canonicalize_fn = eval(canonicalize_fn_str, {"tf": tf, "tfp": tfp})
+        self.canonicalize_fn = canonicalize_fn
+        self.canonicalize_my_name = my_name
+
+    def canonicalize(
+            self,
+            my_value_human: Optional[Tensor1[tf32, Samples]] = None,
+            **stats_human: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        if self.has_canonicalize():
+            kwargs = stats_human
+            if self.exists_pre_canonicalization:
+                assert my_value_human is not None
+                kwargs |= {self.canonicalize_my_name: my_value_human}
+            else:
+                assert my_value_human is None
+            return self.canonicalize_fn(**kwargs)
+        else:
+            raise Exception("No canonicalization setup for this variable!!")
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["canonicalize_fn"] = None
+        return state
+
 
 class Param(Variable):
     is_known_param = False
@@ -143,9 +198,10 @@ class Param(Variable):
             self,
             type: VariableType,
             estimates_box_min_max: Tuple[float, float],
+            canonicalize: Optional[str] = None,
     ) -> None:
 
-        super().__init__(type)
+        super().__init__(type, canonicalize)
         box_min_max_tf = tf.constant(estimates_box_min_max)
         self.estimates_box_min_and_max_net = self.to_net(box_min_max_tf)
 
@@ -181,7 +237,7 @@ class Param(Variable):
 
         return self.type.from_net_param(net)
 
-    def preprocess(
+    def preprocess_net_interface(
             self,
             net: Tensor1[tf32, Samples],
     ) -> Tensor1[tf32, Samples]:
@@ -214,6 +270,7 @@ class KnownParam(Param):
     def __init__(
             self,
             vtype: VariableType,
+            canonicalize_str: Optional[str] = None,
             # Will default to lowish value and highish value from type
             hard_min_max: Optional[Tuple[float, float]] = None,
     ) -> None:
@@ -230,16 +287,48 @@ class KnownParam(Param):
             pass # already set!
         else:
             raise Exception(f"For certain VariableTypes, such as your"
-                            f" {type(VariableType)}, there is no internal"
+                            f" {vtype(VariableType)}, there is no internal"
                             f" low and high value set, so you need to set"
                             f" this instead via the hard_min_max argument"
                             f" on the KnownParam object.")
 
         min_max = (vtype.param_hard_min_human, vtype.param_hard_max_human)
-        super().__init__(vtype, min_max)
+        super().__init__(vtype, min_max, canonicalize_str)
 
 
 class Stat(Variable):
+    def __init__(
+            self,
+            type: VariableType,
+    ) -> None:
+
+        super().__init__(type, canonicalize=None)
+
+    def to_net(
+            self,
+            human: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return self.type.to_net_stat(human)
+
+    def from_net(
+            self,
+            net: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return self.type.from_net_stat(net)
+
+
+class StatCanonical(Variable):
+    exists_pre_canonicalization = False                          # A canonical stat is freshly computed from the other stats, so cannot be used in its own computation
+    def __init__(
+            self,
+            type: VariableType,
+            canonicalize: str,
+    ) -> None:
+
+        super().__init__(type, canonicalize)
+
     def to_net(
             self,
             human: Tensor1[tf32, Samples],

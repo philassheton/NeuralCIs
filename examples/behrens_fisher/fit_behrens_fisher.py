@@ -1,8 +1,6 @@
-import os
 import tensorflow as tf
 
-import neuralcis
-from neuralcis import Stat, Param, KnownParam, Interest
+import neuralcis as nci
 from neuralcis import Location, Scale, PositiveCount
 import tensorflow_probability as tfp
 
@@ -48,57 +46,26 @@ def estimates_fn(
     return {"mudiff": mudiff_hat, "sigma1": sigma1_hat, "sigma2": sigma2_hat}
 
 
-def transform_on_stats_fn(
-        mudiff_hat, sigma1_hat, sigma2_hat,  # Statistics
-        mudiff, sigma1, sigma2,              # Unknown parameters
-        n1, n2,                              # Known parameters
-):
 
-    return {"sigma2_1_ratio_hat": sigma2_hat / sigma1_hat,
-
-            "mudiff": (mudiff - mudiff_hat) / sigma1_hat,  # Transformed params
-            "sigma1": sigma1 / sigma1_hat,
-            "sigma2": sigma2 / sigma1_hat,
-
-            "n1": n1,
-            "n2": n2}
-
-
-def transform_interest_on_stats_fn(
-        mudiff_hat, sigma1_hat, sigma2_hat,  # Statistics
-        interest,                            # Interest parameter
-):
-
-    return {"sigma2_1_ratio_hat": sigma2_hat / sigma1_hat,
-            "interest": (interest - mudiff_hat) / sigma1_hat}
-
-
-cis = neuralcis.NeuralCIs(
+cis = nci.NeuralCIs(
     sampling_distribution_fn,
     interest_fn,
     estimates_fn,
-    ["mudiff", "sigma1", "sigma2"],
-    ["mudiff_hat", "sigma1_hat", "sigma2_hat"],
-    ["n1", "n2"],
 
-    transform_on_stats_fn,
-    ["sigma2_1_ratio_hat"],
-    transform_interest_on_stats_fn,
+    mudiff=nci.Param(Location((-3., 3.)), (0., 0.), "(mudiff - mudiff_hat) / sigma1_hat"),
+    sigma1=nci.Param(Scale((0.333, 3.)), (1., 1.), "sigma1 / sigma1_hat"),
+    sigma2=nci.Param(Scale((0.1, 10.)), (0.333, 3.), "sigma2 / sigma1_hat"),
 
-    mudiff=Param(Location((-3., 3.)), (0., 0.)),
-    sigma1=Param(Scale((0.333, 3.)), (1., 1.)),
-    sigma2=Param(Scale((0.1, 10.)), (0.333, 3.)),
+    n1=nci.KnownParam(PositiveCount((3., 100.)), "n1"),
+    n2=nci.KnownParam(PositiveCount((3., 100.)), "n2"),
 
-    n1=KnownParam(PositiveCount((3., 100.))),
-    n2=KnownParam(PositiveCount((3., 100.))),
+    mudiff_hat=nci.Stat(Location((-3., 3.))),
+    sigma1_hat=nci.Stat(Scale((0.333, 3.))),
+    sigma2_hat=nci.Stat(Scale((0.1, 10.))),
 
-    mudiff_hat=Stat(Location((-3., 3.))),
-    sigma1_hat=Stat(Scale((0.333, 3.))),
-    sigma2_hat=Stat(Scale((0.1, 10.))),
+    sigma2_1_ratio_hat=nci.StatCanonical(Scale((0.333, 3.)), "sigma2_hat / sigma1_hat"),
 
-    sigma2_1_ratio_hat=Stat(Scale((0.333, 3.))),
-
-    interest=Interest(Location((-3., 3.))),
+    interest=nci.Interest(Location((-3., 3.)), "(interest - mudiff_hat) / sigma1_hat"),
 )
 cis.fit()
 cis.save('saved_model')

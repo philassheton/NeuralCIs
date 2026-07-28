@@ -3,8 +3,10 @@ from tensorflow.python.eager.def_function import Function as TFFunction        #
 
 import numpy as np
 import collections
+import datetime
 
 from . import common
+from . import variables
 from ._param_sampler import _ParamSampler
 from ._p_net import _PNet
 from ._ci_net import _CINet
@@ -44,37 +46,6 @@ class NeuralCIs(_DataSaver):
         Tensors as the sampling_distribution_fn, and should compute from
         those parameters, the parameter value to be estimated.  See example
         below.
-    :param unknown_param_names:  A list or tuple of strs.  Gives the names of
-        params that should match those in the arguments of the sampling and
-        interest functions, which are NOT known a priori and therefore must
-        be either estimated or removed as nuisance parameters.  (For example,
-        for a t-test, this might be ['mu', 'sigma'].
-    :param stat_names:  A list or tuple of strs.  Gives the names of
-        estimates that are returned by the sampling_distribution_fn. (For
-        example, for a t-test, this might be ['mu_hat', 'sigma_hat'].)
-    :param known_param_names:  An optional list or tuple of strs.  Gives the
-        names any of the params (should match those in the arguments of the
-        sampling and interest functions) which ARE known a priori and
-        therefore can simply be conditioned upon. (For example, for a t-test,
-        this might be ['n'].)
-    :param transform_on_stats_fn: An optional function that maps the
-        stat and param tensors (passed as named arguments) to transformed
-        values that are expected to give the same p-value.  This function
-        should base these transforms ONLY on the STAT values.  Transformed
-        stat and parameters are returned in a dict.  Each may be either a
-        Tensor, or a Python float (for any statistics that have been made
-        constant during the transform; for example, in a t-test, we might
-        divide all values by sigma_hat; in this case, sigma_hat is equal to
-        one and we might have {'sigma_hat': 1.0, 'sigma': sigma / sigma_hat}.
-
-        For example, for a t-test, we could divide all values (except n) by
-        our estimates of sigma and end up with the same geometry, just
-        rescaled.
-    :param transform_on_stats_stat_names: An optional list or tuple of strs.
-        Required if transform functions are supplied.  Gives the names of
-        statistics as returned by the transform function.  (Parameters are
-        currently assumed to be returned under the same names, but this may
-        be relaxed in later versions.)
     :param param_sampling_regularize_jitter_multiply: An optional float
         (default 1) which can be used to jitter the samples in the param
         sampling Jeffreys prior estimate.  See
@@ -146,18 +117,6 @@ class NeuralCIs(_DataSaver):
                 [Tuple[Tensor1[tf32, Samples], ...]],
                 Dict["str", Tensor1[tf32, Samples]]
             ],
-            unknown_param_names: Sequence[str],
-            stat_names: Sequence[str],
-            known_param_names: Sequence[str],
-            transform_on_stats_fn: Optional[Callable[
-                [Tuple[Tensor1[tf32, Samples], ...]],
-                Dict["str", Tensor1[tf32, Samples]],
-            ]] = None,
-            transform_on_stats_stat_names: Optional[Sequence[str]] = None,
-            transform_interest_on_stats_fn: Optional[Callable[
-                [Tuple[Tensor1[tf32, Samples], ...]],
-                Dict["str", Tensor1[tf32, Samples]],
-            ]] = None,
             param_sampling_regularize_jitter_multiply: float = 0.,
             param_sampling_regularize_jitter_add: float = 0.,
             train_initial_weights: bool = False,
@@ -169,28 +128,14 @@ class NeuralCIs(_DataSaver):
     ) -> None:
 
         assert interest is not None
-
-        if transform_on_stats_fn is None:
-            if (transform_on_stats_stat_names is not None
-                and len(transform_on_stats_stat_names) > 0):
-                raise Exception(f"Your transform_on_stats_stat_names must be"
-                                f" either empty or None if you do not enter"
-                                f" a transform_on_stats_fn!!  You entered"
-                                f" {transform_on_stats_stat_names}.")
-            transform_on_stats_stat_names = stat_names
+        variable_defs |= {INTEREST: interest}
 
         # store input arguments in a format suitable for serialization:
         self.kwargs = _NeuralCIsKWArgs(
-            variable_defs | {INTEREST: interest},
+            variable_defs,
             sampling_distribution_fn,
             interest_fn,
             estimates_fn,
-            unknown_param_names,
-            stat_names,
-            known_param_names,
-            transform_on_stats_fn,
-            transform_on_stats_stat_names,
-            transform_interest_on_stats_fn,
             param_sampling_regularize_jitter_multiply,
             param_sampling_regularize_jitter_add,
             profile,
@@ -198,27 +143,57 @@ class NeuralCIs(_DataSaver):
             optional_data_to_store,
         )
 
-        # TODO: look at adding variable defs for interest also
-        # TODO: look at allowing estimates also to have different variable defs
-        #       after transform
+        stat_names = []
+        stat_canonical_names = []
+        unknown_param_names = []
+        known_param_names = []
+        num_with_canonicalization = 0
+        for name, variable in variable_defs.items():
+            if variable.has_canonicalize():
+                num_with_canonicalization += 1
+            if type(variable) is variables.Stat:
+                stat_names.append(name)
+                assert not variable.has_canonicalize()
+            elif type(variable) is variables.StatCanonical:
+                stat_canonical_names.append(name)
+            elif type(variable) is variables.Param:
+                unknown_param_names.append(name)
+            elif type(variable) is variables.KnownParam:
+                known_param_names.append(name)
 
-        self.num_unknown_param = len(self.kwargs.unknown_param_names)
-        self.num_known_param = len(self.kwargs.known_param_names)
-        self.num_stat = len(self.stat_names())
+        self.stat_names = stat_names
+        self.stat_canonical_names = stat_canonical_names
+        self.unknown_param_names = unknown_param_names
+        self.known_param_names = known_param_names
 
-        self.has_transform = not self.kwargs.transform_on_stats_fn.is_none()
-        if self.has_transform:
-            assert self.kwargs.transform_interest_on_stats_fn is not None
+        self.num_stat = len(self.stat_names)
+        self.num_stat_canonical = len(self.stat_canonical_names)
+        self.num_unknown_param = len(self.unknown_param_names)
+        self.num_known_param = len(self.known_param_names)
+
+        if num_with_canonicalization > 0:
+            self.has_canonicalize = True
+            canonicalizable_var_names = \
+                self._variable_names_after_canonicalize(
+                    include_unknown_params=True
+                )
+            for var_name in canonicalizable_var_names:
+                variable_defs[var_name].render_canonicalize_fn(var_name,
+                                                               stat_names)
+        else:
+            self.has_canonicalize = False
+            if self.num_stat_canonical > 0:
+                raise Exception("You have entered a canonical stat, without"
+                                "adding canonicalization strings to your"
+                                "variables.")
 
         # TODO: Add checks for other functions too.
         self._check_simulation_names()
-        self._check_transform_on_stats_fn_names()
         self._check_names_are_not_shared()
 
         estimates_min_and_max = tf.stack([
             self.variable_defs()[param].estimates_box_min_and_max_net
-            for param in self.param_names(unknown_params=True,
-                                          known_params=False)
+            for param in self.unknown_param_names
         ], axis=0)
 
         assert (self._max_error_of_reverse_mapping().numpy() <
@@ -249,13 +224,12 @@ class NeuralCIs(_DataSaver):
         self.pnet = _PNet(
             self._sampling_dist_net_interface,
             self._interest_fn_net_interface,
-            self._transform_on_stats_fn_net_interface,
-            self._transform_interest_on_stats_fn_net_interface,
+            self._canonicalize_net_interface,
             self.num_stat,
             self.num_unknown_param,
             self.num_known_param,
             self.known_param_indices,
-            len(self.kwargs.transform_on_stats_stat_names),
+            self.num_stat_after_possible_canonicalization(),
             self.param_sampler,
             profile,
             train_initial_weights=train_initial_weights,
@@ -280,9 +254,9 @@ class NeuralCIs(_DataSaver):
 
         param_names = []
         if unknown_params:
-            param_names += self.kwargs.unknown_param_names
+            param_names += self.unknown_param_names
         if known_params:
-            param_names += self.kwargs.known_param_names
+            param_names += self.known_param_names
         return param_names
 
     # @tf.function
@@ -296,14 +270,14 @@ class NeuralCIs(_DataSaver):
         else:
             return self.num_unknown_param + self.num_known_param
 
-    def stat_names(self) -> List[str]:
-        return list(self.kwargs.stat_names)
-
-    def stat_names_transformed(self) -> List[str]:
-        return list(self.kwargs.transform_on_stats_stat_names)
+    def num_stat_after_possible_canonicalization(self) -> int:
+        if self.has_canonicalize:
+            return self.num_stat_canonical
+        else:
+            return self.num_stat
 
     def stat_param_names(self) -> List[str]:
-        return self.stat_names() + self.param_names()
+        return self.stat_names + self.param_names()
 
     def variable_defs(self) -> Dict[str, Variable]:
         return self.kwargs.variable_defs
@@ -347,6 +321,7 @@ class NeuralCIs(_DataSaver):
 
         self.param_sampler.fit(*args, **kwargs)
         history = self.pnet.fit(*args, **kwargs)
+        print(f"{datetime.datetime.now()}: Training complete!")
         return history
 
     def values_grid(
@@ -376,7 +351,7 @@ class NeuralCIs(_DataSaver):
         :return:
         """
 
-        all_names = self.stat_names() + self.param_names()
+        all_names = self.stat_names + self.param_names()
         all_values = [tf.constant(stats_and_params[n], dtype=tf.float32)
                       for n in all_names]
         all_grids = tf.meshgrid(*all_values)
@@ -429,7 +404,7 @@ class NeuralCIs(_DataSaver):
         stats_and_params_tf = {n: tf.constant(v, tf.float32)
                                for n, v in stats_and_params.items()}
 
-        stats_human = {n: stats_and_params_tf[n] for n in self.stat_names()}
+        stats_human = {n: stats_and_params_tf[n] for n in self.stat_names}
         params_human = {n: stats_and_params_tf[n] for n in self.param_names()}
 
         stats_net = self._stats_human_to_net(**stats_human)
@@ -590,53 +565,70 @@ class NeuralCIs(_DataSaver):
         inputs_human = stats_human | known_params_human
         estimates_human = self.kwargs.estimates_fn(**inputs_human)
         estimates_net = self._params_human_to_net(**estimates_human,
-                                                       unknown_params=True,
-                                                       known_params=False)
+                                                  unknown_params=True,
+                                                  known_params=False)
         return estimates_net
 
-    @tf.function
-    def _transform_on_stats_fn_net_interface(
+    def _variable_names_after_canonicalize(
             self,
-            stats_net: Tensor2[tf32, Samples, Stats],
-            params_net: Tensor2[tf32, Samples, Params],
-    ) -> Tuple[Tensor2[tf32, Samples, Stats],
-               Tensor2[tf32, Samples, Params]]:
+            include_unknown_params: bool = False,
+    ) -> List[str]:
 
-        if not self.has_transform:
-            return stats_net, params_net
+        names = self.known_param_names + [INTEREST]
+        if self.has_canonicalize:
+            names += self.stat_canonical_names
+        else:
+            names += self.stat_names
+        if include_unknown_params:
+            names += self.unknown_param_names
+        return names
 
-        stats_human = self._stats_net_to_human(stats_net)
-        params_human = self._params_net_to_human(params_net)
 
-        inputs = stats_human | params_human
-        outputs = self.kwargs.transform_on_stats_fn(**inputs)
-        stats_net = self._stats_transformed_human_to_net(**outputs)
-        params_net = self._params_human_to_net(**outputs)
 
-        return stats_net, params_net
+
 
     @tf.function
-    def _transform_interest_on_stats_fn_net_interface(
+    def _canonicalize_net_interface(
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
+            params_net: Tensor2[tf32, Samples, Params],                        # may only be known params
             interest_net: Tensor1[tf32, Samples],
+            known_params_only: bool = True,
     ) -> Tuple[Tensor2[tf32, Samples, Stats],
+               Tensor2[tf32, Samples, Params],
                Tensor1[tf32, Samples]]:
 
-        if not self.has_transform:
-            return stats_net, interest_net
+        if not self.has_canonicalize:
+            return stats_net, params_net, interest_net
 
         stats_human = self._stats_net_to_human(stats_net)
-        interest_human = self._interest_net_to_human(interest_net)
+        params_human = self._params_net_to_human(params_net, known_params_only)
+        interest_human = {INTEREST: self._interest_net_to_human(interest_net)}
 
-        inputs = stats_human | {INTEREST: interest_human}
-        stats_human = self.kwargs.transform_interest_on_stats_fn(**inputs)
-        interest_human = stats_human.pop(INTEREST)
+        names_to_canonicalize = self._variable_names_after_canonicalize(
+            include_unknown_params=not known_params_only,
+        )
+        available_inputs_human = stats_human | params_human | interest_human
+        outputs_human = {
+            name: self.variable_defs()[name].canonicalize(
+                available_inputs_human.get(name, None),
+                **stats_human,
+            )
+            for name in names_to_canonicalize
+        }
 
-        stats_net = self._stats_transformed_human_to_net(**stats_human)
-        interest_net = self._interest_human_to_net(interest_human)
+        stats_canon_net = self._stats_canonical_human_to_net(
+            num_samples=len(stats_net),
+            **outputs_human,
+        )
+        params_canon_net = self._params_human_to_net(
+            **outputs_human,
+            unknown_params=not known_params_only,
+            num_samples=len(interest_human),
+        )
+        interest_canon_net = self._interest_human_to_net(outputs_human[INTEREST])
 
-        return stats_net, interest_net
+        return stats_canon_net, params_canon_net, interest_canon_net
 
     @tf.function
     def _param_is_valid_net_interface(
@@ -676,28 +668,12 @@ class NeuralCIs(_DataSaver):
                                                     known_params_only)
 
         vars = self.variable_defs()
-        params_net_preprocessed_split = [vars[name].preprocess(param)
-                                         for name, param
-                                         in zip(param_names, params_net_split)]
+        params_net_preprocessed_split = [
+            vars[name].preprocess_net_interface(param)
+            for name, param in zip(param_names, params_net_split)
+        ]
 
         return tf.stack(params_net_preprocessed_split, axis=1)
-
-    def _transform_on_stats(
-            self,
-            **stats_and_params: Tensor1[tf32, Samples],
-    ) -> Dict[str, Tensor1[tf32, Samples]]:
-
-        if self.kwargs.transform_on_stats_fn.is_none():
-            return stats_and_params
-
-        untransformed = stats_and_params
-        transformed = self.kwargs.transform_on_stats_fn(**untransformed)
-        for name, trans in transformed.items():
-            if (isinstance(trans, float) or
-                    isinstance(trans, tf.Tensor) and len(trans.shape) == 0):
-                transformed[name] = tf.fill(untransformed[name].shape, trans)
-
-        return transformed
 
     ###########################################################################
     #
@@ -721,26 +697,31 @@ class NeuralCIs(_DataSaver):
     def _human_to_net(
             self,
             names_in_net_order: Sequence[str],
+            num_samples: Optional[int] = None,                                 # Only needed if values_human might be empty.
             **values_human: Tensor1[tf32, Samples],
-    ):
+    ) -> Tensor2:
 
-        # VERY important that this loops over names_in_net_order and not
-        #   over the dict **human, because it must be in the right order!
-        vars = self.variable_defs()
-        values_net_split = [vars[name].to_net(values_human[name])
-                            for name in names_in_net_order]
-        values_net = tf.stack(values_net_split, axis=1)
-        return values_net
+        if len(names_in_net_order) == 0:
+            assert num_samples is not None
+            return tf.zeros((num_samples, 0), dtype=tf.float32)
+        else:
+            # VERY important that this loops over names_in_net_order and not
+            #   over the dict **human, because it must be in the right order!
+            vars = self.variable_defs()
+            values_net_split = [vars[name].to_net(values_human[name])
+                                for name in names_in_net_order]
+            values_net = tf.stack(values_net_split, axis=1)
+            return values_net
 
     @tf.function
     def _net_to_human(
             self,
             names_in_net_order: Sequence[str],
-            num_param: int,
+            num_columns: int,
             values_net: Tensor2,
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        values_net_split = tf.unstack(values_net, num=num_param, axis=1)
+        values_net_split = tf.unstack(values_net, num=num_columns, axis=1)
         vars = self.variable_defs()
         values_human = {name: vars[name].from_net(values)
                         for name, values in zip(names_in_net_order,
@@ -753,7 +734,7 @@ class NeuralCIs(_DataSaver):
             stats_net: Tensor2[tf32, Samples, Stats],
     ) -> Dict[str, Tensor1[tf32, Samples]]:
 
-        return self._net_to_human(self.stat_names(),
+        return self._net_to_human(self.stat_names,
                                   self.num_stat,
                                   stats_net)
 
@@ -763,16 +744,18 @@ class NeuralCIs(_DataSaver):
             **stats_human: Dict[str, Tensor1[tf32, Samples]],
     ) -> Tensor2[tf32, Samples, Stats]:
 
-        return self._human_to_net(self.stat_names(), **stats_human)
+        return self._human_to_net(self.stat_names, **stats_human)
 
     @tf.function
-    def _stats_transformed_human_to_net(
+    def _stats_canonical_human_to_net(
             self,
-            **stats_transformed_human: Tensor1[tf32, Samples],
+            num_samples: int,
+            **stats_canonical_human: Tensor1[tf32, Samples],
     ) -> Tensor2[tf32, Samples, Params]:
 
-        return self._human_to_net(self.kwargs.transform_on_stats_stat_names,
-                                  **stats_transformed_human)
+        return self._human_to_net(self.stat_canonical_names,
+                                  num_samples,
+                                  **stats_canonical_human)
 
     @tf.function
     def _params_net_to_human(
@@ -792,11 +775,12 @@ class NeuralCIs(_DataSaver):
             self,
             unknown_params: bool = True,
             known_params: bool = True,
+            num_samples: Optional[int] = None,                                 # Only needed if params_human might be empty.
             **params_human: Tensor1[tf32, Samples],
     ) -> Tensor2[tf32, Samples, Params]:
 
         param_names = self.param_names(unknown_params, known_params)
-        return self._human_to_net(param_names, **params_human)
+        return self._human_to_net(param_names, num_samples, **params_human)
 
     @tf.function
     def _interest_net_to_human(
@@ -862,12 +846,12 @@ class NeuralCIs(_DataSaver):
             raise Exception(f"The following input to your simulation fn cannot"
                             f" be found in either unknown or known params"
                             f" list: {missing}")
-        missing = np.setdiff1d(self.kwargs.unknown_param_names, param_names)
+        missing = np.setdiff1d(self.unknown_param_names, param_names)
         if len(missing):
             raise Exception(f"The following is in your unknown param names,"
                             f" but does not appear as an input to your"
                             f" simulation fn!!  {missing}")
-        missing = np.setdiff1d(self.kwargs.known_param_names, param_names)
+        missing = np.setdiff1d(self.known_param_names, param_names)
         if len(missing):
             raise Exception(f"The following is in your known param names,"
                             f" but does not appear as an input to your"
@@ -877,77 +861,18 @@ class NeuralCIs(_DataSaver):
             raise Exception(f"The following input to your simulation fn cannot"
                             f" be found in the variable definitions!"
                             f" {missing}")
-        missing = np.setdiff1d(stat_names, self.stat_names())
+        missing = np.setdiff1d(stat_names, self.stat_names)
         if len(missing):
             raise Exception(f"The following output from your simulation fn"
                             f" cannot be found in stat_names list: {missing}")
-        missing = np.setdiff1d(self.stat_names(), stat_names)
+        missing = np.setdiff1d(self.stat_names, stat_names)
         if len(missing):
             raise Exception(f"The following is in your stat names,"
                             f" but does not appear as an output from your"
                             f" simulation fn!!  {missing}")
 
-    def _check_transform_on_stats_fn_names(
-            self,
-    ) -> None:
-
-        if self.kwargs.transform_on_stats_fn.is_none():
-            return
-
-        # Check **inputs** to the function are every single param and stat name
-        fn_args = self.kwargs.transform_on_stats_fn.arg_names()
-
-        unexpected = np.setdiff1d(fn_args, self.param_names()
-                                           + self.stat_names())
-        if len(unexpected):
-            raise Exception(f"Your transform_on_stats_fn should only have"
-                            f" argument names matching inputs or outputs"
-                            f" of the sampling_distribution_fn.  Unexpected:"
-                            f" {unexpected}.")
-        missing = np.setdiff1d(self.param_names(), fn_args)
-        if len(missing):
-            raise Exception(f"Your transform_on_stats_fn must take every"
-                            f" single param as argument, even if it does not"
-                            f" modify it.  Yours is missing: {missing}")
-        missing = np.setdiff1d(self.stat_names(), fn_args)
-        if len(missing):
-            raise Exception(f"Your transform_on_stats_fn must take every"
-                            f" single stat as argument, even if it does"
-                            f" not modify it.  Yours is missing: {missing}")
-
-        # Now analyse **outputs** of the transform on stats function
-        test_inputs = {name: tf.random.uniform((common.BATCH_SIZE,))
-                       for name in fn_args}
-        test_outputs = self.kwargs.transform_on_stats_fn(**test_inputs)
-        output_names = list(test_outputs.keys())
-
-        missing = np.setdiff1d(self.param_names(), output_names)
-        if len(missing):
-            raise Exception(f"Your transform_on_stats_fn must return every"
-                            f" param after the transform.  Missing:"
-                            f" {missing}.")
-        missing = np.setdiff1d(self.kwargs.transform_on_stats_stat_names,
-                               output_names)
-        if len(missing):
-            raise Exception(f"Your transform_on_stats_fn must return every"
-                            f" stat in transform_on_stats_stat_names. "
-                            f" Missing: {missing}.")
-
-        expected_outputs = (self.param_names()
-                            + self.kwargs.transform_on_stats_stat_names)
-        unexpected = np.setdiff1d(output_names, expected_outputs)
-        if len(unexpected):
-            raise Exception(f"Your transform_on_stats_fn must return only"
-                            f" variables with variable definitions. "
-                            f" Unexpected: {unexpected}.")
-        unexpected = np.setdiff1d(output_names, self.defined_vars())
-        if len(unexpected):
-            raise Exception(f"Your transform_on_stat_fn must return only"
-                            f" variables with variable definitions. "
-                            f" Unexpected: {unexpected}.")
-
     def _check_names_are_not_shared(self):
-        all_names = self.param_names() + self.stat_names()
+        all_names = self.param_names() + self.stat_names
         name_counter = collections.Counter(all_names)
         non_unique = [name for name, count in name_counter.items()
                       if count > 1]
@@ -1005,7 +930,7 @@ class NeuralCIs(_DataSaver):
         known_param_min_values = []
         known_param_max_values = []
         vars = self.variable_defs()
-        for name in self.kwargs.known_param_names:
+        for name in self.known_param_names:
             if name in known_param_ranges:
                 min, max = known_param_ranges[name]
                 known_param_min_values.append(vars[name].to_net(resize(min)))
