@@ -634,6 +634,10 @@ class NeuralCIs(_DataSaver):
             known_params_only: bool = False,
     ) -> Tensor2[ttf.bool, Samples, Params]:
 
+        if known_params_only and self.num_known_param == 0:
+            assert params_net.shape[1] == 0
+            return tf.cast(params_net, tf.bool)
+
         param_names = self.param_names(unknown_params=not known_params_only)
         params_net_split = self._unstack_params_net(params_net,
                                                     known_params_only)
@@ -659,6 +663,10 @@ class NeuralCIs(_DataSaver):
             params_net: Tensor2[tf32, Samples, Params],
             known_params_only: bool = False,
     ) -> Tensor2[tf32, Samples, Params]:
+
+        if known_params_only and self.num_known_param == 0:
+            assert params_net.shape[1] == 0
+            return params_net
 
         param_names = self.param_names(unknown_params=not known_params_only)
         params_net_split = self._unstack_params_net(params_net,
