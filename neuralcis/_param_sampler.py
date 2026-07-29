@@ -4,6 +4,7 @@ from ._sampling_feeler_net import _SamplingFeelerNet
 from ._is_inside_net import _IsInsideNet
 from ._param_sampling_net import _ParamSamplingNet
 from ._data_saver import _DataSaver
+from ._utils import known_params_from_params
 from .common import TESTING
 from . import common
 
@@ -42,7 +43,6 @@ class _ParamSampler(_DataSaver):
             num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
-            known_param_indices: Sequence[int],
             profile: str,
             sample_size: int = common.SAMPLES_PER_TEST_PARAM,
             sd_known: float = common.KNOWN_PARAM_MARKOV_CHAIN_SD,
@@ -64,7 +64,8 @@ class _ParamSampler(_DataSaver):
         if self._skip_when_profile(profile):
             return
 
-        self.known_param_indices = known_param_indices
+        self.num_unknown_param = num_unknown_param
+        self.num_known_param = num_known_param
         self.inner_data_generator = _InnerFeelerGenerator(
             estimates_min_and_max,
             sampling_distribution_fn,
@@ -109,7 +110,6 @@ class _ParamSampler(_DataSaver):
             num_stat,
             num_unknown_param,
             num_known_param,
-            known_param_indices,
             profile,
             **network_setup_args,
         )
@@ -172,7 +172,8 @@ class _ParamSampler(_DataSaver):
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor1[ttf.bool, Samples]:
 
-        known_params = tf.gather(params, self.known_param_indices, axis=1)
+        known_params = known_params_from_params(params, self.num_unknown_param,
+                                                        self.num_known_param)
         inside_net = self.hits_inside_net
         bools = inside_net.is_inside_sampled_region(estimates, known_params)
         return bools

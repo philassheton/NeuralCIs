@@ -200,9 +200,6 @@ class NeuralCIs(_DataSaver):
 
         if network_setup_args is None:
             network_setup_args = {}
-        self.known_param_indices = [
-            i + self.num_unknown_param for i in range(self.num_known_param)
-        ]
         self.param_sampler = _ParamSampler(
             estimates_min_and_max,
             self._sampling_dist_net_interface,
@@ -212,7 +209,6 @@ class NeuralCIs(_DataSaver):
             self.num_stat,
             self.num_unknown_param,
             self.num_known_param,
-            self.known_param_indices,
             profile,
             train_initial_weights=train_initial_weights,
             regularize_jitter_multiply=\
@@ -227,7 +223,6 @@ class NeuralCIs(_DataSaver):
             self.num_stat,
             self.num_unknown_param,
             self.num_known_param,
-            self.known_param_indices,
             self.num_stat_after_possible_canonicalization(),
             self.param_sampler,
             profile,

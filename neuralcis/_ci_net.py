@@ -2,6 +2,7 @@ import tensorflow as tf
 
 from ._p_net import _PNet
 from ._simulator_net import _SimulatorNet
+from ._utils import known_params_from_params
 from . import common
 
 # typing imports
@@ -34,12 +35,13 @@ class _CINet(_SimulatorNet):
                 [int],
                 Tensor2[tf32, Samples, Params],
             ],
-            num_param: int,
-            known_param_indices: Sequence[int],
+            num_unknown_param: int,
+            num_known_param: int,
             profile: str,
             **network_setup_args,
     ) -> None:
 
+        num_param = num_unknown_param + num_known_param
         _SimulatorNet.__init__(self,
                                profile,
                                num_inputs_for_each_net=[num_param + 1],
@@ -52,8 +54,8 @@ class _CINet(_SimulatorNet):
         self.sample_params = sample_params_fn
         self.pnet = pnet
         self.sampling_distribution_fn = sampling_distribution_fn
-        self.num_param = num_param
-        self.known_param_indices = known_param_indices
+        self.num_unknown_param = num_unknown_param
+        self.num_known_param = num_known_param
 
     ###########################################################################
     #
@@ -125,7 +127,8 @@ class _CINet(_SimulatorNet):
             params: Tensor2[tf32, Samples, Params],
     ) -> Tensor2[tf32, Samples, KnownParams]:
 
-        return tf.gather(params, self.known_param_indices, axis=1)
+        return known_params_from_params(params, self.num_unknown_param,
+                                                self.num_known_param)
 
     @tf.function
     def p_from_pnet(

@@ -1,4 +1,5 @@
 from ._sampling_feeler_generator import _SamplingFeelerGenerator
+from ._utils import known_params_from_params, concat_unknown_and_known_params
 from . import common
 
 import tensorflow as tf
@@ -103,7 +104,9 @@ class _InnerFeelerGenerator(_SamplingFeelerGenerator):
                      + self.estimates_min[None, :])
         known_params = (u_known_param * (common.PARAMS_MAX - common.PARAMS_MIN)
                         + common.PARAMS_MIN)
-        return tf.concat([estimates, known_params], axis=1)
+        params = concat_unknown_and_known_params(estimates, known_params)
+
+        return params
 
     def sample_statistics(
             self,
@@ -148,7 +151,11 @@ class _InnerFeelerGenerator(_SamplingFeelerGenerator):
         params_repeated = tf.repeat(params_preprocessed,
                                     self.sample_size,
                                     axis=0)
-        known_params_repeated = params_repeated[:, -self.num_known_param:]
+        known_params_repeated = known_params_from_params(
+            params_repeated,
+            self.num_unknown_param,
+            self.num_known_param,
+        )
         stats = self.sampling_distribution_fn(params_repeated)
         estimates = self.estimates_fn(stats, known_params_repeated)
         estimates_grouped = tf.reshape(estimates, (num_chains,

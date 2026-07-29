@@ -1,4 +1,5 @@
 from ._simulator_net import _SimulatorNet
+from ._utils import known_params_from_params
 from . import _utils, common
 
 import tensorflow as tf
@@ -53,7 +54,6 @@ class _ZNet(_SimulatorNet):
             num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
-            known_param_indices: Sequence[int],
             num_stats_remaining_after_canonicalization: int,
             profile: str,
             **network_setup_args,
@@ -83,18 +83,13 @@ class _ZNet(_SimulatorNet):
             **network_setup_args
         )
 
-        # TODO: Can probably reduce the redundancy here by only passing e.g.
-        #       num_param and known_param_indices.  Can probably do that across
-        #       all net types constructed by NeuralCIs to create a cleaner
-        #       interface.
-        assert len(known_param_indices) == num_known_param
+        self.num_unknown_param = num_unknown_param
+        self.num_known_param = num_known_param
 
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_fn = param_sampling_fn
         self.interest_fn = interest_fn
         self.canonicalize_fn = canonicalize_fn
-
-        self.known_param_indices = known_param_indices
 
     ###########################################################################
     #
@@ -168,8 +163,9 @@ class _ZNet(_SimulatorNet):
             self.canonicalize_fn(stats, params, interest,
                                  known_params_only=False)
 
-        known_params = tf.gather(params_canonical,
-                                 self.known_param_indices, axis=1)
+        known_params = known_params_from_params(params_canonical,
+                                                self.num_unknown_param,
+                                                self.num_known_param)
         interest_net_inputs = tf.concat([stats_canonical,
                                          interest_canonical[:, None],
                                          known_params], axis=1)

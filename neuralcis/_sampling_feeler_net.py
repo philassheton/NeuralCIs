@@ -3,6 +3,8 @@ from ._inner_feeler_generator import _InnerFeelerGenerator
 from ._outer_feeler_generator import _OuterFeelerGenerator
 from ._sampling_feeler_generator import NUM_IMPORTANCE_INGREDIENTS
 from .common import FULL
+from ._utils import concat_unknown_and_known_params
+from ._utils import known_params_from_params
 from . import common
 
 import tensorflow as tf
@@ -53,14 +55,15 @@ class _SamplingFeelerNet(_SimulatorNetCached):
             **network_setup_args
         )
 
+        num_param = num_unknown_param + num_known_param
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
-        self.num_param = num_unknown_param + num_known_param
+        self.num_param = num_param
 
         self.feeler_data_generator = feeler_data_generator
 
-        self.min_params_supported = tf.Variable(tf.fill((self.num_param,), np.nan))
-        self.max_params_supported = tf.Variable(tf.fill((self.num_param,), np.nan))
+        self.min_params_supported = tf.Variable(tf.fill((num_param,), np.nan))
+        self.max_params_supported = tf.Variable(tf.fill((num_param,), np.nan))
         self.include_threshold = include_threshold
         self.include_boost = include_boost
 
@@ -83,31 +86,38 @@ class _SamplingFeelerNet(_SimulatorNetCached):
                NetTargetBlob,
                Tensor1[ttf.int64, Indices]]:
 
-        sim_blob = (self.feeler_data_generator.sampled_params,
-                    self.feeler_data_generator.sampled_chols)
-        target_blob = self.feeler_data_generator.sampled_targets
+        sampled_params = self.feeler_data_generator.sampled_params
+        sampled_chols = self.feeler_data_generator.sampled_chols
+        sampled_targets = self.feeler_data_generator.sampled_targets
 
-        non_nan_indices = tf.where(~tf.math.is_nan(target_blob[:, 0]))[:, 0]
-        print(f"{len(non_nan_indices)} / {target_blob.shape[0]} were not NaN!")
+        non_nan_ids = tf.where(~tf.math.is_nan(sampled_targets[:, 0]))[:, 0]
+        print(f"{len(non_nan_ids)} / {sampled_targets.shape[0]} were not NaN!")
 
         # We will remove any cases where known params are outside of range,
         #   since they are anyway controlled to be within range during the
         #   main simulation.  But we need to keep other params that are out of
         #   range, so that we can learn how to NOT generate those in the main
         #   simulation.
-        known = self.num_known_param
+        sampled_known_params = known_params_from_params(sampled_params,
+                                                        self.num_unknown_param,
+                                                        self.num_known_param)
+
         knowns_are_valid_each = self.feeler_data_generator.params_is_valid_fn(
-            sim_blob[0][:, -known:], known_params_only=True,
+            sampled_known_params,
+            known_params_only=True,
         )
         knowns_are_valid_all = tf.reduce_all(knowns_are_valid_each, axis=1)
         knowns_valid_indices = tf.where(knowns_are_valid_all)[:, 0]
-        print(f"{len(knowns_valid_indices)} / {sim_blob[0].shape[0]}"
+        print(f"{len(knowns_valid_indices)} / {sampled_params.shape[0]}"
               f" were inside known params range!")
 
         indices = tf.sparse.to_dense(
-            tf.sets.intersection(non_nan_indices[None, :],
+            tf.sets.intersection(non_nan_ids[None, :],
                                  knowns_valid_indices[None, :])
         )[0, :]
+
+        sim_blob = (sampled_params, sampled_chols)
+        target_blob = sampled_targets
 
         return sim_blob, target_blob, indices
 
@@ -141,7 +151,8 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         z = tf.random.normal((n, self.num_unknown_param, 1))
         smoothing_unknown = tf.linalg.matmul(chols, z)[:, :, 0]
         smoothing_known = tf.zeros((n, self.num_known_param))
-        smoothing = tf.concat([smoothing_unknown, smoothing_known], axis=1)
+        smoothing = concat_unknown_and_known_params(smoothing_unknown,
+                                                    smoothing_known)
 
         smoothing_log_vol = common.IMPORTANCE_INGREDIENTS_VOLUMES_SMOOTHING
         smoothing_include = \
@@ -190,10 +201,12 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         importance_log = (include + importance_ingredients[:, vol])            # type: ignore
 
         # Add a punitive amount for being outside the region sampled from
-        param_too_low_by = tf.maximum(self.min_params_supported[None, :] - params,
-                                      0.)
-        param_too_high_by = tf.maximum(params - self.max_params_supported[None, :],
-                                       0.)
+        param_too_low_by = tf.maximum(
+            self.min_params_supported[None, :] - params, 0.,
+        )
+        param_too_high_by = tf.maximum(
+            params - self.max_params_supported[None, :], 0.,
+        )
         param_out_of_bound_by = tf.maximum(param_too_low_by, param_too_high_by)
         greatest_out_of_bound = tf.reduce_max(param_out_of_bound_by, axis=1)
 
@@ -203,7 +216,8 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         # TODO: This could be made much cleaner.  (Only exists to increase the
         #       gap between bottom and top when the threshold is very low)
-        log_eps = tf.math.log(common.SMALLEST_LOGABLE_NUMBER) * self.include_boost
+        eps = common.SMALLEST_LOGABLE_NUMBER
+        log_eps = tf.math.log(eps) * self.include_boost
 
         # TODO: Have multiplied by 100 as a temporary hack.  Need to calculate
         #       the right shape for the boundaries to guarantee offset of

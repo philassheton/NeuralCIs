@@ -1,5 +1,7 @@
 from ._data_saver import _DataSaver
 from .common import FULL
+from ._utils import split_unknown_and_known_params
+from ._utils import concat_unknown_and_known_params
 from . import common
 
 import tensorflow as tf
@@ -341,14 +343,20 @@ class _SamplingFeelerGenerator(_DataSaver, ABC):
 
         z_unknown = tf.random.normal((self.num_chains, self.num_unknown_param))
         z_known = tf.random.normal((self.num_chains, self.num_known_param))
-        params_unknown = params[:, :self.num_unknown_param]
-        params_known = params[:, self.num_unknown_param:]
+
+        params_unknown, params_known = split_unknown_and_known_params(
+            params,
+            self.num_unknown_param,
+            self.num_known_param,
+        )
+
         new_params_unknown = (
             params_unknown +
             tf.linalg.matmul(cov_chol, z_unknown[:, :, None])[:, :, 0]
         )
         new_params_known = params_known + self.sd_known * z_known
-        new_params = tf.concat([new_params_unknown, new_params_known], axis=1)
+        new_params = concat_unknown_and_known_params(new_params_unknown,
+                                                     new_params_known)
 
         return new_params
 
@@ -511,13 +519,16 @@ class _SamplingFeelerGenerator(_DataSaver, ABC):
     ) -> Tensor1[tf32, Chains]:
 
         d = x - mu
-        d_unknown = d[:, :self.num_unknown_param]
-        d_known = d[:, self.num_unknown_param:]
+        d_unknown, d_known = split_unknown_and_known_params(
+            d,
+            self.num_unknown_param,
+            self.num_known_param,
+        )
 
         z_unknown = tf.linalg.matmul(sigma_chol_inv,
                                      d_unknown[:, :, None])[:, :, 0]
         z_known = d_known / self.sd_known
-        z = tf.concat([z_unknown, z_known], axis=1)
+        z = concat_unknown_and_known_params(z_unknown, z_known)
         z_norm_sq = tf.reduce_sum(tf.square(z), axis=1)
 
         det_unknown = sigma_chol_det

@@ -1,5 +1,6 @@
 from ._simulator_net import _SimulatorNet
 from ._param_sampling_net import _ParamSamplingNet
+from ._utils import known_params_from_params
 from .common import TESTING
 from . import common
 
@@ -38,7 +39,6 @@ class _IsInsideNet(_SimulatorNet):
             num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
-            known_param_indices: Sequence[int],
             profile: str,
             **network_setup_args,
     ) -> None:
@@ -58,9 +58,9 @@ class _IsInsideNet(_SimulatorNet):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.param_sampling_net = param_sampling_net
         self.preprocess_params_fn = preprocess_params_fn
-        self.known_param_indices = known_param_indices
 
         self.num_stat = num_stat
+        self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
 
         assert self.batch_size % 2 == 0
@@ -97,9 +97,9 @@ class _IsInsideNet(_SimulatorNet):
 
         params = self.sample_params(self.batch_size_inside, preprocess=True)
         stats_inside = self.sampling_distribution_fn(params)
-        known_params_inside = tf.gather(params,
-                                        self.known_param_indices,
-                                        axis=1)
+        known_params_inside = known_params_from_params(params,
+                                                       self.num_unknown_param,
+                                                       self.num_known_param)
         stats_shape_dummy = (self.batch_size_dummy, self.num_stat)
         stats_dummy = tf.random.uniform(stats_shape_dummy,
                                         minval=self.stat_mins[None, :],

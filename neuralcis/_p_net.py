@@ -3,9 +3,10 @@ import tensorflow_probability as tfp                                           #
 from ._param_sampler import _ParamSampler
 from ._z_net import _ZNet
 from ._data_saver import _DataSaver
+from ._utils import known_params_from_params
 
 # typing
-from typing import Callable, Tuple, Sequence
+from typing import Callable, Tuple
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
 from .common import Samples, Stats, Params, KnownParams
@@ -39,7 +40,6 @@ class _PNet(_DataSaver):
             num_stat: int,
             num_unknown_param: int,
             num_known_param: int,
-            known_param_indices: Sequence[int],
             num_stats_remaining_after_canonicalization: int,
             param_sampler: _ParamSampler,
             profile: str,
@@ -52,7 +52,6 @@ class _PNet(_DataSaver):
         self.sampling_distribution_fn = sampling_distribution_fn
         self.num_unknown_param = num_unknown_param
         self.num_known_param = num_known_param
-        self.known_param_indices = known_param_indices
 
         self.param_sampler = param_sampler
         self.znet = _ZNet(
@@ -63,7 +62,6 @@ class _PNet(_DataSaver):
             num_stat,
             num_unknown_param,
             num_known_param,
-            known_param_indices,
             num_stats_remaining_after_canonicalization,
             profile,
             **network_setup_args,
@@ -141,9 +139,9 @@ class _PNet(_DataSaver):
             params_null
         )
 
-        known_params_null = tf.gather(params_null,
-                                      self.known_param_indices,
-                                      axis=1)
+        known_params_null = known_params_from_params(params_null,
+                                                     self.num_unknown_param,
+                                                     self.num_known_param)
         inside_net = self.param_sampler.hits_inside_net
         inside_prob = inside_net.call_tf((estimates, known_params_null))
         hits_inside = inside_net.is_inside_sampled_region(estimates,

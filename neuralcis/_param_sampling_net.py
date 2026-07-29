@@ -2,6 +2,7 @@ from ._simulator_net import _SimulatorNet
 from ._sampling_feeler_net import _SamplingFeelerNet
 from .common import TESTING
 from . import _utils, common
+from ._utils import concat_unknown_and_known_params
 import tensorflow as tf
 
 # Typing
@@ -120,7 +121,7 @@ class _ParamSamplingNet(_SimulatorNet):
         zs_unknown, us_known = input_blob
         net_inputs = self.net_inputs((zs_unknown, us_known))
         params_unknown = self._call_tf(net_inputs, training=False)
-        params = tf.concat([params_unknown, us_known], axis=1)
+        params = concat_unknown_and_known_params(params_unknown, us_known)
 
         return params
 
@@ -140,9 +141,9 @@ class _ParamSamplingNet(_SimulatorNet):
         jacobians = tape.batch_jacobian(params_unknown, zs_unknown)
         jacobdets = tf.linalg.det(jacobians)
 
-        params = tf.concat([params_unknown, us_known], axis=1)
+        params = concat_unknown_and_known_params(params_unknown, us_known)     # type: ignore
 
-        return params, jacobdets                                               # type: ignore
+        return params, jacobdets
 
     @tf.function
     def num_param(self) -> int:

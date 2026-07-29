@@ -1,4 +1,5 @@
 from ._sampling_feeler_generator import _SamplingFeelerGenerator
+from ._utils import known_params_from_params
 from . import common
 
 import tensorflow as tf
@@ -109,7 +110,11 @@ class _OuterFeelerGenerator(_SamplingFeelerGenerator):
         num_chains, _ = params.shape
         params_pp = self.preprocess_params_fn(params)
         params_repeated = tf.repeat(params_pp, self.sample_size, axis=0)
-        known_params_repeated = params_repeated[:, -self.num_known_param:]
+        known_params_repeated = known_params_from_params(
+            params_repeated,
+            self.num_unknown_param,
+            self.num_known_param,
+        )
 
         stats = self.sampling_distribution_fn(params_repeated)
         estimates = self.estimates_fn(stats, known_params_repeated)
