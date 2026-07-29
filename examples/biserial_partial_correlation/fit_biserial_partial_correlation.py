@@ -111,6 +111,7 @@ def estimates_fn(
             'prop_a': prop_a_hat}
 
 
+tf.keras.utils.set_random_seed(12345)
 cis = nci.NeuralCIs(
     sampling_distribution_fn,
     interest_fn,

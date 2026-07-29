@@ -46,7 +46,7 @@ def estimates_fn(
     return {"mudiff": mudiff_hat, "sigma1": sigma1_hat, "sigma2": sigma2_hat}
 
 
-
+tf.keras.utils.set_random_seed(12345)
 cis = nci.NeuralCIs(
     sampling_distribution_fn,
     interest_fn,
