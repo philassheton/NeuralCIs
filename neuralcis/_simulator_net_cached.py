@@ -33,7 +33,6 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
             self.cache = self.pick_indices_from_cache(cache, random_order)
             self.cache_size = len(indices)
 
-    @tf.function
     def simulate_training_data(
             self,
     ) -> Tuple[NetInputBlob, Optional[NetTargetBlob]]:
@@ -71,7 +70,6 @@ class _SimulatorNetCached(_SimulatorNet, ABC):
 
         pass
 
-    @tf.function
     def simulate_data_from_cache_chunk(
             self,
             input_simulation_blob: NetInputSimulationBlob,

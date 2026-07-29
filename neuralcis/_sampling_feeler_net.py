@@ -121,7 +121,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return sim_blob, target_blob, indices
 
-    @tf.function
     def pick_indices_from_cache(
             self,
             cache: Tuple[NetInputSimulationBlob, NetTargetBlob],
@@ -135,7 +134,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return (param_samples, chols), targets
 
-    @tf.function
     def simulate_data_from_cache_chunk(
             self,
             input_simulation_blob: NetInputSimulationBlob,
@@ -162,7 +160,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
 
         return (param_samples_log_vol, param_samples_include), target_blob
 
-    @tf.function
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
@@ -173,7 +170,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         tf.debugging.check_numerics(target_outputs, "NaN in targets!")
         return tf.reduce_mean(tf.square(net_outputs - target_outputs))         # type: ignore
 
-    @tf.function
     def net_inputs(
             self,
             inputs: NetInputBlob,
@@ -183,7 +179,6 @@ class _SamplingFeelerNet(_SimulatorNetCached):
         tf.debugging.check_numerics(inputs, "NaN in inputs!")
         return inputs                                                          # type: ignore
 
-    @tf.function
     def get_log_importance_from_net(
             self,
             params: Tensor2[tf32, Samples, Params],

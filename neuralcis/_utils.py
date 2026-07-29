@@ -6,7 +6,6 @@ from typing import Tuple
 from tensor_annotations.tensorflow import Tensor2, float32 as tf32
 
 
-@tf.function
 def _soft_floor_at_zero(
         values: tf.Tensor,
         soft_floor_ceiling: float = common.SOFT_FLOOR_CEILING,

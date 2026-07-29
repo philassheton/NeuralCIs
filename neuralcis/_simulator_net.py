@@ -27,7 +27,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     also be added features for automatically searching for best
     hyperparameters, etc.  The following functions must be implemented:
 
-    :func simulate_training_data: A `tf.function` that takes as
+    :func simulate_training_data: A `tf`-friendly function that takes as
         input a single `int` and generates for each net a tensor of input data
         (all wrapped up into a list of input data tensors) and
         (optionally) a tensor of target outputs (if those are required by
@@ -40,7 +40,7 @@ class _SimulatorNet(_DataSaver, tf.keras.Model, ABC):
     The following function can be overridden if more than just the network
     outputs are needed to calculate the loss:
 
-    :func call_tf_training: OPTIONAL - A `tf.function` that takes as
+    :func call_tf_training: OPTIONAL - A `tf`-friendly.function that takes as
         input a 2D samples x net inputs `Tensor` and applies the inputs
         to the network.  If it is necessary to pull
         other numbers from the neural network than just its outputs, in

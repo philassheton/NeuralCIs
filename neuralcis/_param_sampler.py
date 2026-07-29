@@ -165,7 +165,6 @@ class _ParamSampler(_DataSaver):
             },
         )
 
-    @tf.function
     def is_inside(
             self,
             estimates: Tensor2[tf32, Samples, Stats],
@@ -191,7 +190,6 @@ class _ParamSampler(_DataSaver):
 
         self.outer_sampling_net.fit(*args, **kwargs)
 
-    @tf.function
     def sample_params(
             self,
             n_inner: int,

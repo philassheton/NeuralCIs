@@ -52,7 +52,6 @@ class _ParamSamplingNet(_SimulatorNet):
         self.num_known_param = num_known_param
         self.preprocess_params_fn = preprocess_params_fn
 
-    @tf.function
     def simulate_training_data(
             self,
     ) -> Tuple[NetInputBlob, None]:
@@ -62,7 +61,6 @@ class _ParamSamplingNet(_SimulatorNet):
         nothing = tf.zeros((n, 0))
         return zs_us, nothing
 
-    @tf.function
     def simulate_zs_and_us(
             self,
             n: int,
@@ -83,7 +81,6 @@ class _ParamSamplingNet(_SimulatorNet):
 
         return zs_unknown, us_known
 
-    @tf.function
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
@@ -102,7 +99,6 @@ class _ParamSamplingNet(_SimulatorNet):
 
         return tf.math.reduce_mean(neg_log_likelihoods)
 
-    @tf.function
     def net_inputs(
             self,
             inputs: NetInputBlob
@@ -112,7 +108,6 @@ class _ParamSamplingNet(_SimulatorNet):
         net_inputs = tf.concat([zs_unknown, us_known], axis=1)
         return (net_inputs,)
 
-    @tf.function
     def call_tf(
             self,
             input_blob: NetInputBlob
@@ -125,7 +120,6 @@ class _ParamSamplingNet(_SimulatorNet):
 
         return params
 
-    @tf.function
     def call_tf_training(
             self,
             input_blob: NetInputBlob
@@ -145,11 +139,9 @@ class _ParamSamplingNet(_SimulatorNet):
 
         return params, jacobdets
 
-    @tf.function
     def num_param(self) -> int:
         return self.num_unknown_param + self.num_known_param
 
-    @tf.function
     def sample_params(
             self,
             n: int,

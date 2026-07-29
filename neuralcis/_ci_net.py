@@ -63,7 +63,6 @@ class _CINet(_SimulatorNet):
     #
     ###########################################################################
 
-    @tf.function
     def simulate_training_data(
             self,
     ) -> Tuple[NetInputBlob, NetTargetBlob]:
@@ -79,7 +78,6 @@ class _CINet(_SimulatorNet):
 
         return inputs, outputs
 
-    @tf.function
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
@@ -98,7 +96,6 @@ class _CINet(_SimulatorNet):
 
         return tf.reduce_mean(squared_errors)                                  # type: ignore
 
-    @tf.function
     def compute_optimum_loss(self) -> ttf.float32:
         return tf.constant(0.)
 
@@ -108,7 +105,6 @@ class _CINet(_SimulatorNet):
     #
     ###########################################################################
 
-    @tf.function
     def net_inputs(
             self,
             net_input_blob: NetInputBlob,
@@ -121,7 +117,6 @@ class _CINet(_SimulatorNet):
 
         return [ins]
 
-    @tf.function
     def known_params(
             self,
             params: Tensor2[tf32, Samples, Params],
@@ -130,7 +125,6 @@ class _CINet(_SimulatorNet):
         return known_params_from_params(params, self.num_unknown_param,
                                                 self.num_known_param)
 
-    @tf.function
     def p_from_pnet(
             self,
             estimates: Tensor2[tf32, Samples, Stats],
@@ -141,7 +135,6 @@ class _CINet(_SimulatorNet):
         known_params = self.known_params(params)
         return self.pnet.p_from_interest(estimates, interest, known_params)
 
-    @tf.function
     def output_activation(
             self,
             net_outputs: Tensor2[tf32, Samples, NetOutputs],

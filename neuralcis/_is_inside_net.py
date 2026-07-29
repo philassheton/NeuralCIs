@@ -87,7 +87,6 @@ class _IsInsideNet(_SimulatorNet):
 
         super().get_ready_for_training()
 
-    @tf.function
     def simulate_training_data(
             self,
     ) -> Tuple[
@@ -122,7 +121,6 @@ class _IsInsideNet(_SimulatorNet):
 
         return input_blob, target_blob
 
-    @tf.function
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
@@ -131,7 +129,6 @@ class _IsInsideNet(_SimulatorNet):
 
         return tf.reduce_mean(tf.square(net_outputs[:, 0] - target_outputs))
 
-    @tf.function
     def net_inputs(
             self,
             input_blob: NetInputBlob,
@@ -148,7 +145,6 @@ class _IsInsideNet(_SimulatorNet):
     #
     ###########################################################################
 
-    @tf.function
     def sample_params(
             self,
             n: int,
@@ -157,7 +153,6 @@ class _IsInsideNet(_SimulatorNet):
 
         return self.param_sampling_net.sample_params(n, preprocess)
 
-    @tf.function
     def is_inside_sampled_region(
             self,
             stats: Tensor2[tf32, Samples, Stats],

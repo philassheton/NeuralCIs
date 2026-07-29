@@ -77,7 +77,6 @@ class _PNet(_DataSaver):
     def compile(self, *args, **kwargs) -> None:
         self.znet.compile(*args, **kwargs)
 
-    @tf.function
     def p(
             self,
             estimates: Tensor2[tf32, Samples, Stats],
@@ -102,7 +101,6 @@ class _PNet(_DataSaver):
         z = self.znet.call_tf_interest_only(estimates, interest, known_params)
         return self.p_from_z(z[:, None])
 
-    @tf.function
     def p_from_z(
             self,
             z: Tensor1[tf32, Samples],
@@ -162,6 +160,5 @@ class _PNet(_DataSaver):
 
         return values
 
-    @tf.function
     def num_param(self) -> int:
         return self.num_unknown_param + self.num_known_param

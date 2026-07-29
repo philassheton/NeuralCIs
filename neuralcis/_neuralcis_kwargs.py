@@ -25,7 +25,6 @@ class _TFFn(tf.Module):
         super().__init__("TFFn")
         self.underlying_fn = underlying_fn
 
-    @tf.function
     def __call__(self, *args, **kwargs):
         return self.underlying_fn(*args, **kwargs)
 

@@ -60,14 +60,12 @@ class _SequentialNet:
     def erase_weights(self) -> None:
         self.sequential = None
 
-    @tf.function
     def __call__(self, *args, **kwargs):
         return self.sequential(*args, **kwargs)
 
     def layers(self):
         return self.sequential.layers
 
-    # No need to be a tf.function as they are anyway stored in _SimulatorNet
     def trainable_weights(self):
         return self.sequential.trainable_weights
 

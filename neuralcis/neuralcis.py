@@ -239,7 +239,6 @@ class NeuralCIs(_DataSaver):
     def wrap_up_kwargs(**kwargs):
         return kwargs
 
-    #@tf.function
     def param_names(
             self,
             unknown_params: bool = True,
@@ -253,7 +252,6 @@ class NeuralCIs(_DataSaver):
             param_names += self.known_param_names
         return param_names
 
-    # @tf.function
     def num_param(
             self,
             known_params_only: bool = False
@@ -525,7 +523,6 @@ class NeuralCIs(_DataSaver):
     #
     ###########################################################################
 
-    @tf.function
     def _sampling_dist_net_interface(
             self,
             params_net: Tensor2[tf32, Samples, Params],
@@ -537,7 +534,6 @@ class NeuralCIs(_DataSaver):
 
         return stats_net
 
-    @tf.function
     def _interest_fn_net_interface(
             self,
             params_net: Tensor2[tf32, Samples, Params],
@@ -549,7 +545,6 @@ class NeuralCIs(_DataSaver):
 
         return interest_net
 
-    @tf.function
     def _estimates_fn_net_interface(
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
@@ -584,7 +579,6 @@ class NeuralCIs(_DataSaver):
 
 
 
-    @tf.function
     def _canonicalize_net_interface(
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
@@ -615,7 +609,7 @@ class NeuralCIs(_DataSaver):
         }
 
         stats_canon_net = self._stats_canonical_human_to_net(
-            num_samples=len(stats_net),
+            num_samples=stats_net.shape[0],
             **outputs_human,
         )
         params_canon_net = self._params_human_to_net(
@@ -627,7 +621,6 @@ class NeuralCIs(_DataSaver):
 
         return stats_canon_net, params_canon_net, interest_canon_net
 
-    @tf.function
     def _param_is_valid_net_interface(
             self,
             params_net: Tensor2[tf32, Samples, Params],
@@ -647,7 +640,6 @@ class NeuralCIs(_DataSaver):
         is_valid_tensor = tf.stack(is_valid_list, axis=1)
         return is_valid_tensor
 
-    @tf.function
     def _unstack_params_net(
             self,
             params_net: Tensor2[tf32, Samples, Params],
@@ -657,7 +649,6 @@ class NeuralCIs(_DataSaver):
         num_param = self.num_param(known_params_only)
         return tf.unstack(params_net, num=num_param, axis=1)
 
-    @tf.function
     def _preprocess_params_net_interface(
             self,
             params_net: Tensor2[tf32, Samples, Params],
@@ -698,7 +689,6 @@ class NeuralCIs(_DataSaver):
     #
     ###########################################################################
 
-    @tf.function
     def _human_to_net(
             self,
             names_in_net_order: Sequence[str],
@@ -718,7 +708,6 @@ class NeuralCIs(_DataSaver):
             values_net = tf.stack(values_net_split, axis=1)
             return values_net
 
-    @tf.function
     def _net_to_human(
             self,
             names_in_net_order: Sequence[str],
@@ -733,7 +722,6 @@ class NeuralCIs(_DataSaver):
                                                 values_net_split)}
         return values_human
 
-    @tf.function
     def _stats_net_to_human(
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
@@ -743,7 +731,6 @@ class NeuralCIs(_DataSaver):
                                   self.num_stat,
                                   stats_net)
 
-    @tf.function
     def _stats_human_to_net(
             self,
             **stats_human: Dict[str, Tensor1[tf32, Samples]],
@@ -751,7 +738,6 @@ class NeuralCIs(_DataSaver):
 
         return self._human_to_net(self.stat_names, **stats_human)
 
-    @tf.function
     def _stats_canonical_human_to_net(
             self,
             num_samples: int,
@@ -762,7 +748,6 @@ class NeuralCIs(_DataSaver):
                                   num_samples,
                                   **stats_canonical_human)
 
-    @tf.function
     def _params_net_to_human(
             self,
             params_net: Tensor2[tf32, Samples, Params],
@@ -775,7 +760,6 @@ class NeuralCIs(_DataSaver):
 
         return params_human
 
-    @tf.function
     def _params_human_to_net(
             self,
             unknown_params: bool = True,
@@ -787,7 +771,6 @@ class NeuralCIs(_DataSaver):
         param_names = self.param_names(unknown_params, known_params)
         return self._human_to_net(param_names, num_samples, **params_human)
 
-    @tf.function
     def _interest_net_to_human(
             self,
             interest_net: Tensor1[tf32, Samples],
@@ -795,7 +778,6 @@ class NeuralCIs(_DataSaver):
 
         return self.variable_defs()[INTEREST].from_net(interest_net)
 
-    @tf.function
     def _interest_human_to_net(
             self,
             interest_human: Tensor1[tf32, Samples],

@@ -17,8 +17,6 @@ tf32 = ttf.float32
 
 
 class _OuterFeelerGenerator(_SamplingFeelerGenerator):
-    jit_compile = False  # For some reason, getting a memory blow up with XLA
-    
     def __init__(
             self,
             sample_params_inner_fn: Callable[
@@ -91,10 +89,6 @@ class _OuterFeelerGenerator(_SamplingFeelerGenerator):
 
         return self.sample_params_inner_fn(n)
 
-
-    # TODO: Parts of the peripheral sampling had to be converted
-    #       non-tf.functions because there was some kind of memory leak.  Look
-    #       back at this again.
     def sample_statistics(
             self,
             params: Tensor2[tf32, Chains, Params],

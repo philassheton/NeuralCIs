@@ -97,7 +97,6 @@ class _ZNet(_SimulatorNet):
     #
     ###########################################################################
 
-    @tf.function
     def simulate_training_data(
             self,
     ) -> Tuple[
@@ -109,7 +108,6 @@ class _ZNet(_SimulatorNet):
         no_target_data = tf.constant([[]], shape=(n, 0))
         return self.sample_stats_and_params(n), no_target_data
 
-    @tf.function
     def get_loss(
             self,
             net_outputs: NetOutputBlob,
@@ -128,7 +126,6 @@ class _ZNet(_SimulatorNet):
 
         return loss
 
-    @tf.function
     def call_tf_training(
             self,
             input_blob: NetInputBlob,
@@ -141,7 +138,6 @@ class _ZNet(_SimulatorNet):
             )
         return out, det, dz0_dinterest
 
-    @tf.function
     def net_inputs(
             self,
             input_blob: NetInputBlob,
@@ -151,7 +147,6 @@ class _ZNet(_SimulatorNet):
         interest = self.interest_fn(params)
         return self.net_inputs_precomputed_interest(stats, params, interest)
 
-    @tf.function
     def net_inputs_precomputed_interest(
             self,
             stats: Tensor2[tf32, Samples, Stats],
@@ -190,7 +185,6 @@ class _ZNet(_SimulatorNet):
     #
     ###########################################################################
 
-    @tf.function
     def call_tf_interest_only(
             self,
             stats: Tensor2[tf32, Samples, Stats],
@@ -208,7 +202,6 @@ class _ZNet(_SimulatorNet):
         z = self.nets[0](interest_net_inputs, training=False)[:, 0]            # net outputs has a unit dimension at axis=1 for the case where there is more than one output
         return z
 
-    @tf.function
     def neg_log_likelihoods(
             self,
             outputs: Tensor2[tf32, Samples, Zs],
@@ -228,7 +221,6 @@ class _ZNet(_SimulatorNet):
 
         return neg_log_likelihoods
 
-    @tf.function
     def net_outputs_and_transformation_jacobdets(
             self,
             input_blob: NetInputBlob,
@@ -262,7 +254,6 @@ class _ZNet(_SimulatorNet):
 
         return zs, jacobdets, dz0_dinterest                                    # type: ignore
 
-    @tf.function
     def sample_params(
             self,
             n: int,
@@ -270,7 +261,6 @@ class _ZNet(_SimulatorNet):
 
         return self.param_sampling_fn(0, n)
 
-    @tf.function
     def sample_stats_and_params(
             self,
             n: int,
@@ -280,7 +270,6 @@ class _ZNet(_SimulatorNet):
         y = self.sampling_distribution_fn(params)
         return y, params
 
-    @tf.function
     def z(
             self,
             stats: Tensor2[tf32, Samples, Stats],

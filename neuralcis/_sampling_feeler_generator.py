@@ -251,7 +251,7 @@ class _SamplingFeelerGenerator(_DataSaver, ABC):
             (num_samples, NUM_IMPORTANCE_INGREDIENTS),
         )
 
-    @tf.function
+    @tf.function(jit_compile=False)
     def compute_chains_tf(
             self
     ) -> Tuple[Tensor3[tf32, Samples, Chains, Params],

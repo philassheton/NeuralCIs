@@ -17,7 +17,6 @@ tf32 = ttf.float32
 __layer_names = {}
 
 
-@tf.function
 def scaled_tanh(x):
     return tf.keras.activations.tanh(x) * common.TANH_MULTIPLIER
 
@@ -45,7 +44,6 @@ class _SimNetLayer(tf.keras.layers.Layer, ABC):
     def initialisation_adjustables(self) -> Tuple[tf.Tensor, ...]:
         return self.output_scaler, self.bias
 
-    @tf.function
     def processed_weights(self) -> Tuple[tf.Tensor, ...]:
         return self.kernel_raw * self.output_scaler, self.bias
 
@@ -210,7 +208,6 @@ def initialise_layers(layers: List[_SimNetLayer]) -> None:
 class _LinearLayer(_SimNetLayer):
     layer_type_name = "linear"
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
@@ -223,7 +220,6 @@ class _LinearLayer(_SimNetLayer):
 class _StdLayer(_LinearLayer):
     layer_type_name = "std"
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs]
@@ -239,7 +235,6 @@ class _StdLayer(_LinearLayer):
 class _StdEluSkipLayer(_StdLayer):
     layer_type_name = "std elu skip"
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs]
@@ -256,7 +251,6 @@ class _FiftyFiftyLayer(_SimNetLayer):
         assert num_outputs % 2 == 0
         self.num_outputs_per_activation = num_outputs // 2
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
@@ -281,7 +275,6 @@ class _MultiplyerLayer(_SimNetLayer):
     must_have_same_inputs_as_outputs = True
     layer_type_name = "multiplyer"
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
@@ -323,7 +316,6 @@ class _MultiplyerWithSomeRelusLayer(_MultiplyerLayer):
         super().__init__(*args, **kwargs)
         self.num_relu = num_relu
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
@@ -343,7 +335,6 @@ class _MonotonicLinearLayer(_SimNetLayer):
     layer_type_name = "monotonic linear"
     initialization_step_size_multiplier = .1
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
@@ -356,7 +347,6 @@ class _MonotonicLinearLayer(_SimNetLayer):
 
         return activations
 
-    @tf.function
     def activation_function(
             self,
             potentials: Tensor2[tf32, Samples, LayerOutputs],
@@ -378,7 +368,6 @@ class _MonotonicTanhLayer(_MonotonicLinearLayer):
     layer_type_name = "monotonic tanh"
     initialization_step_size_multiplier = 1.
 
-    @tf.function
     def activation_function(
             self,
             potentials: Tensor2[tf32, Samples, LayerOutputs],
@@ -399,7 +388,6 @@ class _MonotonicLeakyReluLayer(_MonotonicLinearLayer):
         super().__init__(*args, **kwargs)
         self.leaky_relu = tf.keras.layers.LeakyReLU(common.LEAKY_RELU_SLOPE)
 
-    @tf.function
     def activation_function(
             self,
             potentials: Tensor2[tf32, Samples, LayerOutputs],
@@ -494,7 +482,6 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
             self.bias[self.num_virtual_weights:] * 0. + bias_init
         )
 
-    @tf.function
     def processed_weights(
             self,
             params=None,
@@ -518,7 +505,6 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
             bias + self.output_shifter
         )
 
-    @tf.function
     def ins_mono_and_params(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
@@ -527,7 +513,6 @@ class _MonotonicWithParamsTanhLayer(_MonotonicTanhLayer):
 
         return inputs[:, 0:-self.num_params], inputs[:, -self.num_params:]     # type: ignore
 
-    @tf.function
     def call(
             self,
             inputs: Tensor2[tf32, Samples, LayerInputs],
