@@ -48,9 +48,7 @@ class _IsInsideNet(_SimulatorNet):
             num_inputs_for_each_net=(num_stat + num_known_param,),
             num_outputs_for_each_net=(1,),
             instance_tf_variables_to_save=("stat_mins",
-                                           "stat_maxs",
-                                           "known_param_mins",
-                                           "known_param_maxs"),
+                                           "stat_maxs"),
             **network_setup_args
         )
 
@@ -71,8 +69,6 @@ class _IsInsideNet(_SimulatorNet):
 
         self.stat_mins = tf.Variable(tf.fill(num_stat, np.nan))
         self.stat_maxs = tf.Variable(tf.fill(num_stat, np.nan))
-        self.known_param_mins = tf.Variable(tf.fill(num_known_param, np.nan))
-        self.known_param_maxs = tf.Variable(tf.fill(num_known_param, np.nan))
 
     ###########################################################################
     #
@@ -81,36 +77,13 @@ class _IsInsideNet(_SimulatorNet):
     ###########################################################################
 
     def get_ready_for_training(self) -> None:
-
-        # We want to make sure there is a proportionate amount of the known
-        # params at each end of the spectrum.  Therefore, we have to base
-        # the mins and maxs from which we will draw dummy params on the
-        # NON preprocessed values.  Then we need to make sure they are all
-        # preprocessed before being sent to the net.
-        #
-        # This should not cause any problem during inference time, as all
-        # params sent to the net should be preprocessed, meaning that they
-        # cannot go beyond those preprocessed values, so the gap between the
-        # preprocessed params and the boundary from the non-preprocessed
-        # params will never be hit.
-        #
-        # TODO: Although the above is true, should consider preprocessing the
-        #       mins and maxs AFTER TRAINING (or in a separate variable even)
-        #       so that we get a robust boundary for inference time.
-        params_init = self.sample_params(100000, preprocess=False)
-        stats_init = self.sampling_distribution_fn(params_init)
+        params_for_sampling = self.sample_params(100000, preprocess=True)
+        stats_init = self.sampling_distribution_fn(params_for_sampling)
         stat_mins = tfp.stats.percentile(stats_init, q=00.1, axis=0)
         stat_maxs = tfp.stats.percentile(stats_init, q=99.9, axis=0)
 
-        param_mins = tf.reduce_min(params_init, axis=0)
-        param_maxs = tf.reduce_max(params_init, axis=0)
-        known_param_mins = tf.gather(param_mins, self.known_param_indices)
-        known_param_maxs = tf.gather(param_maxs, self.known_param_indices)
-
         self.stat_mins.assign(stat_mins)
         self.stat_maxs.assign(stat_maxs)
-        self.known_param_mins.assign(known_param_mins)
-        self.known_param_maxs.assign(known_param_maxs)
 
         super().get_ready_for_training()
 
@@ -133,8 +106,8 @@ class _IsInsideNet(_SimulatorNet):
                                         maxval=self.stat_maxs[None, :])
         known_param_shape_dummy = (self.batch_size_dummy, self.num_known_param)
         known_params_dummy = tf.random.uniform(known_param_shape_dummy,
-                                               minval=self.known_param_mins,
-                                               maxval=self.known_param_maxs)
+                                               minval=common.PARAMS_MIN,
+                                               maxval=common.PARAMS_MAX)
         known_params_dummy = self.preprocess_params_fn(known_params_dummy,
                                                        known_params_only=True)
 
@@ -198,8 +171,8 @@ class _IsInsideNet(_SimulatorNet):
             (stats <= self.stat_maxs[None, :])
         )
         bounds_say_known_params_inside = (
-            (known_params >= self.known_param_mins[None, :]) &
-            (known_params <= self.known_param_maxs[None, :])
+            (known_params >= common.PARAMS_MIN) &
+            (known_params <= common.PARAMS_MAX)
         )
         is_inside = (net_says_inside[:, 0] &
                      tf.reduce_all(bounds_say_stats_inside, axis=1) &
