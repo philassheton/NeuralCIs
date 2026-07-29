@@ -11,6 +11,7 @@ from ._param_sampler import _ParamSampler
 from ._p_net import _PNet
 from ._neuralcis_kwargs import _NeuralCIsKWArgs
 from ._data_saver import _DataSaver
+from ._utils import known_params_from_params
 from .common import FULL, TESTING, INFERENCE
 
 # for typing
@@ -186,10 +187,6 @@ class NeuralCIs(_DataSaver):
                                 "adding canonicalization strings to your"
                                 "variables.")
 
-        # TODO: Add checks for other functions too.
-        self._check_simulation_names()
-        self._check_names_are_not_shared()
-
         estimates_min_and_max = tf.stack([
             self.variable_defs()[param].estimates_box_min_and_max_net
             for param in self.unknown_param_names
@@ -234,6 +231,13 @@ class NeuralCIs(_DataSaver):
             {"paramsampnet": self.param_sampler,
              "pnet": self.pnet},
         )
+
+        # Need to run checks after construction as some (e.g. canonicalize)
+        #   depend on access to the other nets.
+        # TODO: Add checks for other functions too.
+        self._check_simulation_names()
+        self._check_names_are_not_shared()
+        self._check_canonicalized_interest_vs_interest_of_params_canonical()
 
     @staticmethod
     def wrap_up_kwargs(**kwargs):
@@ -891,6 +895,51 @@ class NeuralCIs(_DataSaver):
         errors = tf.math.abs(params_net_again - params_net)
 
         return tf.math.reduce_max(errors)
+
+    def _check_canonicalized_interest_vs_interest_of_params_canonical(self):
+        variable_defs = self.variable_defs()
+        params_net_min_maxs = tf.stack([
+            variable_defs[name].estimates_box_min_and_max_net
+            for name in self.param_names()
+        ])
+        batch_size = self.pnet.znet.batch_size
+        random_params_net = tf.random.uniform(
+            (batch_size, self.num_param()),
+            params_net_min_maxs[:, 0],
+            params_net_min_maxs[:, 1],
+        )
+        stats = self._sampling_dist_net_interface(random_params_net)
+        known_params = known_params_from_params(random_params_net,
+                                                self.num_unknown_param,
+                                                self.num_known_param)
+
+        # Calculate interest and then canonicalized it...
+        interest = self._interest_fn_net_interface(random_params_net)
+        _, _, interest_canonicalized = self._canonicalize_net_interface(
+            stats, known_params, interest, known_params_only=True,
+        )
+
+        # Just to be sure it's not using the interest value, jumble it up...
+        dummy_interest = tf.ones_like(interest) * tf.reduce_mean(interest)
+        _, params_canonical, _ = self._canonicalize_net_interface(
+            stats, random_params_net, dummy_interest, known_params_only=False,
+        )
+        params_canonical_interested = self._interest_fn_net_interface(
+            params_canonical,
+        )
+
+        difference = params_canonical_interested - interest_canonicalized
+        max_difference = tf.reduce_max(tf.math.abs(difference)).numpy().item()
+        eps = 1e-10
+        if max_difference > eps:
+            raise Exception(f"You need to make sure that your canonicalization"
+                            f" applied to your interest parameter is the same"
+                            f" as extracting the interest parameter from the"
+                            f" canonicalized parameter values.  Testing this"
+                            f" now I should find zero difference between them"
+                            f" but I find a max abs difference of"
+                            f" {max_difference} (I currently allow for error"
+                            f" of at most {eps}.")
 
     ###########################################################################
     #
