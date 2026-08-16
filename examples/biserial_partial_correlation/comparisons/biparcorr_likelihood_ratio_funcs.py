@@ -260,7 +260,7 @@ def likelihoods_via_bfgs(
     float32 = tf.float32
     all_a_same = tf.cast((num_true_a == 0.) | (num_true_a == n), float32)
     not_converged_alt = tf.cast(~res_alt.converged, float32)
-    not_converged_null = tf.cast(~res_alt.converged, float32)
+    not_converged_null = tf.cast(~res_null.converged, float32)
 
     failed_alt = tf.cast(res_alt.failed, float32)
     failed_null = tf.cast(res_null.failed, float32)
