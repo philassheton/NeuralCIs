@@ -53,9 +53,9 @@ def bootstrap_single_p(
             simulation_block_num=simulation_block_num,
             first_sim_num=batch_size_tf * batch_num,
             num_sims=batch_size,
-            simulate_from_power_rho=is_powersim_run,
+            is_powersim_run=is_powersim_run,
             is_bootstrap_simulation=True,
-            rho_ab_partial=rho_ab_partial,
+            rho_ab_partial_null=rho_ab_partial,
             rho_bc=rho_bc_sim[0],  # Is anyway a length-1 vector
             rho_ac=rho_ac_sim[0],
             prop_a=prop_a_sim[0],
@@ -72,7 +72,7 @@ def bootstrap_single_p(
     all_a_same = bootstrap_likelihoods[:, 3] >= 64
 
     failed_prop = tf.reduce_mean(tf.cast(failed, tf.float32))
-    all_a_same_prop = tf.reduce_mean(tf.cast(all_a_same), tf.float32)
+    all_a_same_prop = tf.reduce_mean(tf.cast(all_a_same, tf.float32))
 
     return p, failed_prop, all_a_same_prop
 
@@ -102,13 +102,13 @@ def bootstrap_bfgs_likelihoods(
         simulation_block_num=tf.constant(0, tf.int32),
         first_sim_num=tf.constant(0, tf.int32),
         num_sims=batch_size,
-        simulate_from_power_rho=is_powersim_run,
+        is_powersim_run=is_powersim_run,
         is_bootstrap_simulation=True,
-        rho_ab_partial=tf.constant(0., tf.int32),
-        rho_bc=tf.constant(0., tf.int32),
-        rho_ac=tf.constant(0., tf.int32),
-        prop_a=tf.constant(0., tf.int32),
-        n=tf.constant(0., tf.int32),
+        rho_ab_partial_null=tf.constant(0., tf.float32),
+        rho_bc=tf.constant(0., tf.float32),
+        rho_ac=tf.constant(0., tf.float32),
+        prop_a=tf.constant(0.5, tf.float32),
+        n=tf.constant(50., tf.float32),
     )
     print("Done compiling.")
 
@@ -119,62 +119,89 @@ def bootstrap_bfgs_likelihoods(
                                            params_sample_num)
         likelihoods_data = np.load(filename)[0:num_ps_per_param_sample]
         likelihoods_data = tf.constant(likelihoods_data)
-        likelihoods, error_code, pos_alt, pos_null, pos_power_null = \
+        likelihoods, error_code, pos_free, pos_null, pos_alt = \
             tf.split(likelihoods_data, [3, 1, 4, 3, 3], axis=1)
-        likelihoods_alt, likelihoods_null, likelihoods_power_null = \
+        likelihoods_free, likelihoods_null, likelihoods_alt = \
             tf.unstack(likelihoods, axis=1)
 
-        n = params["n"][params_sample_num]
-        rho_ab_partial = params["rho_ab_partial"][params_sample_num]
-        rho_ab_partial_pow = params["rho_ab_partial_power"][params_sample_num]
+        params_num = params_sample_num
+        n = params["n"][params_num]
 
-        ps = []
-        failed = []
-        all_a_same = []
-        ps_power = []
-        failed_power = []
-        all_a_same_power = []
+        # powersim files are based on using the power psi value as the null
+        if is_powersim_run:
+            rho_ab_partial_null = params["rho_ab_partial_power"][params_num]
+        else:
+            rho_ab_partial_null = params["rho_ab_partial"][params_num]
+            rho_ab_partial_alt = params["rho_ab_partial_power"][params_num]
+
+        ps_null = []
+        failed_null = []
+        all_a_same_null = []
+        ps_alt = []
+        failed_alt = []
+        all_a_same_alt = []
         for p_num in range(num_ps_per_param_sample):
+            # This sample (likelihoods_free - likelihoods_null) was generated
+            #   from the null.  Let's first compare it to a distribution
+            #   bootstrapped from the null parameter combined with the MLEs
+            #   of the other params under that null constraint...
             p, f, aas = bootstrap_single_p(
-                likelihoods_alt[p_num] - likelihoods_null[p_num],
-                pos_null[p_num, :], rho_ab_partial, n,
+                likelihoods_free[p_num] - likelihoods_null[p_num],
+                pos_null[p_num, :], rho_ab_partial_null, n,
                 bootstrap_samples, batch_size,
                 params_sample_num, p_num,
                 is_power_p=False, is_powersim_run=is_powersim_run,
             )
-            ps.append(p)
-            failed.append(f)
-            all_a_same.append(aas)
+            ps_null.append(p)
+            failed_null.append(f)
+            all_a_same_null.append(aas)
 
-            p, f, aas = bootstrap_single_p(
-                likelihoods_alt[p_num] - likelihoods_power_null[p_num],
-                pos_power_null[p_num, :], rho_ab_partial_pow, n,
-                bootstrap_samples, batch_size,
-                params_sample_num, p_num,
-                is_power_p=True, is_powersim_run=is_powersim_run,
-            )
-            ps_power.append(p)
-            failed_power.append(f)
-            all_a_same_power.append(aas)
+            if not is_powersim_run:
+                # ...then for power, we want to see how the same sample
+                #   compares to the distribution under the alternative
+                #   HYPOTHESIS.  This can be a little confusing and that
+                #   relates to a shortcut we made in the chi-squared (pure
+                #   BFGS) step 3.  In that shortcut, we do NOT (as is more
+                #   customary) compare samples drawn from null and alternative
+                #   distributions to the same null interest parameter value
+                #   (i.e. shift the sampling distribution and see how power
+                #   changes).  Instead, we draw our samples always from the
+                #   same null and compare those to null and alternative
+                #   interest parameter values (i.e. move the hypothesis, not
+                #   the sample).  This saves some computation in step 3.
+                p, f, aas = bootstrap_single_p(
+                    likelihoods_free[p_num] - likelihoods_alt[p_num],
+                    pos_alt[p_num, :], rho_ab_partial_alt, n,
+                    bootstrap_samples, batch_size,
+                    params_sample_num, p_num,
+                    is_power_p=True, is_powersim_run=is_powersim_run,
+                )
+                ps_alt.append(p)
+                failed_alt.append(f)
+                all_a_same_alt.append(aas)
+            else:
+                ps_alt.append(tf.zeros_like(p))
+                failed_alt.append(tf.zeros_like(f))
+                all_a_same_alt.append(tf.zeros_like(aas))
 
-        ps = tf.stack(ps)
-        ps_power = tf.stack(ps_power)
+        ps_null = tf.cast(tf.stack(ps_null), tf.float32)
+        ps_alt = tf.cast(tf.stack(ps_alt), tf.float32)
 
-        failed = tf.stack(failed)
-        failed_power = tf.stack(failed_power)
+        failed_null = tf.stack(failed_null)
+        failed_alt = tf.stack(failed_alt)
 
-        all_a_same = tf.stack(all_a_same)
-        all_a_same_power = tf.stack(all_a_same_power)
+        all_a_same_null = tf.stack(all_a_same_null)
+        all_a_same_alt = tf.stack(all_a_same_alt)
 
-        ps = tf.stack([ps, ps_power,
-                       failed, failed_power,
-                       all_a_same, all_a_same_power], axis=1)
+        ps_null = tf.stack([ps_null, ps_alt,
+                            failed_null, failed_alt,
+                            all_a_same_null, all_a_same_alt], axis=1)
 
         filename = biparcorr.data_filename(method_name, "ps",
                                            params_sample_num)
         path = biparcorr.convert_relative_path(filename)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        np.save(path, ps.numpy())
+        np.save(path, ps_null.numpy())
 
 
 if __name__ == "__main__":

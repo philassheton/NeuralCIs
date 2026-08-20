@@ -18,31 +18,32 @@ def pvalues_for_batch(
         params_num: Tensor0[ti32],
         first_sim_num: Tensor0[ti32],
         num_sims: int,
-        simulate_from_power_rho: bool,
+        use_power_param_as_null: bool,
         **params_human: Tensor0[tf32],
 ):
 
     print("Compiling neuralcis pvalues function")
 
     params_human = {n: tf.repeat(p, num_sims) for n, p in params_human.items()}
-    rho_ab_power = params_human.pop("rho_ab_partial_power")
-    power_args = {'rho_ab_partial': rho_ab_power}
-
-    params_net = cis._params_human_to_net(**params_human)
-    params_power_net = cis._params_human_to_net(**(params_human | power_args))
-
-    if simulate_from_power_rho:
-        sim_params = params_human | power_args
+    if use_power_param_as_null:
+        rho_ab_partial_null = params_human.pop("rho_ab_partial_power")
+        rho_ab_partial_alt = params_human.pop("rho_ab_partial")
     else:
-        sim_params = params_human
+        rho_ab_partial_null = params_human.pop("rho_ab_partial")
+        rho_ab_partial_alt = params_human.pop("rho_ab_partial_power")
+
+    params_null_human = params_human | {"rho_ab_partial": rho_ab_partial_null}
+    params_alt_human = params_human | {"rho_ab_partial": rho_ab_partial_alt}
+    params_null_net = cis.__params_human_to_net(**params_null_human)
+    params_alt_net = cis.__params_human_to_net(**params_alt_human)
 
     samples_raw = biparcorr.sampling_distribution_fn_raw(
         simulation_block_num=params_num,
         batch_consistent_randoms=True,
         first_row_num_within_simulation_block=first_sim_num,
         num_rows=num_sims,
-        is_powersim_run=simulate_from_power_rho,
-        **sim_params,
+        is_powersim_run=use_power_param_as_null,
+        **params_null_human,
     )
     rs = biparcorr.estimate_correlations_safe(samples_raw, params_human["n"])
     prop_a_hat = biparcorr.estimate_prop_a(samples_raw, params_human["n"])
@@ -52,10 +53,10 @@ def pvalues_for_batch(
                    "prop_a_hat": prop_a_hat}
     stats_net = cis._stats_human_to_net(**stats_human)
 
-    ps_null = cis.pnet.p(stats_net, params_net)
-    ps_power = cis.pnet.p(stats_net, params_power_net)
+    ps_null = cis.pnet.p(stats_net, params_null_net)
+    ps_alt = cis.pnet.p(stats_net, params_alt_net)
 
-    ps = tf.stack([ps_null, ps_power], axis=1)
+    ps = tf.stack([ps_null, ps_alt], axis=1)
 
     return ps
 
@@ -65,7 +66,7 @@ def run_neural_ps(
         num_sims_per_param_sample: int = 1_000_000,
         start_from_param_num: int = 0,
         batch_size: int = 1_000_000,
-        simulate_from_power_rho: bool = False,  # for idealized power
+        use_power_param_as_null: bool = False,  # for idealized power
 ) -> None:
 
     # TODO: This func should probably be factored to allow step 3 to reuse!!
@@ -86,7 +87,7 @@ def run_neural_ps(
                       tf.constant(0, tf.int32),
                       tf.constant(0, tf.int32),
                       batch_size,
-                      simulate_from_power_rho,
+                      use_power_param_as_null,
                       **{n: p[0] for n, p in params.items()})
 
     batch_size_tf = tf.constant(batch_size)
@@ -101,7 +102,7 @@ def run_neural_ps(
                                         params_sample_num_tf,
                                         batch_size_tf * batch_num,
                                         batch_size,
-                                        simulate_from_power_rho,
+                                        use_power_param_as_null,
                                         **this_params)
             batch_likelihoods.append(this_ps)
 
@@ -118,4 +119,4 @@ if __name__ == "__main__":
     run_neural_ps("neural_powersim",
                   num_sims_per_param_sample=10_000,
                   batch_size=10_000,
-                  simulate_from_power_rho=True)
+                  use_power_param_as_null=True)

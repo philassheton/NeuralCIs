@@ -56,7 +56,7 @@ def run_welch_ps(
         num_sims_per_param_sample: int,
         start_from_param_num: int = 0,
         batch_size: int = 500_000,
-        simulate_from_power_mudiff: bool = False,  # for idealized power
+        use_power_param_as_null: bool = False,  # for idealized power
 ) -> None:
 
     params = behfish.load_params_dict()
@@ -69,29 +69,33 @@ def run_welch_ps(
                                         num_param_samples)):
 
         this_params = {n: p[params_sample_num] for n, p in params.items()}
-
-        sim_params = this_params.copy()
-        mudiff_power = sim_params.pop("mudiff_power")
-        if simulate_from_power_mudiff:
-            sim_params['mudiff'] = mudiff_power
+        if use_power_param_as_null:
+            mudiff_null = this_params.pop("mudiff_power")
+            mudiff_alt = this_params.pop("mudiff")
+        else:
+            mudiff_null = this_params.pop("mudiff")
+            mudiff_alt = this_params.pop("mudiff_power")
         stats = get_random_samples(params_num=tf.constant(params_sample_num),
                                    num_samples=num_sims_per_param_sample,
-                                   seed_differently=simulate_from_power_mudiff,
-                                   **sim_params)
-
-        welch_params = {n:this_params[n] for n in ["mudiff", "n1", "n2"]}
-        welch_params_pow = welch_params | {"mudiff": mudiff_power}
+                                   seed_differently=use_power_param_as_null,
+                                   mudiff=mudiff_null,
+                                   **this_params)
 
         batch_ps = []
-
         for batch_num in range(num_sims_per_param_sample // batch_size):
             start = batch_num * batch_size
             end = start + batch_size
             this_stats = {n:p[start:end] for n, p in stats.items()}
 
-            this_ps = welch_test(**(welch_params | this_stats))
-            this_ps_pow = welch_test(**(welch_params_pow | this_stats))
-            batch_ps.append(tf.stack([this_ps, this_ps_pow], axis=1))
+            this_ps_null = welch_test(mudiff=mudiff_null,
+                                      n1=this_params["n1"],
+                                      n2=this_params["n2"],
+                                      **this_stats)
+            this_ps_alt = welch_test(mudiff=mudiff_alt,
+                                     n1=this_params["n1"],
+                                     n2=this_params["n2"],
+                                     **this_stats)
+            batch_ps.append(tf.stack([this_ps_null, this_ps_alt], axis=1))
 
         filename = behfish.data_filename(method_name, "ps", params_sample_num)
         path = behfish.convert_relative_path(filename)
@@ -105,4 +109,4 @@ if __name__ == "__main__":
     run_welch_ps("welch_powersim",
                  num_sims_per_param_sample=10_000,
                  batch_size=10_000,
-                 simulate_from_power_mudiff=True)
+                 use_power_param_as_null=True)

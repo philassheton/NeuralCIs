@@ -22,26 +22,29 @@ def pvalues_for_batch(
         cis: NeuralCIs,
         num_sims: int,
         stats_human: Dict[str, Tensor1[tf32, Samples]],
-        **params_human: Tensor0[tf32],
+        mudiff_null: Tensor0[tf32],
+        mudiff_alt: Tensor0[tf32],
+        **other_params_human: Tensor0[tf32],
 ):
 
     print("Compiling neuralcis pvalues function")
 
-    params_human = {n: tf.repeat(p, num_sims) for n, p in params_human.items()}
-    mudiff_power = params_human.pop("mudiff_power")
-    power_args = {'mudiff': mudiff_power}
+    mudiff_null = tf.repeat(mudiff_null, num_sims)
+    mudiff_alt = tf.repeat(mudiff_alt, num_sims)
+    other_params_human = {n: tf.repeat(p, num_sims)
+                          for n, p in other_params_human.items()}
 
-    params_human_power = params_human | power_args
-
-    params_net = cis._params_human_to_net(**params_human)
-    params_power_net = cis._params_human_to_net(**params_human_power)
+    params_null_net = cis._params_human_to_net(mudiff=mudiff_null,
+                                               **other_params_human)
+    params_alt_net = cis._params_human_to_net(mudiff=mudiff_alt,
+                                              **other_params_human)
 
     stats_net = cis._stats_human_to_net(**stats_human)
 
-    ps_null = cis.pnet.p(stats_net, params_net)
-    ps_power = cis.pnet.p(stats_net, params_power_net)
+    ps_null = cis.pnet.p(stats_net, params_null_net)
+    ps_alt = cis.pnet.p(stats_net, params_alt_net)
 
-    ps = tf.stack([ps_null, ps_power], axis=1)
+    ps = tf.stack([ps_null, ps_alt], axis=1)
 
     return ps
 
@@ -65,7 +68,7 @@ def run_neural_ps(
         num_sims_per_param_sample: int = 1_000_000,
         start_from_param_num: int = 0,
         batch_size: int = 1_000_000,
-        simulate_from_power_mudiff: bool = False,  # for idealized power
+        use_power_param_as_null: bool = False,  # for idealized power
 ) -> None:
 
     # TODO: This func should probably be factored to allow step 3 to reuse!!
@@ -84,15 +87,18 @@ def run_neural_ps(
                                         num_param_samples)):
 
         this_params = {n: p[params_sample_num] for n, p in params.items()}
+        if use_power_param_as_null:
+            mudiff_null = this_params.pop("mudiff_power")
+            mudiff_alt = this_params.pop("mudiff")
+        else:
+            mudiff_null = this_params.pop("mudiff")
+            mudiff_alt = this_params.pop("mudiff_power")
 
-        sim_params = this_params.copy()
-        mudiff_power = sim_params.pop("mudiff_power")
-        if simulate_from_power_mudiff:
-            sim_params['mudiff'] = mudiff_power
         stats = get_random_samples(params_num=tf.constant(params_sample_num),
                                    num_samples=num_sims_per_param_sample,
-                                   seed_differently=simulate_from_power_mudiff,
-                                   **sim_params)
+                                   seed_differently=use_power_param_as_null,
+                                   mudiff=mudiff_null,
+                                   **this_params)
 
         batch_ps = []
         for batch_num in range(num_sims_per_param_sample // batch_size):
@@ -104,6 +110,8 @@ def run_neural_ps(
             this_ps = pvalues_for_batch(cis,
                                         batch_size,
                                         this_stats,
+                                        mudiff_null,
+                                        mudiff_alt,
                                         **this_params)
             batch_ps.append(this_ps)
 
@@ -120,4 +128,4 @@ if __name__ == "__main__":
     run_neural_ps("neural_powersim",
                   num_sims_per_param_sample=10_000,
                   batch_size=10_000,
-                  simulate_from_power_mudiff=True)
+                  use_power_param_as_null=True)

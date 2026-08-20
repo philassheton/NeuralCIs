@@ -118,12 +118,12 @@ def __failure_proportions_from_likelihoods_file(
         next_code_to_pass_back = np.floor(failure_code / 2)
         return next_failure_bool, next_code_to_pass_back
 
-    failure_types = ["not_converged_alt",
+    failure_types = ["not_converged_free",
                      "not_converged_null",
-                     "not_converged_power_null",
-                     "failed_alt",
+                     "not_converged_alt",
+                     "failed_free",
                      "failed_null",
-                     "failed_power_null",
+                     "failed_alt",
                      "all_a_same"]
 
     code = failure_code
@@ -132,17 +132,17 @@ def __failure_proportions_from_likelihoods_file(
         failures[ftype], code = next_failure(code)
 
     failures["any_failure_null"] = (
-        failures["not_converged_alt"]
+        failures["not_converged_free"]
         | failures["not_converged_null"]
-        | failures["failed_alt"]
+        | failures["failed_free"]
         | failures["failed_null"]
     )
 
-    failures["any_failure_power"] = (
-        failures["not_converged_alt"]
-        | failures["not_converged_power_null"]
+    failures["any_failure_alt"] = (
+        failures["not_converged_free"]
+        | failures["not_converged_alt"]
+        | failures["failed_free"]
         | failures["failed_alt"]
-        | failures["failed_power_null"]
     )
 
     failures["any_failure_or_all_same_null"] = (
@@ -262,7 +262,7 @@ def __summarise_pvalues(
     # LOCAL COMPARISONS AT GIVEN ALPHAS
     for alpha in alphas:
         cutoff_null_dist = tfp.stats.percentile(ps[:, 0], alpha * 100)
-        cutoff_power_dist = tfp.stats.percentile(ps_powersim[:, 1],
+        cutoff_power_dist = tfp.stats.percentile(ps_powersim[:, 0],
                                                  alpha * 100)
 
         ps_below_alpha = tf.cast(ps < alpha, tf.float32)
