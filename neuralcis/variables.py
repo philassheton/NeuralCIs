@@ -43,21 +43,36 @@ class VariableType(ABC):
         self.human_lowish = lowish
         self.human_highish = highish
 
-        self.trans_param_lowish = self.to_net_transform_param(lowish)
-        self.trans_param_highish = self.to_net_transform_param(highish)
-        self.trans_param_width = (self.trans_param_highish
-                                  - self.trans_param_lowish)
-
-        self.trans_stat_lowish = self.to_net_transform_stat(lowish)
-        self.trans_stat_highish = self.to_net_transform_stat(highish)
-        self.trans_stat_width = (self.trans_stat_highish
-                                 - self.trans_stat_lowish)
-
-        self.net_lowish = common.PARAMS_MIN
-        self.net_width = common.PARAMS_MAX - common.PARAMS_MIN
-
         # Default version does not adjust the lowish_highish_values at all
         return lowish_highish_values
+
+    @property
+    def trans_param_lowish(self) -> Tensor0[tf32]:
+        return self.to_net_transform_param(tf.constant(self.human_lowish))
+
+    @property
+    def trans_param_width(self) -> Tensor0[tf32]:
+        highish = tf.constant(self.human_highish)
+        trans_param_highish = self.to_net_transform_param(highish)
+        return trans_param_highish - self.trans_param_lowish
+
+    @property
+    def trans_stat_lowish(self) -> Tensor0[tf32]:
+        return self.to_net_transform_stat(tf.constant(self.human_lowish))
+
+    @property
+    def trans_stat_width(self) -> Tensor0[tf32]:
+        highish = tf.constant(self.human_highish)
+        trans_stat_highish = self.to_net_transform_stat(highish)
+        return trans_stat_highish - self.trans_stat_lowish
+
+    @property
+    def net_lowish(self) -> Tensor0[tf32]:
+        return tf.constant(common.PARAMS_MIN)
+
+    @property
+    def net_width(self) -> Tensor0[tf32]:
+        return tf.constant(common.PARAMS_MAX - common.PARAMS_MIN)
 
     @abstractmethod
     def to_net_transform_generic(self, human):
