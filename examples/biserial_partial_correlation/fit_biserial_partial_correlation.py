@@ -122,7 +122,7 @@ cis = nci.NeuralCIs(
     rho_bc=nci.Param(Correlation(), (-.99, .99)),
     prop_a=nci.Param(Proportion(), (0.05, 0.95)),
 
-    n=nci.KnownParam(PositiveCount((N_MIN, N_MAX))),
+    n=nci.KnownParam(PositiveCount(), (N_MIN, N_MAX)),
 
     rho_ab_hat=nci.Stat(Correlation()),
     rho_ac_hat=nci.Stat(Correlation()),

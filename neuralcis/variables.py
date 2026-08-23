@@ -19,6 +19,7 @@ class VariableType(ABC):
     # If is a param, will be clipped to these limits
     param_hard_min_human = None
     param_hard_max_human = None
+    accepts_lowish_highish_in_constructor = True
     axis_type = "linear"
 
     def __init__(
@@ -27,27 +28,36 @@ class VariableType(ABC):
             lowish_highish_values: Optional[Tuple[float, float]] = None,
     ) -> None:
 
+        self.rescale = False
         if lowish_highish_values is not None:
-            self.rescale = True
-            lowish, highish = lowish_highish_values
+            self.adjust_and_set_lowish_highish(lowish_highish_values)
 
-            self.human_lowish = lowish
-            self.human_highish = highish
+    def adjust_and_set_lowish_highish(
+            self,
+            lowish_highish_values: Tuple[float, float]
+    ) -> Tuple[float, float]:
 
-            self.trans_param_lowish = self.to_net_transform_param(lowish)
-            self.trans_param_highish = self.to_net_transform_param(highish)
-            self.trans_param_width = (self.trans_param_highish
-                                      - self.trans_param_lowish)
+        self.rescale = True
+        lowish, highish = lowish_highish_values
 
-            self.trans_stat_lowish = self.to_net_transform_stat(lowish)
-            self.trans_stat_highish = self.to_net_transform_stat(highish)
-            self.trans_stat_width = (self.trans_stat_highish
-                                     - self.trans_stat_lowish)
+        self.human_lowish = lowish
+        self.human_highish = highish
 
-            self.net_lowish = common.PARAMS_MIN
-            self.net_width = common.PARAMS_MAX - common.PARAMS_MIN
-        else:
-            self.rescale = False
+        self.trans_param_lowish = self.to_net_transform_param(lowish)
+        self.trans_param_highish = self.to_net_transform_param(highish)
+        self.trans_param_width = (self.trans_param_highish
+                                  - self.trans_param_lowish)
+
+        self.trans_stat_lowish = self.to_net_transform_stat(lowish)
+        self.trans_stat_highish = self.to_net_transform_stat(highish)
+        self.trans_stat_width = (self.trans_stat_highish
+                                 - self.trans_stat_lowish)
+
+        self.net_lowish = common.PARAMS_MIN
+        self.net_width = common.PARAMS_MAX - common.PARAMS_MIN
+
+        # Default version does not adjust the lowish_highish_values at all
+        return lowish_highish_values
 
     @abstractmethod
     def to_net_transform_generic(self, human):
@@ -191,6 +201,11 @@ class Variable(ABC):
         return state
 
 
+###############################################################################
+#  A Variable may be a Param, KnownParam, Stat, StatCanonical or Interest:
+###############################################################################
+
+
 class Param(Variable):
     is_known_param = False
 
@@ -270,30 +285,18 @@ class KnownParam(Param):
     def __init__(
             self,
             vtype: VariableType,
+            min_max: Tuple[float, float],
             canonicalize_str: Optional[str] = None,
-            # Will default to lowish value and highish value from type
-            hard_min_max: Optional[Tuple[float, float]] = None,
     ) -> None:
 
-        if hard_min_max is not None:
-            hard_min, hard_max = hard_min_max
-            vtype.param_hard_min_human = hard_min
-            vtype.param_hard_max_human = hard_max
-        elif vtype.rescale:
-            vtype.param_hard_min_human = vtype.human_lowish
-            vtype.param_hard_max_human = vtype.human_highish
-        elif (vtype.param_hard_min_human is not None
-              and vtype.param_hard_max_human is not None):
-            pass # already set!
-        else:
-            raise Exception(f"For certain VariableTypes, such as your"
-                            f" {type(VariableType)}, there is no internal"
-                            f" low and high value set, so you need to set"
-                            f" this instead via the hard_min_max argument"
-                            f" on the KnownParam object.")
-
-        min_max = (vtype.param_hard_min_human, vtype.param_hard_max_human)
-        super().__init__(vtype, min_max, canonicalize_str)
+        if vtype.accepts_lowish_highish_in_constructor and vtype.rescale:
+            raise Exception("For a KnownParam your VariableType should NOT"
+                            " have its lowish_highish_values preset!  They are"
+                            " instead set through the required min_max "
+                            " argument when constructing the KnownParam.")
+        min_max_adj = vtype.adjust_and_set_lowish_highish(min_max)
+        vtype.param_hard_min_human, vtype.param_hard_max_human = min_max_adj
+        super().__init__(vtype, min_max_adj, canonicalize_str)
 
 
 class Stat(Variable):
@@ -360,17 +363,17 @@ class Interest(Variable):
         return self.vtype.from_net_param(net)
 
 
+###############################################################################
+#  Available variable types:
+###############################################################################
+
+
 class Location(VariableType):
     def to_net_transform_generic(self, human):
         return human
 
     def from_net_tranform_generic(self, transformed):
         return transformed
-
-
-###############################################################################
-#  Available variable types:
-###############################################################################
 
 
 class Scale(VariableType):
@@ -383,13 +386,14 @@ class Scale(VariableType):
 
 
 class PositiveCount(Scale):
-    def __init__(
+    def adjust_and_set_lowish_highish(
             self,
             lowish_highish_values: Tuple[float, float],
-    ) -> None:
+    ) -> Tuple[float, float]:
 
         lowish, highish = lowish_highish_values
-        super().__init__((lowish - 0.5, highish + 0.5))
+        return super().adjust_and_set_lowish_highish((lowish - 0.5,
+                                                      highish + 0.5))
 
     def preprocess_params(self, params_human):
         return tf.floor(params_human + 0.5)
@@ -398,6 +402,7 @@ class PositiveCount(Scale):
 class Correlation(Location):
     param_hard_min_human = -0.99
     param_hard_max_human = 0.99
+    accepts_lowish_highish_in_constructor = False
     def __init__(self):
         super().__init__()
 
@@ -414,6 +419,7 @@ class Correlation(Location):
 class Proportion(Location):
     param_hard_min_human = 0.01
     param_hard_max_human = 0.99
+    accepts_lowish_highish_in_constructor = False
     def __init__(self):
         super().__init__((0.1, 0.9))
 

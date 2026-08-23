@@ -56,8 +56,8 @@ cis = nci.NeuralCIs(
     sigma1=nci.Param(Scale((0.333, 3.)), (1., 1.), "sigma1 / sigma1_hat"),
     sigma2=nci.Param(Scale((0.1, 10.)), (0.333, 3.), "sigma2 / sigma1_hat"),
 
-    n1=nci.KnownParam(PositiveCount((3., 100.)), "n1"),
-    n2=nci.KnownParam(PositiveCount((3., 100.)), "n2"),
+    n1=nci.KnownParam(PositiveCount(), (3., 100.), "n1"),
+    n2=nci.KnownParam(PositiveCount(), (3., 100.), "n2"),
 
     mudiff_hat=nci.Stat(Location((-3., 3.))),
     sigma1_hat=nci.Stat(Scale((0.333, 3.))),
