@@ -462,6 +462,7 @@ class NeuralCIs(_DataSaver):
             profile: Optional[str] = None,                                     # Will default to TESTING if possible, else INFERENCE.
             network_setup_args: Optional[dict] = None,
             network_setup_arg_overrides: Optional[dict] = None,
+            remove_old_kwargs_for_backward_compatibility: Sequence[str] = (),
             **new_kwargs_for_backward_compatibility,
     ) -> T:
 
@@ -469,6 +470,7 @@ class NeuralCIs(_DataSaver):
         kwargs_object = _NeuralCIsKWArgs.load(
             foldername,
             new_kwargs_for_backward_compatibility,
+            remove_old_kwargs_for_backward_compatibility,
         )
         kwargs = kwargs_object.kwargs()
 

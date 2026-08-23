@@ -172,6 +172,7 @@ class _NeuralCIsKWArgs():
             cls: Type[T],
             foldername: str,
             new_kwargs_for_backward_compatibility: dict,
+            remove_old_kwargs_for_backward_compatibility: Sequence[str] = (),
     ) -> T:
         kwargs = cls._wrap_up_kwargs(
             sampling_distribution_fn = _TFFn.load(
@@ -194,6 +195,10 @@ class _NeuralCIsKWArgs():
             other_args |= new_kwargs_for_backward_compatibility
 
         kwargs |= {"variable_defs": variable_defs} | other_args
+
+        for to_remove in remove_old_kwargs_for_backward_compatibility:
+            del kwargs[to_remove]
+
         return cls(**kwargs)
 
     @staticmethod
