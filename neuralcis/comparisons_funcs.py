@@ -150,8 +150,8 @@ def __failure_proportions_from_likelihoods_file(
         | failures["all_a_same"]
     )
 
-    failures["any_failure_or_all_same_power"] = (
-        failures["any_failure_power"]
+    failures["any_failure_or_all_same_alt"] = (
+        failures["any_failure_alt"]
         | failures["all_a_same"]
     )
 
@@ -306,7 +306,7 @@ def __summarise_bootstrap_failure_rates(
         failures: np.ndarray,
 ) -> Dict[str, float]:
 
-    failure_names = "failed", "failed_power", "all_a_same", "all_a_same_power"
+    failure_names = "failed_null", "failed_alt", "all_a_same_null", "all_a_same_alt"
     failures_dict = dict(zip((failure_names), np.unstack(failures, axis=1)))
     failure_summary_dicts = []
     for failure_name, failure_array in failures_dict.items():

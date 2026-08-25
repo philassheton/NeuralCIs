@@ -34,8 +34,8 @@ def pvalues_for_batch(
 
     params_null_human = params_human | {"rho_ab_partial": rho_ab_partial_null}
     params_alt_human = params_human | {"rho_ab_partial": rho_ab_partial_alt}
-    params_null_net = cis.__params_human_to_net(**params_null_human)
-    params_alt_net = cis.__params_human_to_net(**params_alt_human)
+    params_null_net = cis._params_human_to_net(**params_null_human)
+    params_alt_net = cis._params_human_to_net(**params_alt_human)
 
     samples_raw = biparcorr.sampling_distribution_fn_raw(
         simulation_block_num=params_num,
