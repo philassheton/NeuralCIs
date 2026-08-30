@@ -46,6 +46,10 @@ class NeuralCIs(_DataSaver):
         Tensors as the sampling_distribution_fn, and should compute from
         those parameters, the parameter value to be estimated.  See example
         below.
+    :param estimates_fn:  This function will be fed the same 1D Tensorflow
+        Tensors as returned by the sampling_distribution_fn, plus those
+        relating to the known parameters, and should compute a set of
+        estimates for each of the unknown parameters.
     :param param_sampling_regularize_jitter_multiply: An optional float
         (default 1) which can be used to jitter the samples in the param
         sampling Jeffreys prior estimate.  See
@@ -63,9 +67,10 @@ class NeuralCIs(_DataSaver):
         deviations of input and output.  This is particularly useful when using
         e.g. monotonic layers, whose values can easily blow up without careful
         initialisation.
-    :param **param_distributions: For each parameter to the
-        sampling_distribution_fn a parameter Variable definition object
-        needs to be passed in by name (same names as used above).
+    :param **variable_defs:  For each variable either accepted as an argument
+        or returned by one of the above functions, a variables.Variable object
+        needs to be entered which defines how it is transformed / rescaled and
+        whether it is to be canonicalized.  See example in README.md.
 
     Once an instance of the new class is instantiated, the following members
     allow the model to be fit, and for p-values and confidence intervals to
@@ -74,33 +79,6 @@ class NeuralCIs(_DataSaver):
     :func fit:  Fit the networks to the simulation.
     :func p_and_ci: Calculate *p*-value and confidence interval for a novel
         observation.
-
-    Example:
-
-    import tensorflow as tf
-    import neuralcis
-
-    def normal_sampling_fn(mu, sigma, n):
-        std_normal = tf.random.normal(tf.shape(mu))
-        mu_hat = std_normal * sigma / tf.math.sqrt(n) + mu
-        return {"mu_hat": mu_hat}
-
-    def interest_fn(mu, sigma, n):
-        return mu
-
-    cis = neuralcis.NeuralCIs(
-        normal_sampling_fn,
-        interest_fn,
-        unknown_param_names=['mu'],
-        known_param_names=['sigma', 'n'],
-        stat_names=['mu_hat'],
-        mu=neuralcis.Location(-2., 2.),
-        sigma=neuralcis.Scale(.1, 10.),
-        n=neuralcis.SampleSize(3., 300.),
-    )
-
-    cis.fit()
-    print(cis.p_and_ci(1.96, mu=0., sigma=4., n=16.))
     """
 
     def __init__(
@@ -281,7 +259,7 @@ class NeuralCIs(_DataSaver):
     def defined_vars(self) -> List[str]:
         return list(self.kwargs.variable_defs.keys())
 
-    def fit(self, *args, **kwargs) -> None:
+    def fit(self, *args, **kwargs):
 
         """Fit the networks to the simulation.
 
@@ -290,10 +268,9 @@ class NeuralCIs(_DataSaver):
 
         This is a very rough network fitting algorithm in Version 1.0.0.
         Better fitting of the models is a priority in future versions.
-        Currently, the default Keras training loop is used with an
-        exponentially decreasing learning rate; it will be
-        decreased every epoch such that it halves every
-        `learning_rate_half_life_epochs` epochs.
+        Currently, the default Keras training loop is used with learning rate
+        decreased whenever training loss does not drop across a number of
+        epochs defined by `common.LEARNING_RATE_PLATEAU_PATIENCE_ADAM`.
 
         Training is run by default using the Adam algorithm with Nesterov
         gradients; this can be tweaked using the compile method.  Nesterov
@@ -308,11 +285,11 @@ class NeuralCIs(_DataSaver):
         :param epochs:  An int (default 50).  Number of epochs to run.
         :param verbose: An int or string (default 'auto').  See docs for
             tf.keras.Model.fit.
-        :param learning_rate_initial: A float (default .05).  Learning rate
-            for the first epoch.
-        :param learning_rate_half_life_epochs: An int (default 4).  Learning
-            rate will halve each time this number of epochs has passed.
+        :param learning_rate_adam_initial: A float (default .05).  Learning
+            rate for the first epoch.
         :param callbacks: An array of callbacks to be used during training.
+
+        :return: the history for the fit of the z-net.
         """
 
         self.param_sampler.fit(*args, **kwargs)
@@ -327,7 +304,7 @@ class NeuralCIs(_DataSaver):
             **stats_and_params: Union[np.ndarray, tf.Tensor, float],
     ) -> List[np.ndarray]:
 
-        """Calculate the p-value across a grid of stats and/or params.
+        """Calculate the p-value / workings across a grid of stats / params.
 
         For each stat and param, either a single fixed value or a
         range/sequence of values must be entered as a named argument. The
@@ -338,13 +315,16 @@ class NeuralCIs(_DataSaver):
          fixed value.
         :param value_names: Sequence of strs (default contains only "p");
          list of values to be returned.  Currently also supports "z0", "z1",
-         etc., as well as "{stat_name}_lower" and "{stat_name}_upper".
+         etc.
         :param return_also_axes: A sequence of str values: the names of the
          axes that should also be returned.  If this is not empty, the return
          type will be a list with these axes first, and the output values
          grid last.  If it is (), a list with only the requested `value_names`
          is returned.
-        :return:
+        :return: a set of numpy grids evaluated at each combination of the
+         stats_and_params entered to the function.  Grids returned will be
+         (in the following order): any inputs listed in `return_also_axes`,
+         followed the outputs listed in `value_names`.
         """
 
         all_names = self.stat_names + self.param_names()
@@ -483,6 +463,8 @@ class NeuralCIs(_DataSaver):
             for the stats and known params (named as per their
             naming in the simulation function).  Each of these may be a
             Tensor, numpy.ndarray, float or a sequence of floats.
+        :param nulls: A float, np.ndarray, or Tensor of interest parameter
+            values to be used as the null hypothesis for the p-values. 
         :param conf_levels: An optional list of floats (default .95).
             Confidence level for each respective  confidence interval.  If
             None, then no confidence interval is computed and only p-values
@@ -524,14 +506,17 @@ class NeuralCIs(_DataSaver):
         single stat, null parameter value, and known parameters, and
         it will return p-value, lower bound, upper bound.
 
-        :param: **stats_and_params, a set of named parameters, all floats,
-            giving values for the stats and null hypothesis params for
+        :param: **stats_and_known_params, a set of named parameters, all
+            floats, giving values for the stats and known params for
             which a single p-value is to be calculated.  Naming should be the
             same as in the simulation function.
+        :param: null, a single float giving the value of the interest parameter
+            at the null hypothesis.
         :param conf_level: A float (default .95).  Confidence level for the
-            confidence interval.   CURRENTLY ONLY None ACCEPTED!!  Will be
-            turned back on soon.
-        :return: Dict with float values: p-value, lower and upper CI bounds.
+            confidence interval.   CURRENTLY ONLY None ACCEPTED!!  Confidence
+            intervals will be turned back on soon.
+        :return: Dict with float values: p-value (lower and upper CI bounds
+            coming soon).
         """
 
         if not isinstance(null, (float, int)):
@@ -558,6 +543,34 @@ class NeuralCIs(_DataSaver):
             remove_old_kwargs_for_backward_compatibility: Sequence[str] = (),
             **new_kwargs_for_backward_compatibility,
     ) -> T:
+
+        """Load a previously saved network
+
+        The only important argument here is `foldername`:
+        :param foldername: Folder (str) where the network was saved.
+
+        The remaining arguments allow some flexibility in what is loaded and
+            also allows models on older versions to be reloaded.
+        :param profile: Profile name (optional str), if you do not want to
+            load all the param sampling networks, you can minimise the amount
+            that will be loaded using a smaller profile, such as 'inference'.
+            See `save` method for details.
+        :param network_setup_args: an optional dict, can be used to set new
+            network setup (e.g. if you want a larger network).
+        :param network_setup_arg_overrides: an optional dict, can be used to
+            override selected arguments in the network setup.
+        :param remove_old_kwargs_for_backward_compatibility: an optional
+            sequence of str values.  If loading an old NeuralCIs object, there
+            may be constructor arguments that are no longer part of the
+            constructor.  Listing them here removes them from the list of
+            constructor arguments.
+        :param **new_kwargs_for_backward_compatibility: optional further
+            kwargs that can be used to override NeuralCIs constructor
+            arguments loaded from the saved model or add new ones.  Again,
+            this is most useful when loading an old model into a new version
+            of the software.
+
+        :return: A loaded `NeuralCIs` object."""
 
         # TODO: Don't load saved data if in inference profile
         kwargs_object = _NeuralCIsKWArgs.load(
@@ -598,6 +611,18 @@ class NeuralCIs(_DataSaver):
             foldername: str,
             profile: Optional[str] = None,                                     # Defaults to the most detailed possible profile
     ) -> None:
+
+        """Save a fitted NeuralCIs object to disk.
+
+        :param foldername: Folder (str) where the network is to be saved.
+        :param profile: Profile name (optional str), defaults to the profile
+            currently set into the NeuralCIs object.  Changing this allows
+            the user to avoid saving large amounts of data.  Options are (i)
+            'full': save all nets, their weights and all Monte Carlo samples
+            used in setting up the parameter sampling; (ii) 'testing': save
+            all nets and their weights but not the huge Monte Carlo samples;
+            (iii) 'inference' save only znet's weights (is enough to generate
+            p-values.)"""
 
         kwargs = self.kwargs
         net_profile = kwargs.profile
@@ -673,10 +698,6 @@ class NeuralCIs(_DataSaver):
         if include_unknown_params:
             names += self.unknown_param_names
         return names
-
-
-
-
 
     def _canonicalize_net_interface(
             self,
