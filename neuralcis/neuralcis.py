@@ -373,58 +373,149 @@ class NeuralCIs(_DataSaver):
         else:
             return values_seq
 
+    def _numpy_or_float_to_tf(
+            self,
+            **stats_and_or_params:
+                Union[float, list[float], np.ndarray, Tensor1[tf32, Samples]],
+    ) -> Dict[str, Tensor1[tf32, Samples]]:
+
+        def convert_to_1d_tensor(
+                name: str,  # only for human readable error message
+                values: Union[float, np.ndarray, Tensor1]
+        ) -> Tensor1:
+
+            # First convert any list to NumPy array for further processing
+            if isinstance(values, list):
+                for i, element in enumerate(values):
+                    if not isinstance(element, (float, int)):
+                        raise Exception(f"If you pass a list of values into"
+                                        f" NeuralCIs, then each element must"
+                                        f" be a float.  Element {i} of {name}"
+                                        f" is {element} -- a {type(element)}.")
+                values = np.array(values)
+
+            # ... then start if else chain for different types:
+            if isinstance(values, (float, int)):
+                return tf.constant([values], tf.float32)
+
+            elif isinstance(values, np.ndarray):
+                ndims = len(values.shape)
+                if ndims == 0:
+                    return tf.constant(values[None], tf.float32)
+                elif ndims == 1:
+                    return tf.constant(values, tf.float32)
+                else:
+                    raise Exception(f"{name} is a NumPy array with more than"
+                                    f" one dimension.  I can't handle this!!")
+            elif isinstance(values, tf.Tensor):
+                ndims = values.shape.ndims
+                if ndims == 0:
+                    return values[None]
+                elif ndims == 1:
+                    return values
+                else:
+                    raise Exception(f"{name} is a tf.Tensor with more than"
+                                    f" one dimension.  I can't handle this!!")
+
+            else:
+                raise Exception(f"{name} is neither float, list of floats,"
+                                f" NumPy array nor Tensor.  I can't handle"
+                                f" this!!")
+
+
+        stats_and_or_params_human = {k: convert_to_1d_tensor(k, v)
+                                     for k, v in stats_and_or_params.items()}
+        lens = [t.shape[0] for t in stats_and_or_params_human.values()]
+        non_unit_lens = np.setdiff1d(np.unique(np.array(lens)), [1])
+        if len(non_unit_lens) == 0:
+            target_length = 1
+        elif len(non_unit_lens) == 1:
+            target_length = np.array(lens).max()
+            if 1 in lens:
+                for name in stats_and_or_params_human:
+                    if stats_and_or_params_human[name].shape[0] == 1:
+                        stats_and_or_params_human[name] = tf.tile(
+                            stats_and_or_params_human[name],
+                            (target_length,)
+                        )
+        else:
+            raise Exception(f"Every item in must either be length 1 or the"
+                            f" same length as every other but you have lengths"
+                            f" {lens}.")
+
+        return stats_and_or_params_human
+
+    def net_workings(
+            self,
+            **stats_and_params:
+                Union[float, list[float], Tensor1[tf32, Samples], np.ndarray],
+    ) -> Dict[str, np.ndarray]:
+
+        """Compute various intermediate values from the nets to sanity check
+        the fit of the net.
+
+        :param **stats_and_params: A set of named params, giving values
+            for the stats and null hypothesis params (named as per their
+            naming in the simulation function).  Each of these may be a
+            Tensor, numpy.ndarray, float or a sequence of floats.
+        :return: Dict with workings computed by nets.
+        """
+
+        stats_and_params = self._numpy_or_float_to_tf(**stats_and_params)
+        stats_net = self._stats_human_to_net(**stats_and_params)
+        params_net = self._params_human_to_net(**stats_and_params)
+
+        return self.pnet.p_workings(stats_net, params_net, self.kwargs.profile)
+
     def ps_and_cis(
             self,
+            nulls:
+                Union[float, list[float], np.ndarray, Tensor1[tf32, Samples]],
             conf_levels: Optional[np.ndarray] = None,
-            extra_values_names: Sequence[str] = (),
-            **stats_and_params: Union[Tensor1[tf32, Samples], np.ndarray],
+            **stats_and_known_params:
+                Union[float, list[float], np.ndarray, Tensor1[tf32, Samples]],
     ) -> Dict[str, np.ndarray]:
 
         """Calculate the p-values and confidence intervals for a series of
         novel cases.  (CONFIDENCE INTERVALS HAVE BEEN TEMPORARILY REMOVED.)
 
-        :param **stats_and_params: A set of named params, giving values
-            for the stats and null hypothesis params (named as per their
+        :param **stats_and_known_params: A set of named params, giving values
+            for the stats and known params (named as per their
             naming in the simulation function).  Each of these may be a
-            Tensor, numpy.ndarray or a sequence of floats.
+            Tensor, numpy.ndarray, float or a sequence of floats.
         :param conf_levels: An optional list of floats (default .95).
             Confidence level for each respective  confidence interval.  If
             None, then no confidence interval is computed and only p-values
-            are returned.
-        :param extra_values_names: An optional sequence of strs, giving
-            extra values to be returned from the p-net.  Currently, supports
-            "z0", "z1", ...  up to the number of zs but may be expanded later.
+            are returned.  CURRENTLY ONLY None ACCEPTED!!  Will be turned back
+            on soon.
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        stats_and_params_tf = {n: tf.constant(v, tf.float32)
-                               for n, v in stats_and_params.items()}
-
-        stats_human = {n: stats_and_params_tf[n] for n in self.stat_names}
-        params_human = {n: stats_and_params_tf[n] for n in self.param_names()}
-
-        stats_net = self._stats_human_to_net(**stats_human)
-        params_net = self._params_human_to_net(**params_human)
-
-        if len(extra_values_names) > 0:
-            values = self.pnet.p_workings(stats_net, params_net)
-            values = {"p": values["p"].numpy()} | \
-                     {k: values[k].numpy() for k in extra_values_names}
-        else:
-            p = self.pnet.p(stats_net, params_net)
-            values = {'p': p.numpy()}
+        values_multi_format = stats_and_known_params | {INTEREST: nulls}
+        values_tf = self._numpy_or_float_to_tf(**values_multi_format)
+        num_samples = values_tf[INTEREST].shape[0]
+        stats_net = self._stats_human_to_net(**values_tf)
+        known_params_net = self._params_human_to_net(known_params=True,
+                                                     unknown_params=False,
+                                                     num_samples=num_samples,
+                                                     **values_tf)
+        interest_net = self._interest_human_to_net(values_tf[INTEREST])
+        ps = self.pnet.p_from_interest(stats_net,
+                                       interest_net,
+                                       known_params_net)                       # type: ignore
 
         if conf_levels is not None:
             raise Exception("Generation of CIs is temporarily disabled in"
                             " NeuralCIs.  This will hopefully be returned"
                             " to a version very soon.")
 
-        return values
+        return {"p": ps.numpy()}
 
     def p_and_ci(
             self,
+            null: float,
             conf_level: Optional[float] = None,
-            **stats_and_params: Tensor1[tf32, Samples],
+            **stats_and_known_params: float,
     ) -> Dict[str, float]:
 
         """Calculate the p-value and confidence interval for a novel case.
@@ -438,20 +529,22 @@ class NeuralCIs(_DataSaver):
             which a single p-value is to be calculated.  Naming should be the
             same as in the simulation function.
         :param conf_level: A float (default .95).  Confidence level for the
-            confidence interval.
+            confidence interval.   CURRENTLY ONLY None ACCEPTED!!  Will be
+            turned back on soon.
         :return: Dict with float values: p-value, lower and upper CI bounds.
         """
 
-        stats_and_params_numpy = {k: np.array([v], dtype=np.float32)
-                                  for k, v in stats_and_params.items()}
-        if conf_level is not None:
-            conf_levels = np.array([conf_level], dtype=np.float32)
-        else:
-            conf_levels = None
+        if not isinstance(null, (float, int)):
+            raise Exception(f"Your null should be a float but is a"
+                            f" {type(null)}.")
+        for k, v in stats_and_known_params.items():
+            if not isinstance(v, (float, int)):
+                raise Exception(f"{k} should be a float but is a {type(v)}.")
 
-        ps_and_cis = self.ps_and_cis(conf_levels, **stats_and_params_numpy)
+        ps_and_cis = self.ps_and_cis(null, conf_level,
+                                     **stats_and_known_params)
 
-        p_and_ci = {k: v[0].tolist() for k, v in ps_and_cis.items()}
+        p_and_ci = {k: v[0].item() for k, v in ps_and_cis.items()}
 
         return p_and_ci
 

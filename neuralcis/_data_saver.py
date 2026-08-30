@@ -44,7 +44,10 @@ class _DataSaver:
         return os.path.join(foldername, filename)
 
     def _skip_when_profile(self, profile):
-        return not self.profile_can_be_extracted_from(
+        return not self.is_available_in_profile(profile)
+
+    def is_available_in_profile(self, profile):
+        return self.profile_can_be_extracted_from(
             self.smallest_profile_found_in,
             profile,
         )

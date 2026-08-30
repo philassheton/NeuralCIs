@@ -116,47 +116,58 @@ class _PNet(_DataSaver):
             self,
             estimates: Tensor2[tf32, Samples, Stats],
             params_null: Tensor2[tf32, Samples, Params],
+            profile: str,
     ):
 
-        # TODO: Check this; have kept separate from p() rather than refactoring
-        #       as I *think* the graph will be more efficient for p() when
-        #       intermediate results are not maintained, and since p() is
-        #       used in training of CINet, this is important.  Not sure though
-        #       and should check.
-
-        zs = self.znet.call_tf((estimates, params_null))
-        ps = self.p_from_z(zs[:, 0])
-        inner_feeler = self.param_sampler.inner_feeler_net
-        inner_feeler_outputs = inner_feeler.call_tf((params_null, params_null))  # type: ignore
-        inner_importance = inner_feeler.get_log_importance_from_net(
-            params_null
-        )
-        outer_feeler = self.param_sampler.outer_feeler_net
-        outer_feeler_outputs = outer_feeler.call_tf((params_null, params_null))  # type: ignore
-        outer_importance = outer_feeler.get_log_importance_from_net(
-            params_null
-        )
-
-        known_params_null = known_params_from_params(params_null,
-                                                     self.num_unknown_param,
-                                                     self.num_known_param)
-        inside_net = self.param_sampler.hits_inside_net
-        inside_prob = inside_net.call_tf((estimates, known_params_null))
-        hits_inside = inside_net.is_inside_sampled_region(estimates,
-                                                          known_params_null)
-
         values = {}
-        for i in range(zs.shape[-1]):
-            values[f"z{i}"] = zs[:, i]
-        values["p"] = ps
-        values["inner_log_vol"] = inner_feeler_outputs[:, 0]
-        values["inner_include"] = inner_feeler_outputs[:, 1]
-        values["inner_importance"] = inner_importance
-        values["outer_log_vol"] = outer_feeler_outputs[:, 0]
-        values["outer_include"] = outer_feeler_outputs[:, 1]
-        values["outer_importance"] = outer_importance
-        values["inside_prob"] = inside_prob
-        values["hits_inside"] = hits_inside
+
+        if self.znet.is_available_in_profile(profile):
+            zs = self.znet.call_tf((estimates, params_null))
+            ps = self.p_from_z(zs[:, 0])
+            for i in range(zs.shape[-1]):
+                values[f"z{i}"] = zs[:, i]
+            values["p"] = ps
+
+        if self.param_sampler.is_available_in_profile(profile):
+            inner_feeler = self.param_sampler.inner_feeler_net
+            if inner_feeler.is_available_in_profile(profile):
+                inner_feeler_outputs = inner_feeler.call_tf((params_null,
+                                                             params_null))     # type: ignore
+                inner_importance = inner_feeler.get_log_importance_from_net(
+                    params_null,
+                )
+                values["inner_log_vol"] = inner_feeler_outputs[:, 0]
+                values["inner_include"] = inner_feeler_outputs[:, 1]
+                values["inner_importance"] = inner_importance
+
+            outer_feeler = self.param_sampler.outer_feeler_net
+            if outer_feeler.is_available_in_profile(profile):
+                outer_feeler_outputs = outer_feeler.call_tf((params_null,
+                                                             params_null))     # type: ignore
+                outer_importance = outer_feeler.get_log_importance_from_net(
+                    params_null
+                )
+                values["outer_log_vol"] = outer_feeler_outputs[:, 0]
+                values["outer_include"] = outer_feeler_outputs[:, 1]
+                values["outer_importance"] = outer_importance
+
+            inside_net = self.param_sampler.hits_inside_net
+            if inside_net.is_available_in_profile(profile):
+                known_params_null = known_params_from_params(
+                    params_null,
+                    self.num_unknown_param,
+                    self.num_known_param,
+                )
+                inside_prob = inside_net.call_tf((
+                    estimates,
+                    known_params_null,
+                ))
+                hits_inside = inside_net.is_inside_sampled_region(
+                    estimates,
+                    known_params_null,
+                )
+                values["inside_prob"] = inside_prob
+                values["hits_inside"] = hits_inside
 
         return values
 
