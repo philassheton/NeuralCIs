@@ -337,10 +337,16 @@ class NeuralCIs(_DataSaver):
         stats_params_flattened = {n: v
                                   for n, v in zip(all_names,
                                                   all_grids_flattened)}
-        values_dict = self.ps_and_cis(
-            extra_values_names=value_names,
-            **stats_params_flattened,
+        stats_params_flattened[INTEREST] = self.kwargs.interest_fn(
+            **{name: stats_params_flattened[name]
+               for name in self.param_names()}
         )
+
+        # TODO: Only compute needed values for efficiency.
+        values_dict = self.ps_and_cis(
+            nulls=stats_params_flattened[INTEREST],
+            **stats_params_flattened,
+        ) | self.net_workings(**stats_params_flattened)
         values_seq = [np.squeeze(np.reshape(values_dict[n], shape))
                       for n in value_names]
 
