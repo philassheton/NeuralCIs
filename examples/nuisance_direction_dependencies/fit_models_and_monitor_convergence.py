@@ -70,8 +70,8 @@ def ks_uniform(u):
 def compute_test_values_at_theta(znet_self, params):
     psi = params[0]
     lambd = params[1]
-    x1 = psi + lambd + znet_self.validation_m + znet_self.validation_u
-    x2 = lambd + znet_self.validation_u
+    x2 = lambd + znet_self.validation_e2
+    x1 = psi + x2 + znet_self.validation_e1
     stats = cis._stats_human_to_net(x1=x1, x2=x2)
     num_samples = NUM_M * NUM_U
     params = cis._params_human_to_net(
@@ -164,10 +164,10 @@ def fit(
     return history
 
 
-m_probs = tf.linspace(0.5, NUM_M - 0.5, NUM_M) / NUM_M
-m_quantiles = tfp.distributions.Normal(0., 1.).quantile(m_probs)
-m_quantiles /= tf.math.reduce_std(m_quantiles)
-u_samples = tf.random.stateless_uniform(
+e1_probs = tf.linspace(0.5, NUM_M - 0.5, NUM_M) / NUM_M
+e1_quantiles = tfp.distributions.Normal(0., 1.).quantile(e1_probs)
+e1_quantiles /= tf.math.reduce_std(e1_quantiles)
+e2_samples = tf.random.stateless_uniform(
     shape=(NUM_U,),
     seed=tf.constant([123, 456], dtype=tf.int32),
     minval=-0.5,
@@ -176,8 +176,8 @@ u_samples = tf.random.stateless_uniform(
 
 _ZNet.test_step = test_step
 _ZNet.fit = fit
-_ZNet.validation_m = tf.repeat(m_quantiles, repeats=NUM_U)
-_ZNet.validation_u = tf.tile(u_samples, (NUM_M,))
+_ZNet.validation_e1 = tf.repeat(e1_quantiles, repeats=NUM_U)
+_ZNet.validation_e2 = tf.tile(e2_samples, (NUM_M,))
 
 
 for i in range(100):
