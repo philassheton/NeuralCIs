@@ -104,7 +104,7 @@ For a very basic example of how to fit a NeuralCIs object, see `examples/t-test/
 
 8.  ```python
     cis.p_and_ci(mu_hat=3.182446/2., sigma_hat=1., null=0., n=4)
-    Out[5]: {'p': 0.05001378059387207}
+    Out[5]: {'p': 0.051679015159606934}
     ```
 
     It is then possible to generate p-values (confidence intervals are temporarily disabled) for any set of parameters within the ranges defined in step 3.  Into `cis.p_and_ci`, we pass in all statistics and known parameters, plus a null value for our interest parameter.  This case should give a $p$-value of exactly 0.05 and it is not far wrong!
