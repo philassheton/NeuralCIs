@@ -94,7 +94,7 @@ For a very basic example of how to fit a NeuralCIs object, see `examples/t-test/
     cis.fit()
     ```
 
-    Calling `fit` on this object will run the training.  This takes a few hours on a mid-level laptop GPU.
+    Calling `fit` on this object will run the training.  This takes around two hours on a mid-level laptop GPU (RTX 3060 Mobile).
 
 7.  ```python
     cis.save('saved_model')

@@ -1,4 +1,11 @@
-tensorflow[and-cuda]>=2.20,<2.21
+# Requires Python >= 3.10
+
+# If you want GPU, you may need to install CUDA separately or run (large downloads!):
+# tensorflow[and-cuda]>=2.20,<2.21
+
+# For a quick install that runs but may not use GPU:
+tensorflow>=2.20,<2.21
+
 tf-keras>=2.20,<2.21
 tensorflow-probability==0.25.0
 numpy>=2.1
