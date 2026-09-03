@@ -198,7 +198,7 @@ class _ZNet(_SimulatorNet):
 
         interest_net_inputs = tf.concat([stats_canonical,
                                          interest_canonical[:, None],
-                                         known_params], axis=1)
+                                         known_params_canonical], axis=1)
         z = self.nets[0](interest_net_inputs, training=False)[:, 0]            # net outputs has a unit dimension at axis=1 for the case where there is more than one output
         return z
 

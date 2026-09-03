@@ -349,7 +349,17 @@ def __summarise_data_file(
             method_name,
             data_type,
         )
-        extra_results |= failure_proportions
+        failure_proportions_powersim = \
+            __failure_proportions_from_likelihoods_file(
+                params_sample_num,
+                f"{method_name}_powersim",
+                data_type,
+            )
+        failure_proportions_powersim = {
+            f"{name}_powersim": value
+            for name, value in failure_proportions_powersim.items()
+        }
+        extra_results |= failure_proportions | failure_proportions_powersim
 
     if method_name == "bootstrap_lr":
         ps, failures = np.split(ps, (2,), axis=1)

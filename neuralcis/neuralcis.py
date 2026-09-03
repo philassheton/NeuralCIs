@@ -280,12 +280,14 @@ class NeuralCIs(_DataSaver):
         zone").  But, in future cuts where invertability might be built-in,
         they might not be necessary.
 
-        :param steps_per_epoch:  An int (default 1000).  Number of steps
-            before learning rate is decreased.
-        :param epochs:  An int (default 50).  Number of epochs to run.
+        :param steps_per_epoch:  An int (default 100).  Number of steps
+            before loss is reassessed for drop in learning rate.  Only when
+            using the default, is twice this applied to the z-net.
+        :param epochs:  An int (default 500).  Number of epochs to run.  Only
+            when using the default, twice this is applied to the z-net.
         :param verbose: An int or string (default 'auto').  See docs for
             tf.keras.Model.fit.
-        :param learning_rate_adam_initial: A float (default .05).  Learning
+        :param learning_rate_adam_initial: A float (default .0025).  Learning
             rate for the first epoch.
         :param callbacks: An array of callbacks to be used during training.
 

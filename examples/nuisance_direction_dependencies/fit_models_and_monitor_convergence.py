@@ -15,6 +15,7 @@ NUM_M = 32
 NUM_U = 64
 EPOCHS = 500
 STEPS_PER_EPOCH = 100
+NUM_RUNS = 250
 
 
 def sampling_distribution_fn(psi, lambd):
@@ -180,7 +181,7 @@ _ZNet.validation_e1 = tf.repeat(e1_quantiles, repeats=NUM_U)
 _ZNet.validation_e2 = tf.tile(e2_samples, (NUM_M,))
 
 
-for i in range(100):
+for i in range(NUM_RUNS):
     znet = _ZNet(
         cis._sampling_dist_net_interface,
         cis.pnet.param_sampler.sample_params,

@@ -99,7 +99,7 @@ class _PNet(_DataSaver):
         #       users of this func.
 
         z = self.znet.call_tf_interest_only(estimates, interest, known_params)
-        return self.p_from_z(z[:, None])
+        return self.p_from_z(z)
 
     def p_from_z(
             self,
