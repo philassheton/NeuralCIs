@@ -1,10 +1,8 @@
-# Simultaneous Confidence Intervals through Neural Networks
+# Frequentist inference despite nuisance parameters through neural networks
 
-Generate simultaneous confidence intervals for almost any set of estimands using neural networks.
+This is a work in progress;  the current version only generates $p$-values on a single parameter of interest, but ultimately, this will generate confidence intervals also.
 
-This is a work in progress;  the current version only generates $p$-values on a single parameter of interest.
-
-## The Current Version
+## The current version
 
 This project does not yet have a version number, as the first version is still being finalised.  Version 1.0.0 is almost complete; the code works now, but just needs some finishing touches, and the interface might change in small ways until then.  
 
@@ -39,11 +37,11 @@ For a very basic example of how to fit a NeuralCIs object, see `examples/t-test/
     ```
     Next you need to write a sampling function.  This can accept any number of arguments, and these are the parameters to your distribution.
 
-   Parameter values are passed in for each parameter as a 1D `tf.Tensor` of sampled parameter values, all of the same length.  For each element in these parameter tensors, the sampling function should draw **one** sample from the distribution defined by the corresponding parameters.  The result should then be a set of `tf.Tensor` objects of the same size as each parameter, and wrapped up in a python dictionary.  Note that these statistics have different names than the parameters.  
+    Parameter values are passed in for each parameter as a 1D `tf.Tensor` of sampled parameter values, all of the same length.  For each element in these parameter tensors, the sampling function should draw **one** sample from the distribution defined by the corresponding parameters.  The result should then be a set of `tf.Tensor` objects of the same size as each parameter, and wrapped up in a python dictionary.  Note that these statistics have different names than the parameters.  
 
-   In the current version of `neuralcis` you will also need to return exactly as many statistics as there are unknown parameters.  Here `n` will be treated as known *a priori*, so there are two *unknown* parameters input to the function and two statistics returned.
+    In the current version of `neuralcis` you will also need to return exactly as many statistics as there are unknown parameters.  Here `n` will be treated as known *a priori*, so there are two *unknown* parameters input to the function and two statistics returned.
    
-   *The sampling function must be Tensorflow compatible*.  In the above example, `tf.random.normal` is used to sample from a normal distribution and `tfp.distributions.Chi2(df).sample` to sample from a chi-squared distribution.  The package `tensorflow-probability` contains a huge array of Tensorflow-compatible statistical sampling options.
+    *The sampling function must be Tensorflow compatible*.  In the above example, `tf.random.normal` is used to sample from a normal distribution and `tfp.distributions.Chi2(df).sample` to sample from a chi-squared distribution.  The package `tensorflow-probability` contains a huge array of Tensorflow-compatible statistical sampling options.
 
 3.  ```python
     def interest_fn(mu, sigma, n):
@@ -59,7 +57,7 @@ For a very basic example of how to fit a NeuralCIs object, see `examples/t-test/
    
     The `estimates_fn` maps the statistics returned by `sampling_distribution_fn` plus the known parameters back to estimates of the parameters input to it.  These are **not** used in the main pivoting network, but help the random sampling of parameters to find its way around space and to estimate the determinant of the Fisher information, again used as part of the parameter sampling process.
 
-   Most importantly, these are the basis on which the set of valid inputs to the network are defined.  In step 5 you will specify a bounding "estimates box" around these estimates; the net will attempt to generate valid $p$-values for any sample whose estimates land inside this box.
+    Most importantly, these are the basis on which the set of valid inputs to the network are defined.  In step 5 you will specify a bounding "estimates box" around these estimates; the net will attempt to generate valid $p$-values for any sample whose estimates land inside this box.
 
 5.  ```python
     cis = nci.NeuralCIs(
@@ -83,11 +81,11 @@ For a very basic example of how to fit a NeuralCIs object, see `examples/t-test/
     
     Finally you are ready to construct your `NeuralCIs` object.  The arguments to this are the `sampling_distribution_fn`, `interest_fn` and `estimates_fn` plus a series of definitions for each of the input and output variables for those functions.  Each of these is one of `Param`, `KnownParam`, `Stat` or `Interest`, depending on the variable's role in the model.  It may also be a `StatCanonical` (see next section).  
    
-   The first argument to each of these variable definitions is a `VariableType`, which defines what sort of value it is.  This can currently be any of `Location`, `Scale`, `PositiveCount`, `Correlation` or `Proportion` and defines how the variable will be transformed before it is fed into the net; for example, a `Scale` variable will be log transformed.  These objects have their own properties (for example, it is also possible to set `lowish_highish` values on each that rescale the transformed values to help keep variables on different scales manageable for the network).  So it can be important to construct a separate `VariableType` object for each `Variable`.
+    The first argument to each of these variable definitions is a `VariableType`, which defines what sort of value it is.  This can currently be any of `Location`, `Scale`, `PositiveCount`, `Correlation` or `Proportion` and defines how the variable will be transformed before it is fed into the net; for example, a `Scale` variable will be log transformed.  These objects have their own properties (for example, it is also possible to set `lowish_highish` values on each that rescale the transformed values to help keep variables on different scales manageable for the network).  So it can be important to construct a separate `VariableType` object for each `Variable`.
 
-   The `Param` and `KnownParam` variable definitions take a second argument: a pair of float values, which define the range of values for this variable.  For a `KnownParam`, this is simply a minimum and maximum value; the known parameter will then be randomly sampled between these two values.  For a `Param`, this is a little more subtle: it is a range of *estimates* values for which we would like $p$-values to be valid.  At inference-time, we will not know whether our unknown parameters are within a given range, but we will be able to run the statistics through the `estimates_fn`.  The training aims to make $p$-values (and in particular, for phase 2, confidence intervals) valid for any sample whose estimates land between the minimum and maximum values defined here.  We refer to the combined valid estimates intervals across the different unknown parameters as the "estimates box".
+    The `Param` and `KnownParam` variable definitions take a second argument: a pair of float values, which define the range of values for this variable.  For a `KnownParam`, this is simply a minimum and maximum value; the known parameter will then be randomly sampled between these two values.  For a `Param`, this is a little more subtle: it is a range of *estimates* values for which we would like $p$-values to be valid.  At inference-time, we will not know whether our unknown parameters are within a given range, but we will be able to run the statistics through the `estimates_fn`.  The training aims to make $p$-values (and in particular, for phase 2, confidence intervals) valid for any sample whose estimates land between the minimum and maximum values defined here.  We refer to the combined valid estimates intervals across the different unknown parameters as the "estimates box".
 
-   Finally, the last argument to `NeuralCIs` is `param_sampling_regularize_jitter_add=0.1`.  This compensates to some extent for the fact that the Jeffreys Prior currently used can overemphasise small $\sigma$ values in this model, in cases like this, where the estimates box is not a single point.  We hope to improve the parameter sampling in the near future.
+    Finally, the last argument to `NeuralCIs` is `param_sampling_regularize_jitter_add=0.1`.  This compensates to some extent for the fact that the Jeffreys Prior currently used can overemphasise small $\sigma$ values in this model, in cases like this, where the estimates box is not a single point.  We hope to improve the parameter sampling in the near future.
 
 
 6.  ```python
