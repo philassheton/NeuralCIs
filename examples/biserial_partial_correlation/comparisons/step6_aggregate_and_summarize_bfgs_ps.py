@@ -1,5 +1,5 @@
 import biparcorr_analyse_funcs as biparcorr
-from neuralcis import comparisons_funcs as comp
+from examples import comparisons_funcs as comp
 
 method_name = "bfgs"
 summary_dict, summary_grids = biparcorr.summarise_pvalues_files(

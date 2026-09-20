@@ -7,12 +7,11 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
 
-from examples.biserial_partial_correlation.comparisons import \
-    biparcorr_analyse_funcs as biparcorr
+import biparcorr_analyse_funcs as biparcorr
 
 from tensor_annotations.tensorflow import Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
-from examples.biserial_partial_correlation.comparisons.biparcorr_analyse_funcs import Samples
+from examples import Samples
 
 NUM_PARAM_SAMPLES = 1000
 TARGET_RATE = 5e-5

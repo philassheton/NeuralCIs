@@ -8,7 +8,7 @@ import tensorflow as tf
 from tqdm import tqdm
 
 # typing
-from biparcorr_analyse_funcs import Params
+from examples import Params
 from typing import Tuple
 from tensor_annotations.tensorflow import Tensor0, Tensor1
 from tensor_annotations.tensorflow import float32 as tf32

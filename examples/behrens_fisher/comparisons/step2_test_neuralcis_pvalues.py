@@ -1,7 +1,7 @@
 import behfish_analyse_funcs as behfish
-from neuralcis import NeuralCIs, comparisons_funcs
+from neuralcis import NeuralCIs
+from examples import comparisons_funcs
 
-import numpy as np
 import tensorflow as tf
 import os
 

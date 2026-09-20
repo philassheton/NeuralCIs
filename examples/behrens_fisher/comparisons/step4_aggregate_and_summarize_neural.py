@@ -1,5 +1,5 @@
 import behfish_analyse_funcs as behfish
-from neuralcis import comparisons_funcs as comp
+from examples import comparisons_funcs as comp
 
 
 method_name = "neural"

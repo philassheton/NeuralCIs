@@ -1,5 +1,5 @@
 import behfish_analyse_funcs as behfish
-from neuralcis import comparisons_funcs as comp
+from examples import comparisons_funcs as comp
 
 method_name = "welch"
 summary_dict, summary_grids = behfish.summarise_pvalues_files(

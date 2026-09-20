@@ -1,7 +1,7 @@
 import os
 
 import behfish_analyse_funcs as behfish
-from neuralcis import comparisons_funcs
+from examples import comparisons_funcs
 
 import tensorflow as tf
 import tensorflow_probability as tfp

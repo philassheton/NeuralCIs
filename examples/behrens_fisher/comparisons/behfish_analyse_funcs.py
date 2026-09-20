@@ -1,15 +1,14 @@
 import tensorflow as tf
 import numpy as np
 
-from neuralcis import comparisons_funcs
+from examples import comparisons_funcs
 
 # typing
 from typing import Optional, Dict, Tuple
 from collections.abc import Sequence
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
-
-from neuralcis.comparisons_funcs import Samples, Two
+from examples import Samples, Two
 
 
 COMPARISON_NAME = 'behrens_fisher'

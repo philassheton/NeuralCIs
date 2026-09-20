@@ -5,7 +5,7 @@ import pandas as pd
 from neuralcis import NeuralCIs
 
 import biparcorr_analyse_funcs as biparcorr
-from neuralcis import comparisons_funcs as comp
+from examples import comparisons_funcs as comp
 
 from tqdm import tqdm
 

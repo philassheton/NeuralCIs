@@ -1,8 +1,9 @@
 import neuralcis
-from neuralcis import common, comparisons_funcs, _callbacks
+from neuralcis import common, _callbacks
 from neuralcis import Stat, Param, Interest
 from neuralcis import Location
 from neuralcis._z_net import _ZNet
+from examples import comparisons_funcs
 
 import tensorflow as tf
 import tensorflow_probability as tfp

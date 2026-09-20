@@ -7,7 +7,7 @@ import functools
 
 # typing
 from typing import Union, Tuple, Optional
-from biparcorr_analyse_funcs import Batch, Samples, Stats, UnknownParams, Ys
+from examples import Batch, Samples, Stats, UnknownParams, Ys
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
 

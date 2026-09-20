@@ -2,7 +2,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 import neuralcis as nci
-from neuralcis import Location, Scale, PositiveCount, comparisons_funcs
+from neuralcis import Location, Scale, PositiveCount
 
 
 def sampling_distribution_fn(mu, sigma, n):

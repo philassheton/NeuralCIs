@@ -1,5 +1,5 @@
 import biparcorr_analyse_funcs as biparcorr
-from neuralcis import comparisons_funcs as comp
+from examples import comparisons_funcs as comp
 
 
 NUM_PARAM_SAMPLES = 500
