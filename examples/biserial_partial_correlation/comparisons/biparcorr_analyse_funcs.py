@@ -16,6 +16,12 @@ from examples import Batch, Samples, Stats
 COMPARISON_NAME = 'biserial_partial_correlation'
 PARAM_NAMES = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
                'rho_ab_partial_power', 'target_power']
+PARAMS_BOUNDS_CHECKS = {
+    "any_abs_rho_above_988": (lambda x: np.abs(x) >= np.atanh(0.988),
+                              [True, True, True, False]),
+    "prop_a_trans_abs_above_988": (lambda x: np.abs(x) >= np.atanh(0.988),
+                                   [False, False, False, True]),
+}
 
 
 def sampling_distribution_fn_raw(
@@ -190,7 +196,7 @@ def summarise_pvalues_files(
     return comparisons_funcs.summarise_pvalues_files(
         PARAM_NAMES, COMPARISON_NAME,
         method_name, data_type, alphas, add_params, num_params,
-        only_first_n_pvalues,
+        only_first_n_pvalues, PARAMS_BOUNDS_CHECKS,
     )
 
 

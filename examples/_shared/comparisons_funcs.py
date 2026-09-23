@@ -6,12 +6,13 @@ import os
 from tqdm import tqdm
 
 # typing
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Callable
 from collections.abc import Sequence
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32
 
 from .common import Batch, Samples, Two
+
 
 PARAMS_DICT_FILENAME = "param_samples.npy"
 SUMMARIES_FOLDER = "summaries"
@@ -86,10 +87,32 @@ def __likelihoods_to_ps(
     return ps, num_negative, num_negative_power
 
 
+def _out_of_bounds_proportions_for_type(
+        data: np.ndarray,
+        param_is_of_type: Sequence[bool],
+        params_bounds_check_fn: Callable[[np.ndarray], np.ndarray],
+) -> float:
+
+    col_is_type = ([False, False, False, False]
+                   + list(param_is_of_type)
+                   + list(param_is_of_type)[1:]
+                   + list(param_is_of_type)[1:])
+    type_indices = np.where(col_is_type)[0]
+    type_cols = data[:, type_indices]
+    bad = params_bounds_check_fn(type_cols)
+
+    return np.mean(np.any(bad, axis=1))
+
+
 def __failure_proportions_from_likelihoods_file(
         params_sample_num: int = 0,
         method: str = "bfgs",
         data_type: str = "likelihoods",  # might also be likelihoods_pow
+        params_bounds_checks: Optional[Dict[
+            str,                                       # col name in output
+            Tuple[Callable[[np.ndarray], np.ndarray],  # check if entry OOB
+                  Sequence[bool]]                      # apply to True params
+        ]] = None,
 ) -> Dict[str, float]:
 
     assert data_type in ("likelihoods", "likelihoods_pow")
@@ -143,8 +166,17 @@ def __failure_proportions_from_likelihoods_file(
 
     failure_proportions = {k: v.mean().item() for k, v in failures.items()}
 
-    return failure_proportions
+    if params_bounds_checks is not None:
+        for col_name, (check_fn, param_is_of_type) \
+                in params_bounds_checks.items():
+            failure_proportions[col_name] = \
+                _out_of_bounds_proportions_for_type(
+                    data,
+                    param_is_of_type,
+                    check_fn,
+                )
 
+    return failure_proportions
 
 def __get_and_make_output_path(folder: str, filename: str):
     os.makedirs(folder, exist_ok=True)
@@ -315,6 +347,11 @@ def __summarise_data_file(
         data_type: str = "ps",
         alphas: Sequence[float] = (0.05, 0.01),
         only_first_n_pvalues: Optional[int] = None,
+        params_bounds_checks: Optional[Dict[
+            str,                                       # col name in output
+            Tuple[Callable[[np.ndarray], np.ndarray],  # check if entry OOB
+                  Sequence[bool]]                      # apply to True params
+        ]] = None,
 ) -> Tuple[Dict[str, float], np.ndarray]:
 
     ps, extra_results = __load_data_file_as_pvalues(params_sample_num,
@@ -334,12 +371,14 @@ def __summarise_data_file(
             params_sample_num,
             method_name,
             data_type,
+            params_bounds_checks,
         )
         failure_proportions_powersim = \
             __failure_proportions_from_likelihoods_file(
                 params_sample_num,
                 f"{method_name}_powersim",
                 data_type,
+                params_bounds_checks,
             )
         failure_proportions_powersim = {
             f"{name}_powersim": value
@@ -379,6 +418,11 @@ def summarise_pvalues_files(
         add_params: bool = False,
         num_params: Optional[int] = None,
         only_first_n_pvalues: Optional[int] = None,
+        params_bounds_checks: Optional[Dict[
+            str,                                       # col name in output
+            Tuple[Callable[[np.ndarray], np.ndarray],  # check if entry OOB
+                  Sequence[bool]]                      # apply to True params
+        ]] = None,
 ) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
 
     params = load_params_dict(param_names, comparison_name)
@@ -386,7 +430,8 @@ def summarise_pvalues_files(
         num_params = get_num_param_samples(params)
 
     summaries = [__summarise_data_file(i, method_name, data_type, alphas,
-                                       only_first_n_pvalues)
+                                       only_first_n_pvalues,
+                                       params_bounds_checks)
                      for i in tqdm(range(num_params))]
     summary_dict = {n:np.stack([dict[n] for (dict, grid) in summaries], axis=0)
                     for n in summaries[0][0]}
