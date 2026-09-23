@@ -6,6 +6,7 @@ from neuralcis import NeuralCIs
 
 import biparcorr_analyse_funcs as biparcorr
 from examples import comparisons_funcs as comp
+from examples import latent_correlation_funcs as lcor
 
 from tqdm import tqdm
 
@@ -118,8 +119,8 @@ def pvalues_for_whole_param(
         num_rows=num_sims_per_param,
         **params_human,
     )
-    rs = biparcorr.estimate_correlations_safe(samples_raw, params_human["n"])
-    prop_a_hat = biparcorr.estimate_prop_a(samples_raw, params_human["n"])
+    rs = lcor.estimate_correlations_safe(samples_raw, params_human["n"])
+    prop_a_hat = lcor.estimate_prop_a(samples_raw, params_human["n"])
     stats_human = {"rho_ab_hat": rs[:, 0],
                    "rho_bc_hat": rs[:, 1],
                    "rho_ac_hat": rs[:, 2],

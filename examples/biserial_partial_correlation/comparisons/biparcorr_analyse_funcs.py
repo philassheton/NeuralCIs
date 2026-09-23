@@ -3,67 +3,19 @@ import tensorflow_probability as tfp
 import numpy as np
 
 from examples import comparisons_funcs
+from examples import latent_correlation_funcs as lcor
 
 # typing
 from typing import Optional, Dict, Tuple
 from collections.abc import Sequence
-from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
+from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
-from examples import Batch, Samples, Stats, PairwiseCorrelations
+from examples import Batch, Samples, Stats
 
 
 COMPARISON_NAME = 'biserial_partial_correlation'
 PARAM_NAMES = ['rho_ab_partial', 'rho_bc', 'rho_ac', 'prop_a', 'n',
                'rho_ab_partial_power', 'target_power']
-
-N_MAX = 100
-SEED_FOR_BATCH_INCONSISTENT = 12345
-
-
-def generate_random_normals(
-        num_rows: int,
-        row_shape: Tuple[int, int],
-        simulation_block_num: Tensor0[ti32],
-        batch_consistent_randoms: bool = False,
-        first_row_num: Optional[Tensor0[ti32]] = None,
-) -> Tensor3:
-
-    if batch_consistent_randoms:
-        return generate_random_normals_batch_consistent(num_rows, row_shape,
-                                                        simulation_block_num,
-                                                        first_row_num)
-    else:
-        return generate_random_normals_batch_inconsistent(num_rows, row_shape,
-                                                          simulation_block_num)
-
-
-def generate_random_normals_batch_consistent(
-        num_rows: int,
-        row_shape: Tuple[int, int],
-        simulation_block_num: Tensor0[ti32],
-        first_row_num: Optional[Tensor0[ti32]] = None,
-) -> Tensor3:
-
-    row_nums = tf.range(num_rows) + first_row_num
-    return tf.map_fn(
-        lambda row: tf.random.stateless_normal(row_shape,
-                                               tf.stack([simulation_block_num, row])),
-        row_nums,
-        dtype=tf.float32,
-    )
-
-
-def generate_random_normals_batch_inconsistent(
-        num_rows: int,
-        row_shape: Tuple[int, int],
-        simulation_block_num: Tensor0[ti32],
-) -> Tensor3:
-
-    shape = [num_rows] + list(row_shape)
-    return tf.random.stateless_normal(
-        shape,
-        tf.stack([simulation_block_num, SEED_FOR_BATCH_INCONSISTENT]),
-    )
 
 
 def sampling_distribution_fn_raw(
@@ -87,15 +39,37 @@ def sampling_distribution_fn_raw(
         is_bootstrap_simulation: bool = False,
 ) -> Tensor3[tf32, Batch, Samples, Stats]:
 
-    if batch_consistent_randoms:
-        assert first_row_num_within_simulation_block is not None
-    else:
-        assert first_row_num_within_simulation_block is None
+    return lcor.sampling_distribution_fn_raw_generic(
+        rho_ab_partial=rho_ab_partial,
+        rho_bc=rho_bc,
+        rho_ac=rho_ac,
+        prop_a_b_c=(prop_a, None, None),
+        n=n,
+        simulation_block_num=simulation_block_num,
+        num_rows=num_rows,
+        batch_consistent_randoms=batch_consistent_randoms,
+        first_row_num_within_simulation_block=
+                                        first_row_num_within_simulation_block,
+        is_powersim_run=is_powersim_run,
+        is_bootstrap_simulation=is_bootstrap_simulation,
+    )
 
-    if is_powersim_run:
-        simulation_block_num += 1_000_000_000
-    if is_bootstrap_simulation:
-        simulation_block_num += 2_000_000_000
+
+###############################################################################
+#  Likelihood ratio functions
+###############################################################################
+
+def log_likelihood(
+        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
+        rho_ab_partial: Tensor1[tf32, Batch],
+        rho_bc: Tensor1[tf32, Batch],
+        rho_ac: Tensor1[tf32, Batch],
+        prop_a: Tensor1[tf32, Batch],
+        n: Tensor1[tf32, Batch],
+) -> Tensor1[tf32, Batch]:
+
+    # Note: the likelihood methods used here have the advantage that they
+    #       magically know the variances of b and c.
 
     rho_ab = (rho_bc * rho_ac
               + rho_ab_partial * tf.sqrt((1. - tf.square(rho_bc)) *
@@ -103,68 +77,88 @@ def sampling_distribution_fn_raw(
 
     z_threshold_a = -tfp.distributions.Normal(0., 1.).quantile(prop_a)
 
-    one = tf.ones_like(rho_ab)
-    correlation_matrix = tf.stack([
-        tf.stack([one, rho_ab, rho_ac], axis=-1),
-        tf.stack([rho_ab, one, rho_bc], axis=-1),
-        tf.stack([rho_ac, rho_bc, one], axis=-1),
+    bc = stats_tensor[:, :, 1:]
+    one = tf.ones_like(rho_bc)
+    cov_bc = tf.stack([
+        tf.stack([one, rho_bc], axis=-1),
+        tf.stack([rho_bc, one], axis=-1),
     ], axis=-1)
+    mvn_bc = tfp.distributions.MultivariateNormalTriL(
+        loc=tf.zeros(2),
+        scale_tril=tf.linalg.cholesky(cov_bc)[:, None, :, :],
+    )
+    log_prob_bc = mvn_bc.log_prob(bc)
 
-    cholesky = tf.linalg.cholesky(correlation_matrix)
+    a = stats_tensor[:, :, 0]
+    cov_a_bc = tf.stack([rho_ab, rho_ac], axis=-1)
+    cov_bc_inv = tf.linalg.inv(cov_bc)
+    beta_a_given_bc = tf.linalg.matvec(cov_bc_inv, cov_a_bc)
+    mean_given_bc = tf.linalg.matvec(bc, beta_a_given_bc)
+    var_given_bc = 1. - tf.linalg.matvec(cov_a_bc[:, None, :], beta_a_given_bc)
+    sd_given_bc = tf.sqrt(var_given_bc)
 
-    mask = n_mask(n)[:, None, :]
-    z = generate_random_normals(num_rows,
-                                (3, N_MAX),
-                                simulation_block_num,
-                                batch_consistent_randoms,
-                                first_row_num_within_simulation_block) * mask
-    z_correlated = tf.linalg.matmul(cholesky, z)
+    z_score__threshold_given_bc = ((z_threshold_a[:, None] - mean_given_bc)
+                                   / sd_given_bc)
+    p_one = 1. - 0.5 * (
+                1. + tf.math.erf(z_score__threshold_given_bc / tf.sqrt(2.)))
+    p_one = tf.clip_by_value(p_one, 1e-7, 1. - 1e-7)
 
-    a, b, c = tf.split(z_correlated, 3, axis=1)
-    a = tf.cast(a > z_threshold_a[:, None, None], tf.float32) * mask
-    samples = tf.stack([a[:, 0, :], b[:, 0, :], c[:, 0, :]], axis=2)
+    one = tf.constant(1.)
+    log_prob_a = a*tf.math.log(p_one) + (one - a)*tf.math.log(one - p_one)
 
-    return samples
+    log_prob_abc_masked = lcor.n_mask(n) * (log_prob_a + log_prob_bc)
 
+    log_likelihood_final = tf.reduce_sum(log_prob_abc_masked, axis=1)
 
-# n_mask ensures we only have n z values (the rest will be zeroed)
-#  -- this means we work with constant memory size.
-def n_mask(n: Tensor1[tf32, Batch]) -> Tensor2[tf32, Batch, Samples]:
-    n = tf.cast(n, tf.int64)
-    return tf.cast(tf.sequence_mask(n, N_MAX), tf.float32)
-
-
-def estimate_correlations_safe(
-        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n: Tensor1[tf32, Batch],
-) -> Tensor2[tf32, Batch, PairwiseCorrelations]:
-
-    # Returns zero correlation whenever all a values are the same.
-
-    stats_tensor = stats_tensor * n_mask(n)[:, :, None]                        # type: ignore
-    stats_mean = tf.reduce_sum(stats_tensor,
-                               axis=1,
-                               keepdims=True) / n[:, None, None]
-    X = (stats_tensor - stats_mean) * n_mask(n)[:, :, None]
-
-    X_sum_pairwise = tf.reduce_sum(X * tf.gather(X, [1, 2, 0], axis=2), axis=1)
-    X_sum_sq = tf.reduce_sum(tf.square(X), axis=1)
-    X_sum_sq_pairwise = X_sum_sq * tf.gather(X_sum_sq, [1, 2, 0], axis=1)
-
-    correlations_hat = X_sum_pairwise / tf.sqrt(X_sum_sq_pairwise + 1e-10)
-
-    return correlations_hat
+    return log_likelihood_final                                                # type: ignore
 
 
-def estimate_prop_a(
-        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
-        n: Tensor1[tf32, Batch],
-) -> Tensor1[tf32, Batch]:
+@tf.function(jit_compile=True)
+def likelihoods_for_batch(
+        simulation_block_num: Tensor0[ti32],
+        first_sim_num: Tensor0[ti32],
+        num_sims: int,
+        is_powersim_run: bool,
+        is_bootstrap_simulation: bool,
+        rho_ab_partial_null: Tensor0[tf32],
+        rho_ab_partial_alt: Optional[Tensor0[tf32]] = None,
+        **other_params: Tensor0[tf32],
+):
+    print("Compiling likelihoods_for_batch")
+    params = {"rho_ab_partial_null": rho_ab_partial_null,
+              "rho_ab_partial_alt": rho_ab_partial_alt} | other_params
+    params = {n: tf.repeat(p, num_sims) if p is not None else None
+              for n, p in params.items()}
 
-    a = stats_tensor[:, :, 0] * n_mask(n)
-    num_a = tf.reduce_sum(a, axis=1)
-    prop_a_hat = num_a / n
-    return prop_a_hat
+    stats = sampling_distribution_fn_raw(
+        rho_ab_partial=params["rho_ab_partial_null"],
+        rho_bc=params["rho_bc"],
+        rho_ac=params["rho_ac"],
+        prop_a=params["prop_a"],
+        n=params["n"],
+
+        simulation_block_num=simulation_block_num,
+        batch_consistent_randoms=True,
+        first_row_num_within_simulation_block=first_sim_num,
+        num_rows=num_sims,
+        is_powersim_run=is_powersim_run,
+        is_bootstrap_simulation=is_bootstrap_simulation,
+    )
+
+    likelihoods = lcor.likelihoods_via_bfgs(
+        rho_ab_possibly_partial_null=params["rho_ab_partial_null"],
+        rho_ab_possibly_partial_alt=params["rho_ab_partial_alt"],
+        rho_bc=params["rho_bc"],
+        rho_ac=params["rho_ac"],
+        prop_a=params["prop_a"],
+        n=params["n"],
+
+        stats_tensor=stats,
+
+        log_likelihood_fn=log_likelihood,
+    )
+
+    return likelihoods
 
 
 ###############################################################################

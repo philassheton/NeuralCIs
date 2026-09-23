@@ -1,7 +1,7 @@
 import os
 
 import biparcorr_analyse_funcs as biparcorr
-import biparcorr_likelihood_ratio_funcs as lr
+from examples import latent_correlation_funcs as lcor
 
 import numpy as np
 import tensorflow as tf
@@ -37,8 +37,9 @@ def bootstrap_single_p(
 ) -> Tuple[Tensor0[tf32], Tensor0[tf32], Tensor0[tf32]]:
 
     bootstrap_batch_likelihoods = []
-    rho_bc_sim, rho_ac_sim, prop_a_sim = lr.untransform_params(
+    rho_bc_sim, rho_ac_sim, prop_a_sim = lcor.untransform_params(
         pos_null_transformed[None, :],
+        param_is_proportion=(False, False, True),
     )
 
     # For unique random seeds
@@ -49,7 +50,7 @@ def bootstrap_single_p(
     batch_size_tf = tf.constant(batch_size, dtype=tf.int32)
 
     for batch_num in range(bootstrap_samples // batch_size):
-        this_likelihoods = lr.likelihoods_for_batch(
+        this_likelihoods = biparcorr.likelihoods_for_batch(
             simulation_block_num=simulation_block_num,
             first_sim_num=batch_size_tf * batch_num,
             num_sims=batch_size,
@@ -98,7 +99,7 @@ def bootstrap_bfgs_likelihoods(
 
     # Do an initial run to force a compile so that our timings are pure
     print("Compiling!")
-    lr.likelihoods_for_batch(
+    biparcorr.likelihoods_for_batch(
         simulation_block_num=tf.constant(0, tf.int32),
         first_sim_num=tf.constant(0, tf.int32),
         num_sims=batch_size,

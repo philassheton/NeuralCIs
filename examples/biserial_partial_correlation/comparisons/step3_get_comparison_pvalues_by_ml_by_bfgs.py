@@ -1,7 +1,6 @@
 import os
 
 import biparcorr_analyse_funcs as biparcorr
-import biparcorr_likelihood_ratio_funcs as lr
 
 import numpy as np
 import tensorflow as tf
@@ -24,7 +23,7 @@ def run_bfgs_likelihoods(
 
     # Do an initial run to force a compile so that our timings are pure
     print("Compiling!")
-    lr.likelihoods_for_batch(
+    biparcorr.likelihoods_for_batch(
         simulation_block_num=tf.constant(0, tf.int32),
         first_sim_num=tf.constant(0, tf.int32),
         num_sims=batch_size,
@@ -55,7 +54,7 @@ def run_bfgs_likelihoods(
             rho_ab_partial_alt = this_params.pop("rho_ab_partial_power")
 
         for batch_num in range(num_sims_per_param_sample // batch_size):
-            this_likelihoods = lr.likelihoods_for_batch(
+            this_likelihoods = biparcorr.likelihoods_for_batch(
                 simulation_block_num=params_sample_num_tf,
                 first_sim_num=batch_size_tf * batch_num,
                 num_sims=batch_size,
