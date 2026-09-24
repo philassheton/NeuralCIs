@@ -1,10 +1,11 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
+import numpy as np
 
 import functools
 
 # typing
-from typing import Optional, Tuple, Callable, Union
+from typing import Optional, Tuple, Dict, Callable, Union
 from collections.abc import Sequence
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
@@ -12,6 +13,7 @@ from .common import Batch, Samples
 from .common import Stats, PairwiseCorrelations, UnknownParams, Ys
 
 
+N_MIN = 20
 N_MAX = 100
 MAX_ABS_RHO = 0.99
 SEED_FOR_BATCH_INCONSISTENT = 12345
@@ -440,3 +442,89 @@ def likelihoods_via_bfgs(
                          res_alt.position], axis=1)
 
     return results
+
+
+###############################################################################
+#  Parameter sampling for neural alone (large sample)
+###############################################################################
+
+
+NUM_PARAM_SAMPLES_NEURAL_ALONE = 10000
+RHO_MAX_NEURAL_ALONE = 0.90
+PROP_A_MIN_NEURAL_ALONE = 0.1
+PROP_A_MAX_NEURAL_ALONE = 0.9
+PARAM_SEEDS_NEURAL_ALONE = {
+    'rho_ab_partial': 0,
+    'rho_ab': 0,  # can only have one or the other so can use same seed!
+    'rho_bc': 1,
+    'rho_ac': 2,
+    'n': 3,
+    'prop_a': 4,
+    'prop_b': 6,  # keep magnitude as 5 for backwards compatibility.
+    'prop_c': 7,
+    'magnitude': 5,
+}
+SECONDARY_SEED_NEURAL_ALONE = 42
+
+
+def __sample_uniform(
+        number_to_draw: int,
+        param_name: str,
+        minval: float,
+        maxval: float,
+) -> Tensor1[tf32, Samples]:
+
+    seed_list = [SECONDARY_SEED_NEURAL_ALONE,
+                 PARAM_SEEDS_NEURAL_ALONE[param_name]]
+    seed = tf.constant(seed_list, dtype=tf.int32)
+    return tf.random.stateless_uniform((number_to_draw,), seed, minval, maxval)
+
+def sample_params_neural_alone(
+    param_names: Sequence[str],
+    param_is_prop: Sequence[bool],
+) -> Dict[str, Tensor1[tf32, Samples]]:
+
+    num_rho_prop_params = len(param_names)
+    assert len(param_is_prop) == num_rho_prop_params
+
+    num_param_samples = NUM_PARAM_SAMPLES_NEURAL_ALONE
+    num_param_samples_before_whittle = num_param_samples * 3
+    angle = tf.stack([
+        __sample_uniform(num_param_samples_before_whittle, name, -1., 1.)
+        for name in param_names
+    ])
+    angle = angle / tf.sqrt(tf.reduce_sum(angle ** 2, axis=0, keepdims=True))
+
+    ball_radius = np.sqrt(num_rho_prop_params)
+    magnitude = __sample_uniform(
+        num_param_samples_before_whittle,
+        "magnitude", 0., ball_radius,
+    )[None, :]
+
+    params = angle * magnitude
+    params = tf.unstack(params, axis=0)
+    params = [p if not p_is_prop else p / 2 + 0.5
+              for p, p_is_prop in zip(params, param_is_prop)]
+    param_is_in_bounds = [tf.math.abs(p) < RHO_MAX_NEURAL_ALONE
+                          if not p_is_prop
+                          else (PROP_A_MIN_NEURAL_ALONE < p)
+                               & (p < PROP_A_MAX_NEURAL_ALONE)
+                          for p, p_is_prop in zip(params, param_is_prop)]
+    is_in_bounds = tf.reduce_all(tf.stack(param_is_in_bounds, axis=0), axis=0)
+    num_surviving = tf.reduce_sum(tf.cast(is_in_bounds, tf.int32)).numpy()
+    assert num_surviving >= num_param_samples
+
+    params = {
+        name: tf.boolean_mask(p, is_in_bounds)[0:num_param_samples]
+        for name, p in zip(param_names, params)
+    }
+
+    num_within_bounds = tf.reduce_sum(tf.cast(is_in_bounds, tf.int32))
+    assert num_within_bounds >= num_param_samples
+
+    params["n"] = tf.floor(tf.exp(
+        __sample_uniform(num_param_samples, "n",
+                         np.log(N_MIN), np.log(N_MAX + 1.))
+    ))
+
+    return params
