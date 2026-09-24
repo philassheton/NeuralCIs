@@ -115,7 +115,8 @@ def sampling_distribution_fn_raw_generic(
                                              (1. - tf.square(rho_ac))))
 
     z_threshold_a_b_c = [
-        -tfp.distributions.Normal(0., 1.).quantile(prop) if prop is not None
+        -tfp.distributions.Normal(0., 1.).quantile(prop)
+        if prop is not None
         else None
         for prop in prop_a_b_c
     ]
