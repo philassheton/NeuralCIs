@@ -1,0 +1,306 @@
+# TODO: This needs refactoring with biserial_partial_correlation!!
+#       Need quick results now, so running like this, but come back to this.
+
+# The goal here is to generate a grid of params to test our methods against.
+# In order to make sure we have nice clean sampling distributions, we will
+# avoid boundary cases that can generate degenerate samples (e.g. all values
+# zero or one in the binary variable).
+
+import tensorflow as tf
+import tensorflow_probability as tfp
+import numpy as np
+
+import bicorr_analyse_funcs as bicorr
+
+from tensor_annotations.tensorflow import Tensor1
+from tensor_annotations.tensorflow import float32 as tf32
+from examples import Samples
+
+NUM_PARAM_SAMPLES = 1000
+TARGET_RATE = 5e-5
+R_MAX = 0.99
+MAX_TARGET_POWER = 0.90
+ALPHA = 0.05
+
+PARAM_SEEDS = {
+    'RHO_AB': 0,
+    'N': 3,
+    'PROP_A': 4,
+    'UP_DOWN': 5,
+    'POWER_INDEX': 6,
+    # EVERYTHING ABOVE 6 IS USED FOR POWER_INDEX TOO!!
+}
+SECONDARY_SEED = 42
+
+
+def __sample_uniform(
+        number_to_draw: int,
+        param_name: str,
+        minval: float,
+        maxval: float,
+) -> Tensor1[tf32, Samples]:
+    param_seed = PARAM_SEEDS[param_name]
+    seed = tf.constant([SECONDARY_SEED, param_seed], dtype=tf.int32)
+    return tf.random.stateless_uniform((number_to_draw,), seed, minval, maxval)
+
+
+def __sample_power_index(
+        draw_number: int,
+        maxval: int,
+) -> int:
+
+    main_seed = PARAM_SEEDS["POWER_INDEX"] + draw_number
+    seed = tf.constant([SECONDARY_SEED, main_seed], dtype=tf.int32)
+    tensor = tf.random.stateless_uniform((), seed, 0, maxval, dtype=tf.int32)
+    return tensor.numpy().item()
+
+
+def __prop_a_min_max(
+        n: Tensor1[tf32, Samples],
+        target_rate: float = TARGET_RATE,
+):
+    # target_rate ** 1/n, but keeping types carefully checked.
+    prop_a_max = tf.pow(tf.constant(target_rate, dtype=n.dtype),
+                        tf.math.reciprocal(n))
+    prop_a_min = 1. - prop_a_max
+    return prop_a_min, prop_a_max
+
+
+def __pointbiserial_to_biserial_approx_conversion_ratio(
+        prop_a: Tensor1[tf32, Samples],
+) -> tf.Tensor:
+    normal = tfp.distributions.Normal(0., 1.)
+    z_p = normal.quantile(prop_a)  # p = P(A=1)
+    phi_z = tf.exp(-0.5 * tf.square(z_p)) / tf.sqrt(2. * np.pi)
+    conversion_ratio = tf.sqrt(prop_a * (1. - prop_a)) / phi_z
+    return conversion_ratio
+
+
+def __rho_min_max(
+        n: Tensor1[tf32, Samples],
+        partial: bool = False,
+        biserial: bool = False,
+        prop_a: Tensor1[tf32, Samples] | None = None,  # Only needed if biserial
+        r_max: float = R_MAX,
+        target_rate: float = TARGET_RATE,
+):
+    if partial:
+        n = n - 1.
+
+    if biserial:
+        if prop_a is None:
+            raise ValueError("prop_a required when biserial=True")
+
+        # This ratio is not strictly correct for the partial correlation,
+        #   but seems to work well enough in practice.
+        pointbiseral_to_biserial = \
+            __pointbiserial_to_biserial_approx_conversion_ratio(prop_a)
+        r_max = r_max / pointbiseral_to_biserial
+
+    # Because the Fisher r-to-z tends to not quite reach far enough:
+    conservative_target_rate = target_rate / 2.
+    std_norm = tfp.distributions.Normal(0., 1.)
+    z_alpha = std_norm.quantile(1. - conservative_target_rate)
+    rho_max = tf.tanh(tf.atanh(r_max) - z_alpha / tf.sqrt(n - 3.))
+
+    if biserial:
+        rho_max = rho_max * pointbiseral_to_biserial
+
+    rho_max = tf.maximum(rho_max, 0.)
+    return -rho_max, rho_max
+
+
+def __rho_ab_power_from_alt(
+        num_param: int,
+        n: Tensor1[tf32, Samples],
+        prop_a: Tensor1[tf32, Samples],
+        rho_ab_possibly_partial: Tensor1[tf32, Samples],                       # central rho_ab from which we simulate
+        rho_ab_min: Tensor1[tf32, Samples],
+        rho_ab_max: Tensor1[tf32, Samples],
+        target_powers: Tensor1[tf32, Samples],
+        alpha: float,
+        partial: bool = False,
+) -> Tensor1[tf32, Samples]:
+
+    df = n - 1. if partial else n
+    pointbiserial_to_biserial = \
+        __pointbiserial_to_biserial_approx_conversion_ratio(prop_a)
+    sd_fisher = 1. / tf.sqrt(df - 3.)
+    normal = tfp.distributions.Normal(0., 1.)
+
+    # Here z will refer to a statistic with approx SD = 1 (not a Fisher z)
+    def rho_biserial_to_z(rho_biserial):
+        rho_pointbiserial = rho_biserial /  pointbiserial_to_biserial
+        return tf.atanh(rho_pointbiserial) / sd_fisher
+
+    def z_to_rho_biserial(z):
+        rho_pointbiserial = tf.tanh(z * sd_fisher)
+        return rho_pointbiserial * pointbiserial_to_biserial
+
+    z_true = rho_biserial_to_z(rho_ab_possibly_partial)
+
+    z_alpha = normal.quantile(1. - alpha / 2.)  # 1.96 for alpha=0.05
+    z_beta = normal.quantile(target_powers)  # 0.84 for target_power=0.80
+
+    z_null_up = z_true + z_alpha + z_beta  # shift z_true enough to overcome...
+    z_null_down = z_true - z_alpha - z_beta  # ...both test and required power
+
+    z_min = rho_biserial_to_z(rho_ab_min)
+    z_max = rho_biserial_to_z(rho_ab_max)
+
+    overshoot_up = tf.keras.activations.relu(z_null_up - z_max)
+    overshoot_down = tf.keras.activations.relu(z_min - z_null_down)
+    both_inside = (z_null_up <= z_max) & (z_null_down >= z_min)
+    tie = overshoot_up == overshoot_down
+
+    randomise_up = __sample_uniform(num_param, 'UP_DOWN', 0., 1.) > 0.5
+
+    choose_up = tf.where(both_inside | tie,
+                         randomise_up,
+                         overshoot_up < overshoot_down)
+
+    z_null = tf.where(choose_up,
+                      tf.clip_by_value(z_null_up, z_min, z_max),
+                      tf.clip_by_value(z_null_down, z_min, z_max))
+
+    rho_ab_partial_power = z_to_rho_biserial(z_null)
+    assert tf.reduce_all((rho_ab_min - 1e-6 <= rho_ab_partial_power)
+                         & (rho_ab_partial_power <= rho_ab_max + 1e-6))
+    return rho_ab_partial_power
+
+
+def __biserial_power(
+        n: Tensor1[tf32, Samples],
+        prop_a: Tensor1[tf32, Samples],
+        rho_ab_possibly_partial_alt: Tensor1[tf32, Samples],                   # to be simulated from
+        rho_ab_possibly_partial_null: Tensor1[tf32, Samples],                  # to be tested against
+        alpha: float = ALPHA,
+        partial: bool = False,
+) -> Tensor1[tf32, Samples]:
+
+    df = n - 1. if partial else n
+    normal = tfp.distributions.Normal(0., 1.)
+
+    pointbiserial_to_biserial = \
+        __pointbiserial_to_biserial_approx_conversion_ratio(prop_a)
+
+    rho1_pb = rho_ab_possibly_partial_alt / pointbiserial_to_biserial
+    rho0_pb = rho_ab_possibly_partial_null / pointbiserial_to_biserial
+
+    z1 = tf.atanh(rho1_pb) * tf.sqrt(df - 3.)
+    z0 = tf.atanh(rho0_pb) * tf.sqrt(df - 3.)
+
+    zcrit = normal.quantile(1. - alpha / 2.)  # 1.96 for alpha=0.05
+
+    lower_reject = z0 - zcrit
+    upper_reject = z0 + zcrit
+
+    probability_lower_rejected = normal.cdf(lower_reject - z1)
+    probability_upper_rejected = 1. - normal.cdf(upper_reject - z1)
+    power = probability_lower_rejected + probability_upper_rejected
+
+    return power
+
+
+def sample_target_powers_uniformly_but_respecting_maxes(
+        max_target_powers: Tensor1[tf32, Samples],
+        maxval: float,
+        alpha: float,
+) -> Tensor1[tf32, Samples]:
+
+    # TODO: Kinda ugly converting to NumPy and back.  We need tf in this
+    #       script for the stateless random stuff though.
+
+    max_target_powers = max_target_powers.numpy().tolist()
+    num_sims = len(max_target_powers)
+    possible_target_powers = np.linspace(alpha, maxval, num_sims).tolist()
+
+    ordered_indices = np.argsort(max_target_powers).tolist()
+    target_powers = np.zeros(len(max_target_powers))
+    for i in ordered_indices:
+        max_target_power = max_target_powers[i]
+        num_to_choose_from = np.sum(
+            np.array(possible_target_powers) <= max_target_power
+        )
+        if num_to_choose_from == 0:
+            target_power = max_target_power
+            possible_target_powers.pop(0)
+        else:
+            random_selection = __sample_power_index(i, num_to_choose_from)
+            target_power = possible_target_powers.pop(random_selection)
+        target_powers[i] = target_power
+
+    return tf.constant(target_powers, dtype=tf.float32)
+
+
+def sample_n_params(
+        num_param: int,
+) -> dict[str, Tensor1[tf32, Samples]]:
+
+    # Since low n cases are the most restricted (in terms of allowed
+    # correlations and prop_a values), a uniform sampling regime is used for
+    # n rather than the more obvious log-uniform sampling regime.
+    n = tf.floor(__sample_uniform(num_param, "N", 20., 101.))
+
+    prop_a_min, prop_a_max = __prop_a_min_max(n)
+    prop_a = __sample_uniform(num_param, "PROP_A", prop_a_min, prop_a_max)
+
+    rho_ab_min, rho_ab_max = __rho_min_max(n, biserial=True, prop_a=prop_a,
+                                           partial=False)
+
+    rho_ab = __sample_uniform(num_param, "RHO_AB", rho_ab_min, rho_ab_max)
+
+    rho_ab_power_extreme = __rho_ab_power_from_alt(
+        num_param,
+        n=n,
+        prop_a=prop_a,
+        rho_ab_possibly_partial=rho_ab,
+        rho_ab_min=rho_ab_min,
+        rho_ab_max=rho_ab_max,
+        target_powers=tf.repeat(MAX_TARGET_POWER, num_param),
+        alpha=ALPHA,
+        partial=False,
+    )
+    max_target_powers_possible = __biserial_power(
+        n=n,
+        prop_a=prop_a,
+        rho_ab_possibly_partial_alt=rho_ab,                  # true parameter
+        rho_ab_possibly_partial_null=rho_ab_power_extreme,   # null in the test
+        alpha=ALPHA,
+        partial=False,
+    )
+    target_powers = sample_target_powers_uniformly_but_respecting_maxes(
+        max_target_powers_possible,
+        maxval=MAX_TARGET_POWER,
+        alpha=ALPHA,
+    )
+    rho_ab_power = __rho_ab_power_from_alt(
+        num_param,
+        n=n,
+        prop_a=prop_a,
+        rho_ab_possibly_partial=rho_ab,
+        rho_ab_min=rho_ab_min,
+        rho_ab_max=rho_ab_max,
+        target_powers=target_powers,
+        alpha=ALPHA,
+        partial=False,
+    )
+    target_powers_achieved = __biserial_power(
+        n=n,
+        prop_a=prop_a,
+        rho_ab_possibly_partial_alt=rho_ab,
+        rho_ab_possibly_partial_null=rho_ab_power,
+        alpha=ALPHA,
+        partial=False,
+    )
+
+    return {
+        "rho_ab": rho_ab,
+        "rho_ab_power": rho_ab_power,
+        "target_power": target_powers_achieved,
+        "prop_a": prop_a,
+        "n": n,
+    }
+
+params = sample_n_params(NUM_PARAM_SAMPLES)
+bicorr.save_params_dict(params)
