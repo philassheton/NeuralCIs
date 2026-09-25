@@ -15,11 +15,13 @@ from examples import Batch, Samples, Stats
 
 COMPARISON_NAME = 'biserial_correlation'
 PARAM_NAMES = ['rho_ab', 'prop_a', 'n', 'rho_ab_power', 'target_power']
+PARAM_IS_RHO = (True, False)
+PARAM_IS_PROPORTION = (False, True)
 PARAMS_BOUNDS_CHECKS = {
     "abs_rho_above_988": (lambda x: np.abs(x) >= np.atanh(0.988),
-                          [True, False]),
+                          PARAM_IS_RHO),
     "prop_a_trans_abs_above_988": (lambda x: np.abs(x) >= np.atanh(0.988),
-                                   [False, True]),
+                                   PARAM_IS_PROPORTION),
 }
 
 
@@ -123,13 +125,14 @@ def likelihoods_for_batch(
 
     likelihoods = lcor.likelihoods_via_bfgs(
         rho_ab_possibly_partial_null=params["rho_ab_null"],
-        rho_ab_possibly_partial_alt=params["rho_ab_alt"],#
+        rho_ab_possibly_partial_alt=params["rho_ab_alt"],
         prop_a=params["prop_a"],
         n=params["n"],
 
         stats_tensor=stats,
 
         log_likelihood_fn=log_likelihood,
+        param_is_proportion=PARAM_IS_PROPORTION,
     )
 
     return likelihoods

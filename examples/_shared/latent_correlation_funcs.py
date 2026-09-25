@@ -230,21 +230,21 @@ def penalise_log_likelihood(
 
 def log_likelihood_from_transformed_params(
         log_likelihood_fn: Callable,
+        param_is_proportion: Sequence[bool],
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
         n: Tensor1[tf32, Batch],
         params_unknown_transformed: Tensor2[tf32, Batch, UnknownParams],
         penalise_boundaries: bool = True,
 ) -> Tensor1[tf32, Batch]:
 
-    rho_ab_partial, rho_bc, rho_ac, prop_a = untransform_params(
+    params_untransformed = untransform_params(
         params_unknown_transformed,
-        param_is_proportion=(False, False, False, True),
+        param_is_proportion,
     )
 
-    log_likelihoods = log_likelihood_fn(
-        stats_tensor,
-        rho_ab_partial, rho_bc, rho_ac, prop_a, n,
-    )
+    log_likelihoods = log_likelihood_fn(stats_tensor,
+                                        *params_untransformed,
+                                        n=n)
     if penalise_boundaries:
         log_likelihoods = penalise_log_likelihood(log_likelihoods,
                                                   params_unknown_transformed)
@@ -254,19 +254,21 @@ def log_likelihood_from_transformed_params(
 
 def log_likelihood_from_transformed_params_fixed_ab(
         log_likelihood_fn: Callable,
+        param_is_proportion: Sequence[bool],
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
         n: Tensor1[tf32, Batch],
-        rho_ab_partial_transformed: Tensor1[tf32, Batch],
+        rho_ab_possibly_partial_transformed: Tensor1[tf32, Batch],
         params_unknown_transformed: Tensor2[tf32, Batch, UnknownParams],
         penalise_boundaries: bool = True,
 ) -> Tensor1[tf32, Batch]:
 
     params_unknown_transformed = tf.concat([
-        rho_ab_partial_transformed[:, None],
+        rho_ab_possibly_partial_transformed[:, None],
         params_unknown_transformed,
     ], axis=1)
     return log_likelihood_from_transformed_params(
         log_likelihood_fn,
+        param_is_proportion,
         stats_tensor,
         n,
         params_unknown_transformed,
@@ -335,6 +337,7 @@ def untransform_params(
 
 def likelihoods_via_bfgs(
         log_likelihood_fn: Callable,
+        param_is_proportion: Sequence[bool],
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],  # Stats = AB | ABC
         n: Tensor1[tf32, Batch],
         rho_ab_possibly_partial_null: Tensor1[tf32, Batch],
@@ -359,7 +362,8 @@ def likelihoods_via_bfgs(
     neg_log_likelihood_fn_free = functools.partial(
         lambda *args, **kw:
             -log_likelihood_from_transformed_params(*args, **kw),
-        log_likelihood_fn, stats_tensor, n,
+        log_likelihood_fn, param_is_proportion,
+        stats_tensor, n,
     )
 
     rho_ab_possibly_partial_null_trans = transform_correlations(
@@ -368,7 +372,8 @@ def likelihoods_via_bfgs(
     neg_log_likelihood_fn_null = functools.partial(
         lambda *args, **kw:
             -log_likelihood_from_transformed_params_fixed_ab(*args, **kw),
-        log_likelihood_fn, stats_tensor, n, rho_ab_possibly_partial_null_trans,
+        log_likelihood_fn, param_is_proportion,
+        stats_tensor, n, rho_ab_possibly_partial_null_trans,
     )
 
     res_free = tfp.optimizer.bfgs_minimize(
@@ -405,8 +410,8 @@ def likelihoods_via_bfgs(
         neg_log_likelihood_fn_alt = functools.partial(
             lambda *args, **kw:
             -log_likelihood_from_transformed_params_fixed_ab(*args, **kw),
-            log_likelihood_fn, stats_tensor, n,
-            rho_ab_possibly_partial_alt_trans,
+            log_likelihood_fn, param_is_proportion,
+            stats_tensor, n, rho_ab_possibly_partial_alt_trans,
         )
         res_alt = tfp.optimizer.bfgs_minimize(
             lambda params_unknown_transformed: tfp.math.value_and_gradient(
