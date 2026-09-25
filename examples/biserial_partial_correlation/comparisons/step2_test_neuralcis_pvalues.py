@@ -46,7 +46,7 @@ def pvalues_for_batch(
         is_powersim_run=use_power_param_as_null,
         **params_null_human,
     )
-    rs = lcor.estimate_correlations_safe(samples_raw, params_human["n"])
+    rs = lcor.estimate_correlations_safe_3d(samples_raw, params_human["n"])
     prop_a_hat = lcor.estimate_prop_a(samples_raw, params_human["n"])
     stats_human = {"rho_ab_hat": rs[:, 0],
                    "rho_bc_hat": rs[:, 1],

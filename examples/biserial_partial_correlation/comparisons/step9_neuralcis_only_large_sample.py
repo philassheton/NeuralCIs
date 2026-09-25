@@ -10,7 +10,7 @@ import pandas as pd
 from typing import Dict
 from tensor_annotations.tensorflow import Tensor1, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32
-from biparcorr_analyse_funcs import Batch, Samples, Stats
+from examples import Batch, Samples, Stats
 
 
 def stats_human_from_samples_raw(
@@ -18,7 +18,7 @@ def stats_human_from_samples_raw(
         samples_raw: Tensor3[tf32, Batch, Samples, Stats]
 ) -> Dict[str, Tensor1[tf32, Batch]]:
 
-    rs = lcor.estimate_correlations_safe(samples_raw, params_human["n"])
+    rs = lcor.estimate_correlations_safe_3d(samples_raw, params_human["n"])
     prop_a_hat = lcor.estimate_prop_a(samples_raw, params_human["n"])
     stats_human = {"rho_ab_hat": rs[:, 0],
                    "rho_bc_hat": rs[:, 1],

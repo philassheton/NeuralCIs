@@ -161,7 +161,7 @@ def sampling_distribution_fn_raw_generic(
     return samples_thresholded
 
 
-def estimate_correlations_safe(
+def estimate_correlations_safe_3d(
         stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
         n: Tensor1[tf32, Batch],
 ) -> Tensor2[tf32, Batch, PairwiseCorrelations]:
@@ -181,6 +181,28 @@ def estimate_correlations_safe(
     correlations_hat = X_sum_pairwise / tf.sqrt(X_sum_sq_pairwise + 1e-10)
 
     return correlations_hat
+
+
+def estimate_correlations_safe_2d(
+        stats_tensor: Tensor3[tf32, Batch, Samples, Stats],
+        n: Tensor1[tf32, Batch],
+) -> Tensor1[tf32, Batch]:
+
+    # Returns zero correlation whenever all a values are the same.
+
+    stats_tensor = stats_tensor * n_mask(n)[:, :, None]                        # type: ignore
+    stats_mean = tf.reduce_sum(stats_tensor,
+                               axis=1,
+                               keepdims=True) / n[:, None, None]
+    X = (stats_tensor - stats_mean) * n_mask(n)[:, :, None]
+
+    X_sum_pairwise = tf.reduce_sum(X[:, :, 0] * X[:, :, 1], axis=1)
+    X_sum_sq = tf.reduce_sum(tf.square(X), axis=1)
+    X_sum_sq_pairwise = X_sum_sq[:, 0] * X_sum_sq[:, 1]
+
+    correlation_hat = X_sum_pairwise / tf.sqrt(X_sum_sq_pairwise + 1e-10)
+
+    return correlation_hat
 
 
 def estimate_prop_a(

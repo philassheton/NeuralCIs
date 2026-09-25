@@ -77,9 +77,9 @@ def estimates_fn(
     # TODO: This hack is needed to make sure we stay the right side of stuff;
     #       try to fix this problem in the main sim so this is not needed.
     prop_a_hat = prop_a_hat * 0.9998 + 0.0001
-    rho_ab_hat = rho_ab_hat * 0.9998 + 0.0001
-    rho_bc_hat = rho_bc_hat * 0.9998 + 0.0001
-    rho_ac_hat = rho_ac_hat * 0.9998 + 0.0001
+    rho_ab_hat = rho_ab_hat * 0.9999
+    rho_bc_hat = rho_bc_hat * 0.9999
+    rho_ac_hat = rho_ac_hat * 0.9999
 
     std_normal = tfp.distributions.Normal(0., 1.)
     threshold_a = std_normal.quantile(1. - prop_a_hat)
