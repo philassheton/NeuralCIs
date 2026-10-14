@@ -9,6 +9,7 @@ from . import common
 from . import variables
 from ._param_sampler import _ParamSampler
 from ._p_net import _PNet
+from ._ci_net import _CINet
 from ._neuralcis_kwargs import _NeuralCIsKWArgs
 from ._data_saver import _DataSaver
 from ._utils import known_params_from_params
@@ -158,6 +159,7 @@ class NeuralCIs(_DataSaver):
             for var_name in canonicalizable_var_names:
                 variable_defs[var_name].render_canonicalize_fn(var_name,
                                                                stat_names)
+            variable_defs[INTEREST].render_decanonicalize_fn(stat_names)
         else:
             self.has_canonicalize = False
             if self.num_stat_canonical > 0:
@@ -204,10 +206,23 @@ class NeuralCIs(_DataSaver):
             train_initial_weights=train_initial_weights,
             **network_setup_args,
         )
+        self.cinet = _CINet(
+            self.pnet,
+            self._sampling_dist_net_interface,
+            self.param_sampler.sample_params,
+            self._canonicalize_net_interface,
+            self._decanonicalize_interest_net_interface,
+            self.num_stat_after_possible_canonicalization(),
+            self.num_unknown_param,
+            self.num_known_param,
+            profile,
+            **network_setup_args,
+        )
         _DataSaver.__init__(
             self,
             {"paramsampnet": self.param_sampler,
-             "pnet": self.pnet},
+             "pnet": self.pnet,
+             "cinet": self.cinet},
         )
 
         # Need to run checks after construction as some (e.g. canonicalize)
@@ -696,9 +711,12 @@ class NeuralCIs(_DataSaver):
     def _variable_names_after_canonicalize(
             self,
             include_unknown_params: bool = False,
+            include_interest: bool = True,
     ) -> List[str]:
 
-        names = self.known_param_names + [INTEREST]
+        names = self.known_param_names.copy()
+        if include_interest:
+            names += [INTEREST]
         if self.has_canonicalize:
             names += self.stat_canonical_names
         else:
@@ -711,23 +729,28 @@ class NeuralCIs(_DataSaver):
             self,
             stats_net: Tensor2[tf32, Samples, Stats],
             params_net: Tensor2[tf32, Samples, Params],                        # may only be known params
-            interest_net: Tensor1[tf32, Samples],
+            interest_net: Optional[Tensor1[tf32, Samples]],
             known_params_only: bool = True,
     ) -> Tuple[Tensor2[tf32, Samples, Stats],
                Tensor2[tf32, Samples, Params],
-               Tensor1[tf32, Samples]]:
+               Optional[Tensor1[tf32, Samples]]]:
 
         if not self.has_canonicalize:
             return stats_net, params_net, interest_net
 
         stats_human = self._stats_net_to_human(stats_net)
         params_human = self._params_net_to_human(params_net, known_params_only)
-        interest_human = {INTEREST: self._interest_net_to_human(interest_net)}
+        available_inputs_human = stats_human | params_human
 
         names_to_canonicalize = self._variable_names_after_canonicalize(
             include_unknown_params=not known_params_only,
+            include_interest = interest_net is not None,
         )
-        available_inputs_human = stats_human | params_human | interest_human
+        if interest_net is not None:
+            available_inputs_human |= {
+                INTEREST: self._interest_net_to_human(interest_net)
+            }
+
         outputs_human = {
             name: self.variable_defs()[name].canonicalize(
                 available_inputs_human.get(name, None),
@@ -743,11 +766,34 @@ class NeuralCIs(_DataSaver):
         params_canon_net = self._params_human_to_net(
             **outputs_human,
             unknown_params=not known_params_only,
-            num_samples=len(interest_human),
+            num_samples=params_net.shape[0],
         )
-        interest_canon_net = self._interest_human_to_net(outputs_human[INTEREST])
-
+        if interest_net is not None:
+            interest_canon_net = self._interest_human_to_net(
+                outputs_human[INTEREST],
+            )
+        else:
+            interest_canon_net = None
         return stats_canon_net, params_canon_net, interest_canon_net
+
+    def _decanonicalize_interest_net_interface(
+            self,
+            interest_canonical_net: Optional[Tensor1[tf32, Samples]],
+            stats_net: Tensor2[tf32, Samples, Stats],
+    ) -> Tensor1[tf32, Samples]:
+
+        if not self.has_canonicalize:
+            return interest_canonical_net
+
+        stats_human = self._stats_net_to_human(stats_net)
+        inputs_human = stats_human | {
+            INTEREST: self._interest_net_to_human(interest_canonical_net)
+        }
+        interest_variable = self.variable_defs()[INTEREST]
+        output_human = interest_variable.decanonicalize(**inputs_human)
+        output_net = self._interest_human_to_net(output_human)
+
+        return output_net
 
     def _param_is_valid_net_interface(
             self,

@@ -98,8 +98,18 @@ class _PNet(_DataSaver):
         #       could be done away with.  But will need to reformulate the
         #       users of this func.
 
-        z = self.znet.call_tf_interest_only(estimates, interest, known_params)
+        z = self.z_from_interest(estimates, interest, known_params)
         return self.p_from_z(z)
+
+    def z_from_interest(
+            self,
+            estimates: Tensor2[tf32, Samples, Stats],
+            interest: Tensor1[tf32, Samples],
+            known_params: Tensor2[tf32, Samples, KnownParams],
+    ) -> Tensor1[tf32, Samples]:
+
+        z = self.znet.call_tf_interest_only(estimates, interest, known_params)
+        return z
 
     def p_from_z(
             self,
@@ -110,6 +120,13 @@ class _PNet(_DataSaver):
         p = 1. - tf.math.abs(cdf * 2. - 1.)
 
         return p                                                               # type: ignore
+
+    def positive_z_from_p(
+            self,
+            p: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        return tfp.distributions.Normal(0., 1.).quantile(1. - p/2.)
 
     @tf.function
     def p_workings(

@@ -7,7 +7,7 @@ from tensorflow.python.eager.def_function import Function as TFFunction        #
 
 from .common import Samples
 from . import common
-from typing import Optional, Union, Tuple, Sequence
+from typing import Callable, Optional, Union, Tuple, Sequence
 from tensor_annotations.tensorflow import Tensor0, Tensor1
 from tensor_annotations.tensorflow import float32 as tf32
 import tensor_annotations.tensorflow as ttf
@@ -182,16 +182,25 @@ class Variable(ABC):
         if not self.has_canonicalize():
             raise Exception(f"Missing canonicalize string in {my_name}!")
 
-        stat_names_list = ", ".join(stat_names)
         if my_name not in stat_names and self.exists_pre_canonicalization:
-            args_list = f"{my_name}, {stat_names_list}"
+            input_names = [my_name] + list(stat_names)
         else:
-            args_list = stat_names_list
+            input_names = stat_names
 
-        canonicalize_fn_str = f"lambda {args_list}: {self.canonicalize_str}"
-        canonicalize_fn = eval(canonicalize_fn_str, {"tf": tf, "tfp": tfp})
+        canonicalize_fn = self.render_fn(input_names, self.canonicalize_str)
         self.canonicalize_fn = canonicalize_fn
         self.canonicalize_my_name = my_name
+
+    def render_fn(
+            self,
+            input_names: Sequence[str],
+            function_str: str,
+    ) -> Callable:
+
+        input_names_text = ", ".join(input_names)
+        canonicalize_fn_str = f"lambda {input_names_text}: {function_str}"
+        canonicalize_fn = eval(canonicalize_fn_str, {"tf": tf, "tfp": tfp})
+        return canonicalize_fn
 
     def canonicalize(
             self,
@@ -338,7 +347,7 @@ class Stat(Variable):
 
 
 class StatCanonical(Variable):
-    exists_pre_canonicalization = False                          # A canonical stat is freshly computed from the other stats, so cannot be used in its own computation
+    exists_pre_canonicalization = False                                        # A canonical stat is freshly computed from the other stats, so cannot be used in its own computation
     def __init__(
             self,
             vtype: VariableType,
@@ -363,6 +372,39 @@ class StatCanonical(Variable):
 
 
 class Interest(Variable):
+    def __init__(
+            self,
+            vtype: VariableType,
+            canonicalize: Optional[str] = None,
+            decanonicalize: Optional[str] = None,
+    ):
+        assert (canonicalize is None) == (decanonicalize is None)
+        super().__init__(vtype, canonicalize)
+        self.decanonicalize_str = decanonicalize
+
+    def render_decanonicalize_fn(
+            self,
+            stat_names: Sequence[str],
+    ):
+
+        my_name = self.canonicalize_my_name
+        input_names = [my_name] + list(stat_names)
+        self.decanonicalize_fn = self.render_fn(input_names,
+                                                self.decanonicalize_str)
+
+    def decanonicalize(
+            self,
+            interest_canonical: Optional[Tensor1[tf32, Samples]] = None,
+            **stats_human: Tensor1[tf32, Samples],
+    ) -> Tensor1[tf32, Samples]:
+
+        if self.has_canonicalize():
+            interest_name = self.canonicalize_my_name
+            kwargs = {interest_name: interest_canonical} | stats_human
+            return self.decanonicalize_fn(**kwargs)
+        else:
+            raise Exception("No canonicalization setup for interest param!!")
+
     def to_net(
             self,
             human: Tensor1[tf32, Samples],
@@ -376,6 +418,11 @@ class Interest(Variable):
     ) -> Tensor1[tf32, Samples]:
 
         return self.vtype.from_net_param(net)
+
+    def __getstate__(self):
+        state = super().__getstate__()
+        state["decanonicalize_fn"] = None
+        return state
 
 
 ###############################################################################
