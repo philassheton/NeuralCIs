@@ -35,7 +35,7 @@ cis = nci.NeuralCIs(
 
     n=nci.KnownParam(PositiveCount(), (3., 100.), "n"),
 
-    interest=nci.Interest(Location(), "(interest - mu_hat) / sigma_hat"),
+    interest=nci.Interest(Location(), "(interest - mu_hat) / sigma_hat", "interest*sigma_hat + mu_hat"),
 
     mu_hat=nci.Stat(Location()),
     sigma_hat=nci.Stat(Scale()),

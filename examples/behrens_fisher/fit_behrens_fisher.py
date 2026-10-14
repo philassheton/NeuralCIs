@@ -65,7 +65,7 @@ cis = nci.NeuralCIs(
 
     sigma2_1_ratio_hat=nci.StatCanonical(Scale((0.333, 3.)), "sigma2_hat / sigma1_hat"),
 
-    interest=nci.Interest(Location((-3., 3.)), "(interest - mudiff_hat) / sigma1_hat"),
+    interest=nci.Interest(Location((-3., 3.)), "(interest - mudiff_hat) / sigma1_hat", "interest*sigma1_hat + mudiff_hat"),
 )
 cis.fit()
 cis.save('saved_model')
