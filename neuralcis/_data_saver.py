@@ -86,6 +86,7 @@ class _DataSaver:
             foldername: str,
             filename_start_internal: str,
             profile: str,
+            missing_objects: Dict,
     ) -> None:
 
         fullname_start = self.fullname(foldername, filename_start_internal)
@@ -104,10 +105,13 @@ class _DataSaver:
                 var.assign(value)
 
             for suffix, obj in self.subobjects_to_save.items():
+                missing = missing_objects.get(suffix, {})
+                if missing == True:
+                    continue
                 object_filename = self.construct_filename(
                     filename_start_internal,
                     suffix)
-                obj._load_data(foldername, object_filename, profile)
+                obj._load_data(foldername, object_filename, profile, missing)
 
     def ensure_built(self):
         for obj in self.subobjects_to_save.values():

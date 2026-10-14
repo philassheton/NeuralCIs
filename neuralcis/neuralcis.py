@@ -564,6 +564,9 @@ class NeuralCIs(_DataSaver):
             network_setup_args: Optional[dict] = None,
             network_setup_arg_overrides: Optional[dict] = None,
             remove_old_kwargs_for_backward_compatibility: Sequence[str] = (),
+            missing_objects: Optional[Dict] = None,
+            new_variable_defs: Optional[Dict] = None,
+            override_saved_profile: bool = False,
             **new_kwargs_for_backward_compatibility,
     ) -> T:
 
@@ -596,9 +599,13 @@ class NeuralCIs(_DataSaver):
         :return: A loaded `NeuralCIs` object."""
 
         # TODO: Don't load saved data if in inference profile
+        if new_variable_defs is None:
+            new_variable_defs = {}
+
         kwargs_object = _NeuralCIsKWArgs.load(
             foldername,
             new_kwargs_for_backward_compatibility,
+            new_variable_defs,
             remove_old_kwargs_for_backward_compatibility,
         )
         kwargs = kwargs_object.kwargs()
@@ -609,7 +616,10 @@ class NeuralCIs(_DataSaver):
                 profile = TESTING
             else:
                 profile = INFERENCE
-        if not cls.profile_can_be_extracted_from(profile, saved_profile):
+
+        can_be_extracted = cls.profile_can_be_extracted_from(profile,
+                                                             saved_profile)
+        if not can_be_extracted and not override_saved_profile:
             raise Exception(f"The net you tried to load was saved with profile"
                             f" {saved_profile} but you are trying to load it"
                             f" using profile {profile}.  There"
@@ -622,11 +632,14 @@ class NeuralCIs(_DataSaver):
         if network_setup_arg_overrides is not None:
             kwargs["network_setup_args"] = (kwargs["network_setup_args"]
                                             | network_setup_arg_overrides)
+        if missing_objects is None:
+            missing_objects = {}
+
         cis = cls(
             train_initial_weights=False,
             **kwargs,
         )
-        cis._load_data(foldername, common.CIS_FILE_START, profile)
+        cis._load_data(foldername, common.CIS_FILE_START, profile, missing_objects)
         return cis
 
     def save(

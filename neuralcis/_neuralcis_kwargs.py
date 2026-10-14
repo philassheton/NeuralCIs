@@ -172,6 +172,7 @@ class _NeuralCIsKWArgs():
             cls: Type[T],
             foldername: str,
             new_kwargs_for_backward_compatibility: dict,
+            new_variable_defs: dict,
             remove_old_kwargs_for_backward_compatibility: Sequence[str] = (),
     ) -> T:
         kwargs = cls._wrap_up_kwargs(
@@ -190,6 +191,7 @@ class _NeuralCIsKWArgs():
         variable_defs: Dict[str, Variable]
         other_args = cls._load_pickle(foldername, "other_args")
         variable_defs = cls._load_pickle(foldername, "variable_defs")
+        variable_defs |= new_variable_defs
 
         if new_kwargs_for_backward_compatibility is not None:
             other_args |= new_kwargs_for_backward_compatibility

@@ -640,6 +640,7 @@ class _SamplingFeelerGenerator(_DataSaver, ABC):
             foldername: str,
             filename_start_internal: str,
             profile: str,
+            missing_objects: Dict,
     ) -> None:
 
         if not self._skip_when_profile(profile):
@@ -657,4 +658,7 @@ class _SamplingFeelerGenerator(_DataSaver, ABC):
                 self.sampled_targets = tf.Variable(tf.fill((n, i), np.nan),
                                                    dtype=tf.float32)
 
-        super()._load_data(foldername, filename_start_internal, profile)
+        super()._load_data(foldername,
+                           filename_start_internal,
+                           profile,
+                           missing_objects)
