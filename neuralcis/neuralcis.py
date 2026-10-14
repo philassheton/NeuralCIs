@@ -475,7 +475,7 @@ class NeuralCIs(_DataSaver):
             self,
             nulls:
                 Union[float, list[float], np.ndarray, Tensor1[tf32, Samples]],
-            conf_levels: Optional[np.ndarray] = None,
+            conf_levels: Union[np.ndarray, List[float], float, None] = None,
             **stats_and_known_params:
                 Union[float, list[float], np.ndarray, Tensor1[tf32, Samples]],
     ) -> Dict[str, np.ndarray]:
@@ -510,12 +510,36 @@ class NeuralCIs(_DataSaver):
                                        interest_net,
                                        known_params_net)                       # type: ignore
 
-        if conf_levels is not None:
-            raise Exception("Generation of CIs is temporarily disabled in"
-                            " NeuralCIs.  This will hopefully be returned"
-                            " to a version very soon.")
+        results = {"p": ps.numpy()}
 
-        return {"p": ps.numpy()}
+        if conf_levels is not None:
+            if isinstance(conf_levels, float):
+                conf_levels = [conf_levels]
+            if isinstance(conf_levels, list):
+                conf_levels = np.array(conf_levels)
+            if not isinstance(conf_levels, np.ndarray):
+                raise Exception("conf_levels must be a numpy array, "
+                                "float or list of floats")
+            if conf_levels.ndim != 1:
+                raise Exception("conf_levels must be a 1D numpy array, "
+                                "float or list of floats")
+            for conf_level in conf_levels:
+                conf_level_tf = tf.constant(conf_level, dtype=tf.float32)
+                lower_net, upper_net = self.cinet.ci(
+                    stats_net,
+                    known_params_net,
+                    tf.repeat(1. - conf_level_tf, num_samples),
+                )
+                lower_human = self._interest_net_to_human(lower_net)
+                upper_human = self._interest_net_to_human(upper_net)
+                if conf_level * 100 % 1 == 0:
+                    conf_level_text = f"{int(conf_level * 100):d}"
+                else:
+                    conf_level_text = f"{conf_level * 100:.1f}"
+                results[f"lower{conf_level_text}"] = lower_human.numpy()
+                results[f"upper{conf_level_text}"] = upper_human.numpy()
+
+        return results
 
     def p_and_ci(
             self,
