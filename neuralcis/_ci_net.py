@@ -49,15 +49,15 @@ class _CINet(_SimulatorNet):
                 [Tensor1[tf32, Samples], Tensor2[tf32, Samples, Stats]],
                 Tensor1[tf32, Samples]
             ],
-            num_estimate_remaining_after_canonicalization: int,
+            num_stat_remaining_after_canonicalization: int,
             num_unknown_param: int,
             num_known_param: int,
             profile: str,
             **network_setup_args,
     ) -> None:
 
-        num_inputs = (num_estimate_remaining_after_canonicalization
-                      + num_known_param + 1)                                   # estimates, known_params, target_z
+        num_inputs = (num_stat_remaining_after_canonicalization
+                      + num_known_param + 1)                                   # stats, known_params, target_z
         _SimulatorNet.__init__(self,
                                profile,
                                num_inputs_for_each_net=[num_inputs],
@@ -87,13 +87,13 @@ class _CINet(_SimulatorNet):
 
         n = self.batch_size
         params = self.sample_params(n)
-        estimates = self.sampling_distribution_fn(params)
+        stats = self.sampling_distribution_fn(params)
         target_z = tf.random.normal((n,))
 
         known_params = self.known_params(params)
 
-        inputs = (estimates, known_params, target_z)
-        outputs = (estimates, known_params, target_z)
+        inputs = (stats, known_params, target_z)
+        outputs = (stats, known_params, target_z)
 
         return inputs, outputs
 
@@ -103,9 +103,9 @@ class _CINet(_SimulatorNet):
             target_outputs: NetTargetBlob,
     ) -> ttf.float32:
 
-        estimates, known_params, target_z = target_outputs
-        interest = self.interest_from_net_outputs(net_outputs, estimates)
-        z = self.pnet.z_from_interest(estimates, interest, known_params)
+        stats, known_params, target_z = target_outputs
+        interest = self.interest_from_net_outputs(net_outputs, stats)
+        z = self.pnet.z_from_interest(stats, interest, known_params)
         squared_errors = tf.square(z - target_z)
         return tf.reduce_mean(squared_errors)
 
@@ -120,11 +120,11 @@ class _CINet(_SimulatorNet):
             net_input_blob: NetInputBlob,
     ) -> List[Tensor2[tf32, Samples, NetInputs]]:
 
-        estimates, known_params, target_z = net_input_blob
-        estimates_canonical, known_params_canonical, _ = \
-            self.canonicalize_fn(estimates, known_params, None)
+        stats, known_params, target_z = net_input_blob
+        stats_canonical, known_params_canonical, _ = \
+            self.canonicalize_fn(stats, known_params, None)
         ins = tf.concat([
-            estimates_canonical,
+            stats_canonical,
             known_params_canonical,
             tf.transpose([target_z])
         ], axis=1)
@@ -155,23 +155,23 @@ class _CINet(_SimulatorNet):
     ) -> Tensor1[tf32, Samples]:
 
         net_outputs = self.call_tf(net_input_blob)
-        estimates, known_params, target_z = net_input_blob
-        interest = self.interest_from_net_outputs(net_outputs, estimates)
+        stats, known_params, target_z = net_input_blob
+        interest = self.interest_from_net_outputs(net_outputs, stats)
         return interest
 
     def ci(
             self,
-            estimates: Tensor2[tf32, Samples, Stats],
+            stats: Tensor2[tf32, Samples, Stats],
             known_params: Tensor2[tf32, Samples, KnownParams],
             target_p: Tensor1[tf32, Samples],
     ) -> Tuple[Tensor1[tf32, Samples], Tensor1[tf32, Samples]]:
 
         target_z_pos = self.pnet.positive_z_from_p(target_p)
         lower = self.interest_from_net_input_blob(
-            (estimates, known_params, target_z_pos),
+            (stats, known_params, target_z_pos),
         )
         upper = self.interest_from_net_input_blob(
-            (estimates, known_params, -target_z_pos),
+            (stats, known_params, -target_z_pos),
         )
 
         return lower, upper
