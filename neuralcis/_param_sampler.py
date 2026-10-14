@@ -14,7 +14,7 @@ import tensor_annotations.tensorflow as ttf
 from tensor_annotations.tensorflow import Tensor1, Tensor2, float32 as tf32
 from .common import Samples
 from .common import Stats, Params, UnknownParams, KnownParams, MinAndMax
-from typing import Optional, Callable, Sequence, Union
+from typing import Optional, Callable, Union, Dict
 
 
 class _ParamSampler(_DataSaver):
@@ -177,18 +177,25 @@ class _ParamSampler(_DataSaver):
         bools = inside_net.is_inside_sampled_region(estimates, known_params)
         return bools
 
-    def fit(self, *args, **kwargs):
+    def fit(self, *args, **kwargs) -> Dict:
         self.inner_data_generator.fit()
-        self.inner_feeler_net.fit(*args, **kwargs)
+        history_inner_feeler = self.inner_feeler_net.fit(*args, **kwargs)
         self.inner_data_generator.release_gpu_memory()
-        self.inner_sampling_net.fit(*args, **kwargs)
-        self.hits_inside_net.fit(*args, **kwargs)
+        history_inner_sampling = self.inner_sampling_net.fit(*args, **kwargs)
+        history_hits_inside = self.hits_inside_net.fit(*args, **kwargs)
 
         self.outer_data_generator.fit()
-        self.outer_feeler_net.fit(*args, **kwargs)
+        history_outer_feeler = self.outer_feeler_net.fit(*args, **kwargs)
         self.outer_data_generator.release_gpu_memory()
 
-        self.outer_sampling_net.fit(*args, **kwargs)
+        history_outer_sampling = self.outer_sampling_net.fit(*args, **kwargs)
+        return {
+            "inner_feeler": history_inner_feeler,
+            "inner_sampling": history_inner_sampling,
+            "hits_inside": history_hits_inside,
+            "outer_feeler": history_outer_feeler,
+            "outer_sampling": history_outer_sampling,
+        }
 
     def sample_params(
             self,

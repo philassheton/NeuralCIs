@@ -309,8 +309,9 @@ class NeuralCIs(_DataSaver):
         :return: the history for the fit of the z-net.
         """
 
-        self.param_sampler.fit(*args, **kwargs)
-        history = self.pnet.fit(*args, **kwargs)
+        history = {"param_sampler": self.param_sampler.fit(*args, **kwargs),
+                   "pnet": self.pnet.fit(*args, **kwargs),
+                   "cinet": self.cinet.fit(*args, **kwargs)}
         print(f"{datetime.datetime.now()}: Training complete!")
         return history
 

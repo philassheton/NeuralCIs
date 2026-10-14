@@ -6,7 +6,7 @@ from ._data_saver import _DataSaver
 from ._utils import known_params_from_params
 
 # typing
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Dict
 from tensor_annotations.tensorflow import Tensor1, Tensor2
 from tensor_annotations.tensorflow import float32 as tf32
 from .common import Samples, Stats, Params, KnownParams
@@ -71,8 +71,8 @@ class _PNet(_DataSaver):
             subobjects_to_save={"znet": self.znet},
         )
 
-    def fit(self, *args, **kwargs) -> None:
-        return self.znet.fit(*args, **kwargs)
+    def fit(self, *args, **kwargs) -> Dict:
+        return {"znet": self.znet.fit(*args, **kwargs)}
 
     def compile(self, *args, **kwargs) -> None:
         self.znet.compile(*args, **kwargs)

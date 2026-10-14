@@ -12,7 +12,7 @@ from tqdm import tqdm
 from abc import ABC, abstractmethod
 
 # typing
-from typing import Optional, Callable, Tuple
+from typing import Optional, Callable, Tuple, Dict
 from .common import Samples, Stats, Params, UnknownParams, KnownParams
 from .common import ImportanceIngredients, Chains
 from tensor_annotations.tensorflow import Tensor1, Tensor2, Tensor3, Tensor4
