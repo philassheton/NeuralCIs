@@ -1,10 +1,13 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
+import numpy as np
 
 import functools
 
+
+
 # typing
-from typing import Optional, Tuple, Callable, Union
+from typing import Optional, Tuple, Callable, Union, Dict
 from collections.abc import Sequence
 from tensor_annotations.tensorflow import Tensor0, Tensor1, Tensor2, Tensor3
 from tensor_annotations.tensorflow import float32 as tf32, int32 as ti32
@@ -15,6 +18,11 @@ from .common import Stats, PairwiseCorrelations, UnknownParams, Ys
 N_MAX = 100
 MAX_ABS_RHO = 0.99
 SEED_FOR_BATCH_INCONSISTENT = 12345
+
+
+###############################################################################
+#  Sampling away from edges to avoid boundary cases in profile LR etc
+###############################################################################
 
 
 def generate_random_normals(
@@ -440,3 +448,91 @@ def likelihoods_via_bfgs(
                          res_alt.position], axis=1)
 
     return results
+
+
+###############################################################################
+#  Sampling across whole region with approximate uniform radius.
+###############################################################################
+
+NUM_PARAM_SAMPLES_BEFORE_WHITTLE = 20000
+NUM_PARAM_SAMPLES = 10000
+RHO_MAX = 0.90
+PROP_A_MIN = 0.1
+PROP_A_MAX = 0.9
+N_MIN = 20
+N_MAX = 100
+
+PARAM_SEEDS = {
+    'RHO_AB_PARTIAL': 0,
+    'RHO_BC': 1,
+    'RHO_AC': 2,
+    'N': 3,
+    'PROP_A': 4,
+    'MAGNITUDE': 5,
+}
+SECONDARY_SEED = 42
+
+
+def __sample_uniform(
+        number_to_draw: int,
+        param_name: str,
+        minval: float,
+        maxval: float,
+) -> Tensor1[tf32, Samples]:
+    param_seed = PARAM_SEEDS[param_name]
+    seed = tf.constant([SECONDARY_SEED, param_seed], dtype=tf.int32)
+    return tf.random.stateless_uniform((number_to_draw,), seed, minval, maxval)
+
+
+def sample_params():
+    n = tf.floor(tf.exp(
+        __sample_uniform(NUM_PARAM_SAMPLES, "N",
+                         np.log(N_MIN), np.log(N_MAX + 1.))
+    ))
+    rho_ab_partial_angle = __sample_uniform(NUM_PARAM_SAMPLES_BEFORE_WHITTLE,
+                                            "RHO_AB_PARTIAL",
+                                            -1., 1.)
+    rho_bc_angle = __sample_uniform(NUM_PARAM_SAMPLES_BEFORE_WHITTLE,
+                                    "RHO_BC",
+                                    -1., 1.)
+    rho_ac_angle = __sample_uniform(NUM_PARAM_SAMPLES_BEFORE_WHITTLE,
+                                    "RHO_AC",
+                                    -1., 1.)
+    prop_a_angle = __sample_uniform(NUM_PARAM_SAMPLES_BEFORE_WHITTLE,
+                                    "PROP_A",
+                                    -1., 1.)
+    angle = tf.stack([rho_ab_partial_angle,
+                      rho_bc_angle,
+                      rho_ac_angle,
+                      prop_a_angle])
+    angle = angle / tf.sqrt(tf.reduce_sum(angle ** 2, axis=0, keepdims=True))
+
+    # 2 = sqrt(4) is the longest diagonal we might want to hit
+    magnitude = __sample_uniform(NUM_PARAM_SAMPLES_BEFORE_WHITTLE,
+                                 "MAGNITUDE",
+                                 0., 2.)[None, :]
+    params = angle * magnitude
+    rho_ab_partial, rho_bc, rho_ac, prop_a = tf.unstack(params, axis=0)
+    prop_a = prop_a / 2 + 0.5
+
+    is_in_bounds = ((tf.math.abs(rho_ab_partial) < RHO_MAX) &
+                    (tf.math.abs(rho_bc) < RHO_MAX) &
+                    (tf.math.abs(rho_ac) < RHO_MAX) &
+                    (PROP_A_MIN < prop_a) & (prop_a < PROP_A_MAX))
+
+    num_surviving = tf.reduce_sum(tf.cast(is_in_bounds, tf.int16)).numpy()
+    assert num_surviving >= NUM_PARAM_SAMPLES
+
+    rho_ab_partial = tf.boolean_mask(rho_ab_partial, is_in_bounds)
+    rho_bc = tf.boolean_mask(rho_bc, is_in_bounds)
+    rho_ac = tf.boolean_mask(rho_ac, is_in_bounds)
+    prop_a = tf.boolean_mask(prop_a, is_in_bounds)
+
+    num_within_bounds = tf.reduce_sum(tf.cast(is_in_bounds, tf.int16))
+    assert num_within_bounds >= NUM_PARAM_SAMPLES
+
+    return {'rho_ab_partial': rho_ab_partial[0:NUM_PARAM_SAMPLES],
+            'rho_bc': rho_bc[0:NUM_PARAM_SAMPLES],
+            'rho_ac': rho_ac[0:NUM_PARAM_SAMPLES],
+            'prop_a': prop_a[0:NUM_PARAM_SAMPLES],
+            'n': n[0:NUM_PARAM_SAMPLES]}

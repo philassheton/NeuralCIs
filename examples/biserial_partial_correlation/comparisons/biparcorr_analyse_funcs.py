@@ -61,6 +61,30 @@ def sampling_distribution_fn_raw(
     )
 
 
+def params_human_to_stats_human_samples(
+        params_num: Tensor0[ti32],
+        num_sims: int,
+        **params_human: Tensor0[tf32],
+) -> Tuple[Dict["str", Tensor1[tf32, Samples]],
+           Dict["str", Tensor1[tf32, Samples]]]:
+
+    params_human = {n: tf.repeat(p, num_sims)
+                    for n, p in params_human.items()}
+
+    samples_raw = sampling_distribution_fn_raw(
+        simulation_block_num=params_num,
+        num_rows=num_sims,
+        **params_human,
+    )
+    rs = lcor.estimate_correlations_safe(samples_raw, params_human["n"])
+    prop_a_hat = lcor.estimate_prop_a(samples_raw, params_human["n"])
+    stats_human = {"rho_ab_hat": rs[:, 0],
+                   "rho_bc_hat": rs[:, 1],
+                   "rho_ac_hat": rs[:, 2],
+                   "prop_a_hat": prop_a_hat}
+    return stats_human, params_human
+
+
 ###############################################################################
 #  Likelihood ratio functions
 ###############################################################################
